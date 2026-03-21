@@ -1,0 +1,133 @@
+"""DataGateway: single entry point for all data in the system.
+
+The report builder and app.py should ONLY use this class.
+Never import individual providers directly from reports/ or app.py.
+"""
+
+import pandas as pd
+
+from src.data.market import MarketDataService
+from src.data.macro import MacroProvider, MacroSnapshot
+from src.data.polygon import PolygonProvider, OptionsSummary, MicrostructureSummary
+from src.data.sec_edgar import SECEdgarProvider, InsiderSummary, InstitutionalSummary
+from src.data.congress import CongressDataProvider, CongressTradesSummary
+from src.data.news import NewsProvider
+from src.models.stock import Stock, StockQuote, StockFundamentals
+
+
+class DataGateway:
+    """Unified data access for the entire application.
+
+    Usage:
+        gw = DataGateway()
+        stock = gw.get_stock("AAPL")
+        macro = gw.get_macro_snapshot()
+        insider = gw.get_insider_summary("AAPL")
+    """
+
+    def __init__(self) -> None:
+        self._market = MarketDataService()
+        self._news = NewsProvider()
+        # These may fail if API keys are missing — lazy init
+        self._macro: MacroProvider | None = None
+        self._polygon: PolygonProvider | None = None
+        self._sec: SECEdgarProvider | None = None
+        self._congress: CongressDataProvider | None = None
+
+    # ── Lazy init for optional providers ─────────────────────────
+
+    def _get_macro(self) -> MacroProvider:
+        if self._macro is None:
+            self._macro = MacroProvider()
+        return self._macro
+
+    def _get_polygon(self) -> PolygonProvider:
+        if self._polygon is None:
+            self._polygon = PolygonProvider()
+        return self._polygon
+
+    def _get_sec(self) -> SECEdgarProvider:
+        if self._sec is None:
+            self._sec = SECEdgarProvider()
+        return self._sec
+
+    def _get_congress(self) -> CongressDataProvider:
+        if self._congress is None:
+            self._congress = CongressDataProvider()
+        return self._congress
+
+    # ── Market Data (Yahoo → AV fallback) ────────────────────────
+
+    def get_quote(self, symbol: str) -> StockQuote:
+        return self._market.get_quote(symbol)
+
+    def get_fundamentals(self, symbol: str) -> StockFundamentals:
+        return self._market.get_fundamentals(symbol)
+
+    def get_historical(self, symbol: str, period_days: int = 180) -> pd.DataFrame:
+        return self._market.get_historical(symbol, period_days)
+
+    def get_stock(self, symbol: str) -> Stock:
+        """Convenience: fetch quote + fundamentals together."""
+        quote = self.get_quote(symbol)
+        fundamentals = self.get_fundamentals(symbol)
+        name = fundamentals.description.split(".")[0] if fundamentals.description else symbol
+        return Stock(symbol=symbol, name=name, quote=quote, fundamentals=fundamentals)
+
+    # ── Macro ────────────────────────────────────────────────────
+
+    def get_macro_snapshot(self) -> MacroSnapshot | None:
+        try:
+            return self._get_macro().get_macro_snapshot()
+        except Exception:
+            return None
+
+    # ── Options & Level 2 ────────────────────────────────────────
+
+    def get_options_summary(self, symbol: str) -> OptionsSummary | None:
+        try:
+            return self._get_polygon().get_options_summary(symbol)
+        except Exception:
+            return None
+
+    def get_microstructure(self, symbol: str) -> MicrostructureSummary | None:
+        try:
+            return self._get_polygon().get_microstructure_summary(symbol)
+        except Exception:
+            return None
+
+    # ── Insider & Institutional (SEC EDGAR) ──────────────────────
+
+    def get_insider_summary(self, symbol: str, days: int = 90) -> InsiderSummary | None:
+        try:
+            return self._get_sec().get_insider_summary(symbol, days)
+        except Exception:
+            return None
+
+    def get_institutional_summary(self, symbol: str) -> InstitutionalSummary | None:
+        try:
+            return self._get_sec().get_institutional_summary(symbol)
+        except Exception:
+            return None
+
+    # ── Congressional Trades ─────────────────────────────────────
+
+    def get_congress_summary(self, symbol: str, days: int = 180) -> CongressTradesSummary | None:
+        try:
+            return self._get_congress().get_summary(symbol, days)
+        except Exception:
+            return None
+
+    # ── News & Sentiment ─────────────────────────────────────────
+
+    def get_stock_news(self, symbol: str, days: int = 7) -> list[dict]:
+        try:
+            return self._news.search_stock_news(symbol, days)
+        except Exception:
+            return []
+
+    def get_research(self, query: str) -> list[dict]:
+        try:
+            return self._news.search_research(query)
+        except Exception:
+            return []
