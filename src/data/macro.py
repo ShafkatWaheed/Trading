@@ -11,15 +11,16 @@ Yahoo Finance tickers for real-time:
 - ^VIX (volatility), DX-Y.NYB (dollar index)
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
 import httpx
 import pandas as pd
 
+from src.models.data_types import MacroDataPoint, MacroSnapshot
 from src.utils.db import cache_get, cache_set, log_api_call
 from src.utils.config import ALPHAVANTAGE_API_KEY, CACHE_TTL_FUNDAMENTALS
+from src.utils.rate_limit import AV_LIMITER
 
 
 # Alpha Vantage economic function mappings
@@ -49,51 +50,6 @@ YAHOO_MACRO_TICKERS = {
     "gold": "GC=F",
     "oil": "CL=F",
 }
-
-
-@dataclass
-class MacroDataPoint:
-    series_id: str
-    series_name: str
-    value: Decimal
-    date: str  # ISO 8601
-    unit: str
-    frequency: str  # daily / weekly / monthly / quarterly
-
-
-@dataclass
-class MacroSnapshot:
-    """Current state of key macroeconomic indicators."""
-    timestamp: datetime
-    fed_funds_rate: Decimal | None = None
-    treasury_10y: Decimal | None = None
-    treasury_2y: Decimal | None = None
-    yield_spread_10y2y: Decimal | None = None
-    cpi_yoy: Decimal | None = None
-    unemployment_rate: Decimal | None = None
-    gdp_growth: Decimal | None = None
-    vix: Decimal | None = None
-    consumer_sentiment: Decimal | None = None
-    dollar_index: Decimal | None = None
-
-    @property
-    def yield_curve_inverted(self) -> bool:
-        if self.treasury_10y is not None and self.treasury_2y is not None:
-            return self.treasury_10y < self.treasury_2y
-        return False
-
-    @property
-    def regime(self) -> str:
-        """Simple macro regime classification."""
-        if self.vix and self.vix > 30:
-            return "high_volatility"
-        if self.yield_curve_inverted:
-            return "recession_warning"
-        if self.fed_funds_rate and self.fed_funds_rate > Decimal("5"):
-            return "tight_monetary"
-        if self.unemployment_rate and self.unemployment_rate < Decimal("4"):
-            return "strong_labor"
-        return "normal"
 
 
 class MacroProvider:
@@ -155,6 +111,7 @@ class MacroProvider:
             params["maturity"] = config["maturity"]
 
         try:
+            AV_LIMITER.acquire()
             resp = httpx.get(self.BASE_URL, params=params, timeout=30)
             resp.raise_for_status()
             raw = resp.json()

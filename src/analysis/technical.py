@@ -83,9 +83,9 @@ def analyze(symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
     # Volume trend
     recent_vol = volume.tail(5).mean()
     avg_vol = volume.tail(20).mean()
-    if recent_vol > avg_vol * Decimal("1.2"):
+    if recent_vol > avg_vol * 1.2:
         indicators.volume_trend = "increasing"
-    elif recent_vol < avg_vol * Decimal("0.8"):
+    elif recent_vol < avg_vol * 0.8:
         indicators.volume_trend = "decreasing"
     else:
         indicators.volume_trend = "stable"
@@ -106,43 +106,43 @@ def _generate_signals(ind: TechnicalIndicators) -> list[Signal]:
     # RSI
     if ind.rsi_14 is not None:
         if ind.rsi_14 > 70:
-            signals.append(Signal("RSI", SignalType.BEARISH, "Overbought (RSI > 70)"))
+            signals.append(Signal(name="RSI", signal_type=SignalType.BEARISH, description="Overbought (RSI > 70)"))
         elif ind.rsi_14 < 30:
-            signals.append(Signal("RSI", SignalType.BULLISH, "Oversold (RSI < 30)"))
+            signals.append(Signal(name="RSI", signal_type=SignalType.BULLISH, description="Oversold (RSI < 30)"))
 
     # MACD crossover
     if ind.macd_histogram is not None:
         if ind.macd_histogram > 0:
-            signals.append(Signal("MACD", SignalType.BULLISH, "MACD above signal line"))
+            signals.append(Signal(name="MACD", signal_type=SignalType.BULLISH, description="MACD above signal line"))
         else:
-            signals.append(Signal("MACD", SignalType.BEARISH, "MACD below signal line"))
+            signals.append(Signal(name="MACD", signal_type=SignalType.BEARISH, description="MACD below signal line"))
 
     # Price vs SMAs
     if ind.current_price and ind.sma_50:
         if ind.current_price > ind.sma_50:
-            signals.append(Signal("SMA50", SignalType.BULLISH, "Price above SMA(50)"))
+            signals.append(Signal(name="SMA50", signal_type=SignalType.BULLISH, description="Price above SMA(50)"))
         else:
-            signals.append(Signal("SMA50", SignalType.BEARISH, "Price below SMA(50)"))
+            signals.append(Signal(name="SMA50", signal_type=SignalType.BEARISH, description="Price below SMA(50)"))
 
     if ind.current_price and ind.sma_200:
         if ind.current_price > ind.sma_200:
-            signals.append(Signal("SMA200", SignalType.BULLISH, "Price above SMA(200)"))
+            signals.append(Signal(name="SMA200", signal_type=SignalType.BULLISH, description="Price above SMA(200)"))
         else:
-            signals.append(Signal("SMA200", SignalType.BEARISH, "Price below SMA(200)"))
+            signals.append(Signal(name="SMA200", signal_type=SignalType.BEARISH, description="Price below SMA(200)"))
 
     # Golden/Death cross
     if ind.sma_50 and ind.sma_200:
         if ind.sma_50 > ind.sma_200:
-            signals.append(Signal("Cross", SignalType.BULLISH, "Golden cross (SMA50 > SMA200)"))
+            signals.append(Signal(name="Cross", signal_type=SignalType.BULLISH, description="Golden cross (SMA50 > SMA200)"))
         else:
-            signals.append(Signal("Cross", SignalType.BEARISH, "Death cross (SMA50 < SMA200)"))
+            signals.append(Signal(name="Cross", signal_type=SignalType.BEARISH, description="Death cross (SMA50 < SMA200)"))
 
     # Bollinger Bands
     if ind.current_price and ind.bb_lower and ind.bb_upper:
         if ind.current_price < ind.bb_lower:
-            signals.append(Signal("BB", SignalType.BULLISH, "Price below lower Bollinger Band"))
+            signals.append(Signal(name="BB", signal_type=SignalType.BULLISH, description="Price below lower Bollinger Band"))
         elif ind.current_price > ind.bb_upper:
-            signals.append(Signal("BB", SignalType.BEARISH, "Price above upper Bollinger Band"))
+            signals.append(Signal(name="BB", signal_type=SignalType.BEARISH, description="Price above upper Bollinger Band"))
 
     return signals
 

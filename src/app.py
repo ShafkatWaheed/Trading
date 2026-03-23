@@ -3,7 +3,12 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from src.utils.db import init_db, get_reports
+from src.utils.db import (
+    init_db, get_reports, get_report_by_id,
+    get_watchlist, add_watchlist_item, remove_watchlist_item,
+    get_alerts,
+)
+from src.orchestrator import analyze_stock
 
 app = FastAPI(
     title="Trading Analysis API",
@@ -31,26 +36,40 @@ def list_reports(symbol: str | None = None, report_type: str | None = None, limi
     return get_reports(symbol=symbol, report_type=report_type, limit=limit)
 
 
+@app.post("/analyze/{symbol}")
+def run_analysis(symbol: str) -> dict:
+    report = analyze_stock(symbol.upper(), export=True)
+    return {
+        "symbol": report.symbol,
+        "name": report.name,
+        "verdict": report.verdict.value,
+        "confidence": report.confidence,
+        "risk_rating": report.risk_rating.value,
+        "current_price": str(report.current_price),
+        "sentiment_score": str(report.sentiment_score),
+        "reasoning": report.reasoning,
+        "risks": report.risks,
+        "sections": [
+            {"title": s.title, "content": s.content, "data": s.data}
+            for s in report.sections
+        ],
+        "disclaimer": report.DISCLAIMER,
+    }
+
+
 @app.get("/reports/{report_id}")
 def get_report(report_id: int) -> dict:
-    from src.utils.db import get_connection
-    conn = get_connection()
-    row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
-    conn.close()
-    if not row:
+    report = get_report_by_id(report_id)
+    if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    return dict(row)
+    return report
 
 
 # --- Watchlist ---
 
 @app.get("/watchlist")
-def get_watchlist() -> list[dict]:
-    from src.utils.db import get_connection
-    conn = get_connection()
-    rows = conn.execute("SELECT * FROM watchlist ORDER BY added_at DESC").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+def list_watchlist() -> list[dict]:
+    return get_watchlist()
 
 
 class WatchlistItem(BaseModel):
@@ -60,23 +79,22 @@ class WatchlistItem(BaseModel):
 
 @app.post("/watchlist")
 def add_to_watchlist(item: WatchlistItem) -> dict:
-    from datetime import datetime
-    from src.utils.db import get_connection
-    conn = get_connection()
-    conn.execute(
-        "INSERT OR IGNORE INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)",
-        (item.symbol.upper(), item.name, datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
+    add_watchlist_item(item.symbol, item.name)
     return {"status": "added", "symbol": item.symbol.upper()}
 
 
 @app.delete("/watchlist/{symbol}")
 def remove_from_watchlist(symbol: str) -> dict:
-    from src.utils.db import get_connection
-    conn = get_connection()
-    conn.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
-    conn.commit()
-    conn.close()
+    remove_watchlist_item(symbol)
     return {"status": "removed", "symbol": symbol.upper()}
+
+
+@app.get("/alerts")
+def list_alerts(symbol: str | None = None, limit: int = 50) -> list[dict]:
+    return get_alerts(symbol=symbol, limit=limit)
+
+
+@app.post("/scan")
+def trigger_scan() -> dict:
+    from src.scheduler import run_watchlist_scan
+    return run_watchlist_scan()

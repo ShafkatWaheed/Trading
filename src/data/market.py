@@ -10,10 +10,13 @@ from decimal import Decimal
 
 import httpx
 import pandas as pd
+import yfinance as yf
 
 from src.models.stock import StockFundamentals, StockQuote
 from src.utils.config import ALPHAVANTAGE_API_KEY, CACHE_TTL_QUOTE, CACHE_TTL_FUNDAMENTALS
 from src.utils.db import cache_get, cache_set, log_api_call
+from src.utils.rate_limit import AV_LIMITER
+from src.utils.retry import with_retry
 
 
 AV_BASE = "https://www.alphavantage.co/query"
@@ -100,23 +103,77 @@ class MarketDataService:
                 continue
         raise last_error or RuntimeError(f"All sources failed for {data_type}/{symbol}")
 
-    # --- Yahoo Finance (via MCP or yfinance) ---
+    # --- Yahoo Finance (via yfinance library) ---
 
     def _fetch_quote_yahoo(self, symbol: str) -> dict:
-        # TODO: Wire to Yahoo Finance MCP server
-        # The MCP server exposes tools like get_stock_quote(symbol)
-        # For now, raise to trigger AV fallback
-        raise NotImplementedError("Yahoo Finance MCP not yet wired")
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        if not info or "regularMarketPrice" not in info:
+            raise ValueError(f"No Yahoo quote for {symbol}")
+
+        return {
+            "price": str(info.get("regularMarketPrice", 0)),
+            "open": str(info.get("regularMarketOpen", 0)),
+            "high": str(info.get("regularMarketDayHigh", 0)),
+            "low": str(info.get("regularMarketDayLow", 0)),
+            "volume": int(info.get("regularMarketVolume", 0)),
+            "previous_close": str(info.get("regularMarketPreviousClose", 0)),
+        }
 
     def _fetch_fundamentals_yahoo(self, symbol: str) -> dict:
-        raise NotImplementedError("Yahoo Finance MCP not yet wired")
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        if not info or "symbol" not in info:
+            raise ValueError(f"No Yahoo fundamentals for {symbol}")
+
+        return {
+            "market_cap": str(info.get("marketCap", 0)),
+            "pe_ratio": str(info["trailingPE"]) if info.get("trailingPE") else None,
+            "peg_ratio": str(info["pegRatio"]) if info.get("pegRatio") else None,
+            "eps": str(info["trailingEps"]) if info.get("trailingEps") else None,
+            "eps_growth": str(info["earningsQuarterlyGrowth"]) if info.get("earningsQuarterlyGrowth") else None,
+            "revenue": str(info["totalRevenue"]) if info.get("totalRevenue") else None,
+            "revenue_growth": str(info["revenueGrowth"]) if info.get("revenueGrowth") else None,
+            "profit_margin": str(info["profitMargins"]) if info.get("profitMargins") else None,
+            "roe": str(info["returnOnEquity"]) if info.get("returnOnEquity") else None,
+            "debt_to_equity": str(info["debtToEquity"]) if info.get("debtToEquity") else None,
+            "free_cash_flow": str(info["freeCashflow"]) if info.get("freeCashflow") else None,
+            "dividend_yield": str(info["dividendYield"]) if info.get("dividendYield") else None,
+            "beta": str(info["beta"]) if info.get("beta") else None,
+            "week_52_high": str(info["fiftyTwoWeekHigh"]) if info.get("fiftyTwoWeekHigh") else None,
+            "week_52_low": str(info["fiftyTwoWeekLow"]) if info.get("fiftyTwoWeekLow") else None,
+            "avg_volume": str(info.get("averageVolume", 0)),
+            "sector": info.get("sector", ""),
+            "industry": info.get("industry", ""),
+            "description": info.get("longBusinessSummary", ""),
+        }
 
     def _fetch_historical_yahoo(self, symbol: str, period_days: int) -> pd.DataFrame:
-        raise NotImplementedError("Yahoo Finance MCP not yet wired")
+        period = "1y" if period_days > 200 else "6mo" if period_days > 90 else "3mo"
+        df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
+        if df.empty:
+            raise ValueError(f"No Yahoo historical data for {symbol}")
+
+        # Flatten multi-level columns if present
+        if hasattr(df.columns, 'levels') and df.columns.nlevels > 1:
+            df.columns = df.columns.get_level_values(0)
+
+        df = df.reset_index()
+        df = df.rename(columns={
+            "Date": "date", "Open": "open", "High": "high",
+            "Low": "low", "Close": "close", "Volume": "volume",
+        })
+        df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+
+        if period_days < len(df):
+            df = df.tail(period_days).reset_index(drop=True)
+        return df[["date", "open", "high", "low", "close", "volume"]]
 
     # --- Alpha Vantage (REST API) ---
 
+    @with_retry(max_retries=2, source="alphavantage")
     def _fetch_quote_av(self, symbol: str) -> dict:
+        AV_LIMITER.acquire()
         params = {
             "function": "GLOBAL_QUOTE",
             "symbol": symbol,
@@ -139,7 +196,9 @@ class MarketDataService:
             "previous_close": gq.get("08. previous close", "0"),
         }
 
+    @with_retry(max_retries=2, source="alphavantage")
     def _fetch_fundamentals_av(self, symbol: str) -> dict:
+        AV_LIMITER.acquire()
         params = {
             "function": "OVERVIEW",
             "symbol": symbol,
@@ -174,7 +233,9 @@ class MarketDataService:
             "description": raw.get("Description", ""),
         }
 
+    @with_retry(max_retries=2, source="alphavantage")
     def _fetch_historical_av(self, symbol: str, period_days: int) -> pd.DataFrame:
+        AV_LIMITER.acquire()
         outputsize = "full" if period_days > 100 else "compact"
         params = {
             "function": "TIME_SERIES_DAILY",

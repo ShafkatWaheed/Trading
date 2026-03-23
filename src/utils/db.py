@@ -47,6 +47,19 @@ def init_db() -> None:
             added_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            severity TEXT NOT NULL DEFAULT 'info',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol);
+        CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(created_at);
+
         CREATE TABLE IF NOT EXISTS api_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source TEXT NOT NULL,
@@ -132,3 +145,74 @@ def get_reports(symbol: str | None = None, report_type: str | None = None, limit
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_report_by_id(report_id: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_watchlist() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM watchlist ORDER BY added_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_watchlist_item(symbol: str, name: str = "") -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR IGNORE INTO watchlist (symbol, name, added_at) VALUES (?, ?, ?)",
+        (symbol.upper(), name, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_watchlist_item(symbol: str) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
+    conn.commit()
+    conn.close()
+
+
+# --- Alerts ---
+
+def save_alert(symbol: str, alert_type: str, message: str,
+               old_value: str = "", new_value: str = "", severity: str = "info") -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO alerts (symbol, alert_type, message, old_value, new_value, severity, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (symbol, alert_type, message, old_value, new_value, severity, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    alert_id = cursor.lastrowid
+    conn.close()
+    return alert_id
+
+
+def get_alerts(symbol: str | None = None, limit: int = 50) -> list[dict]:
+    conn = get_connection()
+    query = "SELECT * FROM alerts WHERE 1=1"
+    params: list = []
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_latest_report_for_symbol(symbol: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM reports WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
+        (symbol,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None

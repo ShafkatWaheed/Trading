@@ -7,12 +7,16 @@ Never import individual providers directly from reports/ or app.py.
 import pandas as pd
 
 from src.data.market import MarketDataService
-from src.data.macro import MacroProvider, MacroSnapshot
-from src.data.polygon import PolygonProvider, OptionsSummary, MicrostructureSummary
-from src.data.sec_edgar import SECEdgarProvider, InsiderSummary, InstitutionalSummary
-from src.data.congress import CongressDataProvider, CongressTradesSummary
+from src.data.macro import MacroProvider
+from src.data.polygon import PolygonProvider
+from src.data.sec_edgar import SECEdgarProvider
+from src.data.congress import CongressDataProvider
 from src.data.news import NewsProvider
 from src.models.stock import Stock, StockQuote, StockFundamentals
+from src.models.data_types import (
+    MacroSnapshot, OptionsSummary, MicrostructureSummary,
+    InsiderSummary, InstitutionalSummary, CongressTradesSummary,
+)
 
 
 class DataGateway:
@@ -68,10 +72,20 @@ class DataGateway:
         return self._market.get_historical(symbol, period_days)
 
     def get_stock(self, symbol: str) -> Stock:
-        """Convenience: fetch quote + fundamentals together."""
-        quote = self.get_quote(symbol)
-        fundamentals = self.get_fundamentals(symbol)
-        name = fundamentals.description.split(".")[0] if fundamentals.description else symbol
+        """Convenience: fetch quote + fundamentals together. Either can fail."""
+        quote = None
+        fundamentals = None
+        try:
+            quote = self.get_quote(symbol)
+        except Exception:
+            pass
+        try:
+            fundamentals = self.get_fundamentals(symbol)
+        except Exception:
+            pass
+        name = symbol
+        if fundamentals and fundamentals.description:
+            name = fundamentals.description.split(".")[0]
         return Stock(symbol=symbol, name=name, quote=quote, fundamentals=fundamentals)
 
     # ── Macro ────────────────────────────────────────────────────

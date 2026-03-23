@@ -9,173 +9,22 @@ Provides:
 - Put/Call ratio, max pain
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 import httpx
 import pandas as pd
 
+from src.models.data_types import (
+    Level2Quote, OrderBook, OrderBookLevel, Tick, MicrostructureSummary,
+    OptionContract, OptionsChain, UnusualActivity, OptionsSummary,
+)
 from src.utils.config import POLYGON_API_KEY, CACHE_TTL_QUOTE
 from src.utils.db import cache_get, cache_set, log_api_call
+from src.utils.rate_limit import POLYGON_LIMITER
 
 
 POLYGON_BASE = "https://api.polygon.io"
-
-
-# ── Level 2 Models ──────────────────────────────────────────────────
-
-@dataclass
-class Level2Quote:
-    symbol: str
-    bid_price: Decimal
-    bid_size: int
-    ask_price: Decimal
-    ask_size: int
-    spread: Decimal
-    spread_percent: Decimal
-    midpoint: Decimal
-    timestamp: str
-
-
-@dataclass
-class OrderBookLevel:
-    price: Decimal
-    size: int
-    exchange: str
-    order_count: int = 0
-
-
-@dataclass
-class OrderBook:
-    symbol: str
-    bids: list[OrderBookLevel] = field(default_factory=list)
-    asks: list[OrderBookLevel] = field(default_factory=list)
-    timestamp: str = ""
-
-    @property
-    def bid_depth(self) -> int:
-        return sum(level.size for level in self.bids)
-
-    @property
-    def ask_depth(self) -> int:
-        return sum(level.size for level in self.asks)
-
-    @property
-    def imbalance(self) -> Decimal:
-        total = self.bid_depth + self.ask_depth
-        if total == 0:
-            return Decimal("0")
-        return Decimal(str(round((self.bid_depth - self.ask_depth) / total, 4)))
-
-
-@dataclass
-class Tick:
-    symbol: str
-    price: Decimal
-    size: int
-    exchange: str
-    conditions: list[str]
-    timestamp: str
-    is_buyer_maker: bool = False
-
-
-@dataclass
-class MicrostructureSummary:
-    symbol: str
-    avg_spread: Decimal
-    avg_spread_percent: Decimal
-    avg_bid_depth: int
-    avg_ask_depth: int
-    order_imbalance: Decimal
-    tick_count: int
-    vwap: Decimal
-    buy_volume: int
-    sell_volume: int
-    buy_sell_ratio: Decimal
-    large_trade_count: int
-    liquidity_score: str  # high / medium / low
-    timestamp: str = ""
-
-
-# ── Options Models ──────────────────────────────────────────────────
-
-@dataclass
-class OptionContract:
-    symbol: str
-    underlying: str
-    contract_type: str  # call / put
-    strike: Decimal
-    expiration: str
-    bid: Decimal
-    ask: Decimal
-    last_price: Decimal
-    volume: int
-    open_interest: int
-    implied_volatility: Decimal
-    delta: Decimal | None = None
-    gamma: Decimal | None = None
-    theta: Decimal | None = None
-    vega: Decimal | None = None
-    rho: Decimal | None = None
-    in_the_money: bool = False
-
-
-@dataclass
-class OptionsChain:
-    underlying: str
-    underlying_price: Decimal
-    expiration: str
-    calls: list[OptionContract] = field(default_factory=list)
-    puts: list[OptionContract] = field(default_factory=list)
-
-
-@dataclass
-class UnusualActivity:
-    underlying: str
-    contract_type: str
-    strike: Decimal
-    expiration: str
-    volume: int
-    open_interest: int
-    volume_oi_ratio: Decimal
-    implied_volatility: Decimal
-    premium: Decimal
-    sentiment: str  # bullish / bearish
-    timestamp: str
-
-
-@dataclass
-class OptionsSummary:
-    underlying: str
-    underlying_price: Decimal
-    put_call_ratio: Decimal
-    total_call_volume: int
-    total_put_volume: int
-    total_call_oi: int
-    total_put_oi: int
-    avg_iv: Decimal
-    iv_rank: Decimal | None = None
-    iv_percentile: Decimal | None = None
-    max_pain: Decimal | None = None
-    unusual_activity: list[UnusualActivity] = field(default_factory=list)
-    sentiment: str = ""
-
-    def compute_sentiment(self) -> None:
-        if self.put_call_ratio < Decimal("0.7"):
-            self.sentiment = "bullish"
-        elif self.put_call_ratio > Decimal("1.0"):
-            self.sentiment = "bearish"
-        else:
-            self.sentiment = "neutral"
-
-        if self.unusual_activity:
-            bullish = sum(1 for u in self.unusual_activity if u.sentiment == "bullish")
-            bearish = sum(1 for u in self.unusual_activity if u.sentiment == "bearish")
-            if bullish > bearish * 2:
-                self.sentiment = "bullish"
-            elif bearish > bullish * 2:
-                self.sentiment = "bearish"
 
 
 # ── Provider ────────────────────────────────────────────────────────
@@ -188,6 +37,7 @@ class PolygonProvider:
             raise ValueError("POLYGON_API_KEY not set")
 
     def _get(self, path: str, params: dict | None = None) -> dict:
+        POLYGON_LIMITER.acquire()
         params = params or {}
         params["apiKey"] = POLYGON_API_KEY
         resp = httpx.get(f"{POLYGON_BASE}{path}", params=params, timeout=30)

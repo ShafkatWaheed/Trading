@@ -29,20 +29,42 @@
            │
            ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                           ANALYSIS LAYER                                  │
+│                      ANALYSIS LAYER (10 modules)                          │
 │                                                                           │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────────────┐  │
-│  │  Technical   │ │ Fundamental │ │  Sentiment  │ │    Screener       │  │
-│  │  Analysis    │ │ Analysis    │ │  Analysis   │ │                   │  │
-│  │             │ │             │ │             │ │  Filter stocks    │  │
-│  │  RSI, MACD, │ │  P/E, PEG,  │ │  News NLP,  │ │  by criteria,    │  │
-│  │  SMA, BB,   │ │  growth,    │ │  headline   │ │  rank matches    │  │
-│  │  signals,   │ │  health,    │ │  scoring,   │ │                   │  │
-│  │  crossovers │ │  scoring    │ │  -1 to +1   │ │                   │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────────────┘  │
+│  ┌─ Core (original 4) ───────────────────────────────────────────────┐   │
+│  │                                                                    │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │   │
+│  │  │  Technical   │ │ Fundamental │ │  Sentiment  │ │ Screener  │  │   │
+│  │  │  ±2 weight   │ │  ±2 weight  │ │  ±1 weight  │ │ (filter)  │  │   │
+│  │  │  RSI, MACD,  │ │  P/E, PEG,  │ │  News NLP,  │ │ criteria  │  │   │
+│  │  │  SMA, BB     │ │  growth,    │ │  headline   │ │ matching  │  │   │
+│  │  │  signals     │ │  health     │ │  scoring    │ │           │  │   │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                           │
+│  ┌─ New (6 modules) ─────────────────────────────────────────────────┐   │
+│  │                                                                    │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌──────────────────────────┐    │   │
+│  │  │ Macro Regime │ │Options Flow │ │    Smart Money           │    │   │
+│  │  │ ±1.5 weight  │ │ ±1.5 weight │ │    ±2 weight             │    │   │
+│  │  │ yield curve, │ │ P/C ratio,  │ │    insider cluster buys, │    │   │
+│  │  │ VIX, rates,  │ │ IV rank,    │ │    Form 4 + Form 13F,   │    │   │
+│  │  │ GDP, jobs    │ │ unusual act │ │    institutional flow    │    │   │
+│  │  └─────────────┘ └─────────────┘ └──────────────────────────┘    │   │
+│  │                                                                    │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌──────────────────────────┐    │   │
+│  │  │ Congress    │ │ Relative    │ │    Confluence             │    │   │
+│  │  │ ±0.5 weight │ │ Value       │ │    (meta-analysis)       │    │   │
+│  │  │ STOCK Act   │ │ ±1.5 weight │ │    detects agreement/    │    │   │
+│  │  │ trades,     │ │ vs sector   │ │    divergence across     │    │   │
+│  │  │ bipartisan  │ │ peers       │ │    all other signals,    │    │   │
+│  │  │ signals     │ │ P/E, margin │ │    adjusts confidence    │    │   │
+│  │  └─────────────┘ └─────────────┘ └──────────────────────────┘    │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
 │                                                                           │
 │  Each module is INDEPENDENT — they NEVER import each other               │
 │  Pure computation only — NO API calls, NO DB access, NO side effects     │
+│  All import data types from src/models/data_types.py                     │
 │                                                                           │
 └──────────────────────────────────────────────────────────────────────────┘
            │
@@ -362,8 +384,15 @@ Report Layer (reports/)
 | `src/data/sec_edgar.py` | SECEdgarProvider (Form 4 + 13F) | models, utils |
 | `src/data/congress.py` | CongressDataProvider (STOCK Act) | models, utils |
 | `src/data/news.py` | NewsProvider (Tavily + Exa combined) | utils, httpx |
+| `src/models/data_types.py` | Shared data types for analysis + data layer | stdlib, decimal |
 | `src/analysis/technical.py` | RSI, MACD, SMA, BB, signals | models, pandas, ta |
 | `src/analysis/fundamental.py` | Valuation, growth, health scoring | models |
+| `src/analysis/macro.py` | Macro regime scoring (VIX, yields, rates) | models/data_types |
+| `src/analysis/options_flow.py` | Options P/C ratio, IV, unusual activity | models/data_types |
+| `src/analysis/smart_money.py` | Insider + institutional behavior | models/data_types |
+| `src/analysis/congress_signal.py` | Congressional STOCK Act trade signals | models/data_types |
+| `src/analysis/relative_value.py` | Stock vs sector peer comparison | models/stock |
+| `src/analysis/confluence.py` | Cross-signal agreement/divergence | stdlib only |
 | `src/sentiment/analyzer.py` | News sentiment scoring | models |
 | `src/screener/screener.py` | Filter stocks by criteria | models |
 | `src/reports/builder.py` | Orchestrate DataGateway + analysis → Report | gateway, models, analysis, sentiment, utils |
@@ -379,28 +408,44 @@ Report Layer (reports/)
 Reports combine multiple independent signals into a final verdict:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                 SIGNAL SOURCES                        │
-│                                                       │
-│  Technical ──► Strong Buy / Buy / Neutral / Sell     │
-│  Fundamental ──► Score 1-5                           │
-│  Sentiment ──► -1.0 to +1.0                         │
-│  Insider (Form 4) ──► cluster buy / net sell         │
-│  Congress ──► net buy / net sell                      │
-│  Options ──► bullish / bearish (P/C ratio + UOA)     │
-│  Macro ──► regime (normal / recession warning)       │
-│                                                       │
-│         ▼                                             │
-│  ┌─────────────────────────────────────┐             │
-│  │       VERDICT ENGINE                 │             │
-│  │                                      │             │
-│  │  Weighted combination of all signals │             │
-│  │  ──► Strong Buy / Buy / Hold /      │             │
-│  │      Sell / Strong Sell              │             │
-│  │  ──► Confidence: High / Medium / Low │             │
-│  │  ──► Risk Rating: 1-5               │             │
-│  └─────────────────────────────────────┘             │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    SIGNAL SOURCES (10)                         │
+│                                                               │
+│  Signal             Range     Weight   Max Contribution       │
+│  ─────────────────  ────────  ───────  ────────────────       │
+│  Technical          ±2        1.0x     ±2.0                   │
+│  Fundamental        ±2        1.0x     ±2.0                   │
+│  Sentiment          ±1        1.0x     ±1.0                   │
+│  Macro Regime       ±2        0.75x    ±1.5                   │
+│  Options Flow       ±2        0.75x    ±1.5                   │
+│  Smart Money        ±2        1.0x     ±2.0  ← cluster buy!  │
+│  Congress           ±1        0.5x     ±0.5                   │
+│  Relative Value     ±2        0.75x    ±1.5                   │
+│                                                               │
+│  Total range: ≈ ±12                                           │
+│                                                               │
+│         ▼                                                     │
+│  ┌──────────────────────────────────────────────────┐        │
+│  │              VERDICT ENGINE                       │        │
+│  │                                                   │        │
+│  │  >= +6: Strong Buy   <= -6: Strong Sell          │        │
+│  │  >= +3: Buy          <= -3: Sell                 │        │
+│  │  else: Hold                                       │        │
+│  │                                                   │        │
+│  │  Confidence: |score| >= 7 High, >= 4 Med, else Low│       │
+│  │  Confluence adjusts confidence ±1 level           │        │
+│  │  Risk Rating: 1-5 (macro + IV + insiders + beta)  │        │
+│  └──────────────────────────────────────────────────┘        │
+│                                                               │
+│  ┌──────────────────────────────────────────────────┐        │
+│  │          CONFLUENCE DETECTOR                      │        │
+│  │                                                   │        │
+│  │  Checks all signals for agreement/divergence:     │        │
+│  │  strong_agreement → confidence +1                 │        │
+│  │  divergent (strong signals conflict) → conf -1    │        │
+│  │  Flags: "Insiders buying but technicals bearish"  │        │
+│  └──────────────────────────────────────────────────┘        │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Scaling Path

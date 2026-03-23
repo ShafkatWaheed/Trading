@@ -7,45 +7,17 @@ Sources:
 - Senate EFD portal (efdsearch.senate.gov)
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
+import httpx
+from bs4 import BeautifulSoup
+
+from src.models.data_types import CongressTrade, CongressTradesSummary
 from src.utils.db import cache_get, cache_set, log_api_call
 from src.utils.config import CACHE_TTL_FUNDAMENTALS
 
-
-@dataclass
-class CongressTrade:
-    politician: str
-    party: str  # Democrat / Republican / Independent
-    chamber: str  # House / Senate
-    state: str
-    symbol: str
-    company: str
-    transaction_type: str  # buy / sell
-    amount_range: str  # e.g. "$1K-$15K", "$50K-$100K"
-    amount_low: Decimal
-    amount_high: Decimal
-    trade_date: str  # ISO 8601
-    filed_date: str  # ISO 8601
-    days_to_file: int
-    price_at_trade: Decimal | None = None
-    committees: list[str] = field(default_factory=list)
-
-
-@dataclass
-class CongressTradesSummary:
-    symbol: str
-    total_trades: int
-    total_buys: int
-    total_sells: int
-    unique_politicians: int
-    net_sentiment: str  # "bullish" / "bearish" / "mixed"
-    top_buyers: list[str] = field(default_factory=list)
-    top_sellers: list[str] = field(default_factory=list)
-    recent_trades: list[CongressTrade] = field(default_factory=list)
-    party_breakdown: dict[str, dict[str, int]] = field(default_factory=dict)
+CAPITOL_TRADES_BASE = "https://www.capitoltrades.com"
 
 
 class CongressDataProvider:
@@ -88,17 +60,159 @@ class CongressDataProvider:
         log_api_call("congress", "top_traded", "success")
         return result
 
+    def _ct_get(self, path: str) -> BeautifulSoup:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; TradingAnalysis/1.0)",
+            "Accept": "text/html",
+        }
+        resp = httpx.get(f"{CAPITOL_TRADES_BASE}{path}", headers=headers, timeout=30, follow_redirects=True)
+        resp.raise_for_status()
+        return BeautifulSoup(resp.text, "html.parser")
+
+    def _parse_trade_rows(self, soup: BeautifulSoup, symbol: str = "") -> list[CongressTrade]:
+        trades: list[CongressTrade] = []
+        rows = soup.select("table tbody tr")
+        if not rows:
+            rows = soup.select("tr[class*='trade']")
+
+        for row in rows:
+            cells = row.select("td")
+            if len(cells) < 6:
+                continue
+            try:
+                trade = self._parse_row_cells(cells, symbol)
+                if trade:
+                    trades.append(trade)
+            except Exception:
+                continue
+        return trades
+
+    def _parse_row_cells(self, cells: list, symbol_hint: str) -> CongressTrade | None:
+        text = [c.get_text(strip=True) for c in cells]
+
+        # Capitol Trades table columns vary, try to extract key fields
+        politician = text[0] if len(text) > 0 else "Unknown"
+        # Extract party/chamber from politician cell
+        party = "Unknown"
+        chamber = "Unknown"
+        state = ""
+        pol_cell_text = cells[0].get_text(" ", strip=True) if cells else ""
+        if "Democrat" in pol_cell_text:
+            party = "Democrat"
+        elif "Republican" in pol_cell_text:
+            party = "Republican"
+        if "House" in pol_cell_text:
+            chamber = "House"
+        elif "Senate" in pol_cell_text:
+            chamber = "Senate"
+
+        # Try to find the ticker/company
+        ticker = symbol_hint
+        company = text[1] if len(text) > 1 else ""
+
+        # Transaction type
+        txn_type = "buy"
+        for t in text:
+            tl = t.lower()
+            if "sell" in tl or "sale" in tl:
+                txn_type = "sell"
+                break
+            elif "buy" in tl or "purchase" in tl:
+                txn_type = "buy"
+                break
+
+        # Amount range
+        amount_range = ""
+        amount_low = Decimal("0")
+        amount_high = Decimal("0")
+        for t in text:
+            if "$" in t and ("K" in t or "," in t or "-" in t):
+                amount_range = t
+                break
+
+        # Dates — look for date-like strings
+        trade_date = ""
+        filed_date = ""
+        for t in text:
+            if len(t) >= 8 and any(c.isdigit() for c in t):
+                try:
+                    for fmt in ["%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %b %Y"]:
+                        try:
+                            dt = datetime.strptime(t.strip(), fmt)
+                            if not trade_date:
+                                trade_date = dt.strftime("%Y-%m-%d")
+                            elif not filed_date:
+                                filed_date = dt.strftime("%Y-%m-%d")
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+
+        if not trade_date:
+            trade_date = datetime.utcnow().strftime("%Y-%m-%d")
+        if not filed_date:
+            filed_date = trade_date
+
+        # Days to file
+        try:
+            td = datetime.fromisoformat(trade_date)
+            fd = datetime.fromisoformat(filed_date)
+            days_to_file = (fd - td).days
+        except Exception:
+            days_to_file = 0
+
+        return CongressTrade(
+            politician=politician.split("\n")[0].strip(),
+            party=party,
+            chamber=chamber,
+            state=state,
+            symbol=ticker,
+            company=company,
+            transaction_type=txn_type,
+            amount_range=amount_range,
+            amount_low=amount_low,
+            amount_high=amount_high,
+            trade_date=trade_date,
+            filed_date=filed_date,
+            days_to_file=days_to_file,
+        )
+
     def _fetch_trades_by_symbol(self, symbol: str, days: int) -> list[CongressTrade]:
-        # TODO: Implement via Capitol Trades MCP or direct API
-        raise NotImplementedError("Connect to Capitol Trades MCP")
+        try:
+            soup = self._ct_get(f"/trades?ticker={symbol.upper()}")
+            trades = self._parse_trade_rows(soup, symbol.upper())
+            # Filter by date
+            cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+            return [t for t in trades if t.trade_date >= cutoff]
+        except Exception as e:
+            log_api_call("congress", f"trades/{symbol}", "error", str(e))
+            return []
 
     def _fetch_trades_by_politician(self, name: str, days: int) -> list[CongressTrade]:
-        # TODO: Implement via Capitol Trades MCP or direct API
-        raise NotImplementedError("Connect to Capitol Trades MCP")
+        try:
+            slug = name.lower().replace(" ", "-")
+            soup = self._ct_get(f"/politicians/{slug}")
+            trades = self._parse_trade_rows(soup)
+            cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+            return [t for t in trades if t.trade_date >= cutoff]
+        except Exception as e:
+            log_api_call("congress", f"trades/politician/{name}", "error", str(e))
+            return []
 
     def _fetch_top_traded(self, days: int) -> list[dict]:
-        # TODO: Implement via Capitol Trades MCP
-        raise NotImplementedError("Connect to Capitol Trades MCP")
+        try:
+            soup = self._ct_get("/trades")
+            trades = self._parse_trade_rows(soup)
+            # Count by symbol
+            counts: dict[str, int] = {}
+            for t in trades:
+                if t.symbol:
+                    counts[t.symbol] = counts.get(t.symbol, 0) + 1
+            return [{"symbol": s, "trade_count": c} for s, c in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:20]]
+        except Exception as e:
+            log_api_call("congress", "top_traded", "error", str(e))
+            return []
 
     def _build_summary(self, symbol: str, trades: list[CongressTrade]) -> CongressTradesSummary:
         buys = [t for t in trades if t.transaction_type == "buy"]
