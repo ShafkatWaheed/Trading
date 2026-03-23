@@ -60,6 +60,49 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol);
         CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(created_at);
 
+        CREATE TABLE IF NOT EXISTS backtest_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL, signal_name TEXT NOT NULL,
+            timeframe TEXT, lookback_days INTEGER, hold_days INTEGER,
+            total_trades INTEGER, wins INTEGER, losses INTEGER,
+            win_rate REAL, avg_return REAL, total_return REAL,
+            max_gain REAL, max_loss REAL, max_drawdown REAL,
+            sharpe_ratio REAL, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bt_symbol ON backtest_results(symbol);
+
+        CREATE TABLE IF NOT EXISTS backtest_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            backtest_id INTEGER, symbol TEXT NOT NULL,
+            signal_name TEXT, direction TEXT,
+            entry_date TEXT, entry_price REAL,
+            exit_date TEXT, exit_price REAL,
+            pnl REAL, pnl_percent REAL, hold_days INTEGER,
+            outcome TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS journal_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL, direction TEXT NOT NULL,
+            entry_date TEXT, entry_price REAL,
+            exit_date TEXT, exit_price REAL,
+            shares INTEGER, pnl REAL, pnl_percent REAL,
+            report_verdict TEXT, thesis TEXT, notes TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_symbol ON journal_trades(symbol);
+        CREATE INDEX IF NOT EXISTS idx_journal_status ON journal_trades(status);
+
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_name TEXT NOT NULL,
+            date TEXT NOT NULL, total_value REAL,
+            cash REAL, invested REAL,
+            daily_return REAL, cumulative_return REAL,
+            benchmark_return REAL, positions_json TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS api_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source TEXT NOT NULL,
@@ -216,3 +259,126 @@ def get_latest_report_for_symbol(symbol: str) -> dict | None:
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+# --- Backtest ---
+
+def save_backtest_result(data: dict) -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO backtest_results (symbol, signal_name, timeframe, lookback_days, hold_days, "
+        "total_trades, wins, losses, win_rate, avg_return, total_return, "
+        "max_gain, max_loss, max_drawdown, sharpe_ratio, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (data["symbol"], data["signal_name"], data.get("timeframe", ""),
+         data.get("lookback_days", 0), data.get("hold_days", 0),
+         data["total_trades"], data["wins"], data["losses"],
+         data["win_rate"], data["avg_return"], data["total_return"],
+         data["max_gain"], data["max_loss"], data["max_drawdown"],
+         data["sharpe_ratio"], datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    bt_id = cursor.lastrowid
+    conn.close()
+    return bt_id
+
+
+def save_backtest_trade(bt_id: int, trade: dict) -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO backtest_trades (backtest_id, symbol, signal_name, direction, "
+        "entry_date, entry_price, exit_date, exit_price, pnl, pnl_percent, hold_days, outcome) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (bt_id, trade["symbol"], trade["signal_name"], trade["direction"],
+         trade["entry_date"], trade["entry_price"], trade["exit_date"], trade["exit_price"],
+         trade["pnl"], trade["pnl_percent"], trade["hold_days"], trade["outcome"]),
+    )
+    conn.commit()
+    conn.close()
+
+
+# --- Journal ---
+
+def save_journal_trade(symbol: str, direction: str, entry_date: str, entry_price: float,
+                       shares: int, report_verdict: str = "", thesis: str = "") -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO journal_trades (symbol, direction, entry_date, entry_price, "
+        "shares, report_verdict, thesis, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+        (symbol.upper(), direction, entry_date, entry_price, shares,
+         report_verdict, thesis, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    trade_id = cursor.lastrowid
+    conn.close()
+    return trade_id
+
+
+def close_journal_trade(trade_id: int, exit_price: float, exit_date: str = "", notes: str = "") -> None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM journal_trades WHERE id = ?", (trade_id,)).fetchone()
+    if not row:
+        conn.close()
+        return
+    entry_price = row["entry_price"]
+    shares = row["shares"]
+    direction = row["direction"]
+
+    if direction == "long":
+        pnl = (exit_price - entry_price) * shares
+    else:
+        pnl = (entry_price - exit_price) * shares
+    pnl_pct = ((exit_price - entry_price) / entry_price * 100) if direction == "long" else ((entry_price - exit_price) / entry_price * 100)
+
+    if not exit_date:
+        exit_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+    conn.execute(
+        "UPDATE journal_trades SET exit_date=?, exit_price=?, pnl=?, pnl_percent=?, notes=?, status='closed' WHERE id=?",
+        (exit_date, exit_price, pnl, pnl_pct, notes, trade_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_journal_trades(status: str | None = None, symbol: str | None = None) -> list[dict]:
+    conn = get_connection()
+    query = "SELECT * FROM journal_trades WHERE 1=1"
+    params: list = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol.upper())
+    query += " ORDER BY created_at DESC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Portfolio Snapshots ---
+
+def save_portfolio_snapshot(name: str, date: str, total_value: float, cash: float,
+                            invested: float, daily_return: float, cumulative_return: float,
+                            benchmark_return: float, positions_json: str = "") -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO portfolio_snapshots (portfolio_name, date, total_value, cash, invested, "
+        "daily_return, cumulative_return, benchmark_return, positions_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, date, total_value, cash, invested, daily_return, cumulative_return,
+         benchmark_return, positions_json),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_portfolio_history(name: str) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM portfolio_snapshots WHERE portfolio_name = ? ORDER BY date",
+        (name,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

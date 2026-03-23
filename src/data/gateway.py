@@ -145,3 +145,38 @@ class DataGateway:
             return self._news.search_research(query)
         except Exception:
             return []
+
+    # ── Sector Flows ────────────────────────────────────────────
+
+    def get_sector_flows(self, period: str = "1mo") -> list[dict]:
+        """Fetch sector ETF performance as proxy for money flows."""
+        try:
+            import yfinance as yf
+            sectors = {
+                "XLK": "Technology", "XLV": "Healthcare", "XLF": "Financials",
+                "XLY": "Consumer Discretionary", "XLP": "Consumer Staples",
+                "XLE": "Energy", "XLI": "Industrials", "XLRE": "Real Estate",
+                "XLU": "Utilities", "XLB": "Materials", "XLC": "Communication Services",
+            }
+            results = []
+            for ticker, name in sectors.items():
+                try:
+                    data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+                    if data.empty or len(data) < 2:
+                        continue
+                    start_price = float(data["Close"].iloc[0])
+                    end_price = float(data["Close"].iloc[-1])
+                    change_pct = ((end_price - start_price) / start_price) * 100
+                    volume_avg = float(data["Volume"].mean())
+                    results.append({
+                        "ticker": ticker, "sector": name,
+                        "change_pct": round(change_pct, 2),
+                        "start_price": round(start_price, 2),
+                        "end_price": round(end_price, 2),
+                        "avg_volume": int(volume_avg),
+                    })
+                except Exception:
+                    continue
+            return sorted(results, key=lambda x: x["change_pct"])
+        except Exception:
+            return []
