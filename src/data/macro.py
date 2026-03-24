@@ -146,16 +146,42 @@ class MacroProvider:
     def _build_snapshot(self) -> MacroSnapshot:
         snapshot = MacroSnapshot(timestamp=datetime.utcnow())
 
-        # Fetch from Alpha Vantage (rate limit: 5/min, so fetch key ones)
+        # ── Yahoo Finance for real-time indicators (no rate limit) ──
+        try:
+            import yfinance as yf
+            yahoo_map = {
+                "^TNX": "treasury_10y",   # 10Y Treasury yield (in %)
+                "^VIX": "vix",
+                "DX-Y.NYB": "dollar_index",
+            }
+            for ticker, attr in yahoo_map.items():
+                try:
+                    data = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
+                    if not data.empty:
+                        if hasattr(data.columns, 'levels') and data.columns.nlevels > 1:
+                            data.columns = data.columns.get_level_values(0)
+                        val = float(data["Close"].iloc[-1])
+                        setattr(snapshot, attr, Decimal(str(round(val, 4))))
+                except Exception:
+                    continue
+
+            # 2Y Treasury — ^TWO is unreliable, try IRX (13-week) as proxy or compute
+            try:
+                data_2y = yf.download("2YY=F", period="5d", progress=False, auto_adjust=True)
+                if not data_2y.empty:
+                    if hasattr(data_2y.columns, 'levels') and data_2y.columns.nlevels > 1:
+                        data_2y.columns = data_2y.columns.get_level_values(0)
+                    snapshot.treasury_2y = Decimal(str(round(float(data_2y["Close"].iloc[-1]), 4)))
+            except Exception:
+                pass
+        except ImportError:
+            pass
+
+        # ── Alpha Vantage for slow-moving series (2 calls only) ──
         av_fields = {
             "fed_funds_rate": "fed_funds_rate",
-            "treasury_10y": "treasury_10y",
-            "treasury_2y": "treasury_2y",
-            "cpi_yoy": "cpi",
             "unemployment_rate": "unemployment_rate",
-            "gdp_growth": "real_gdp",
         }
-
         for attr, series in av_fields.items():
             try:
                 point = self.get_latest(series)
@@ -163,6 +189,28 @@ class MacroProvider:
                     setattr(snapshot, attr, point.value)
             except Exception:
                 continue
+
+        # CPI — fetch separately, use YoY change
+        try:
+            cpi_data = self.get_series("cpi", limit=13)
+            if len(cpi_data) >= 13:
+                current = float(cpi_data[0].value)
+                year_ago = float(cpi_data[12].value)
+                yoy = ((current - year_ago) / year_ago) * 100
+                snapshot.cpi_yoy = Decimal(str(round(yoy, 2)))
+        except Exception:
+            pass
+
+        # GDP — fetch and compute growth rate
+        try:
+            gdp_data = self.get_series("real_gdp", limit=5)
+            if len(gdp_data) >= 2:
+                current = float(gdp_data[0].value)
+                prev = float(gdp_data[1].value)
+                growth = ((current - prev) / prev) * 100
+                snapshot.gdp_growth = Decimal(str(round(growth, 2)))
+        except Exception:
+            pass
 
         # Compute yield spread
         if snapshot.treasury_10y and snapshot.treasury_2y:

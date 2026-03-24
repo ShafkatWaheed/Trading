@@ -169,6 +169,41 @@ class MarketDataService:
             df = df.tail(period_days).reset_index(drop=True)
         return df[["date", "open", "high", "low", "close", "volume"]]
 
+    # --- Earnings Calendar ---
+
+    def get_earnings_calendar(self, symbol: str) -> list[dict]:
+        cache_key = f"market:earnings:{symbol}"
+        cached = cache_get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            ticker = yf.Ticker(symbol)
+            dates = ticker.earnings_dates
+            if dates is None or dates.empty:
+                return []
+
+            results = []
+            for date_idx, row in dates.iterrows():
+                date_str = date_idx.strftime("%Y-%m-%d") if hasattr(date_idx, 'strftime') else str(date_idx)[:10]
+                eps_est = row.get("EPS Estimate")
+                eps_act = row.get("Reported EPS")
+                surprise = row.get("Surprise(%)")
+
+                results.append({
+                    "date": date_str,
+                    "eps_estimate": float(eps_est) if eps_est is not None and str(eps_est) != "nan" else None,
+                    "eps_actual": float(eps_act) if eps_act is not None and str(eps_act) != "nan" else None,
+                    "surprise_pct": float(surprise) if surprise is not None and str(surprise) != "nan" else None,
+                })
+
+            cache_set(cache_key, results, ttl_minutes=CACHE_TTL_FUNDAMENTALS)
+            log_api_call("yahoo", f"earnings/{symbol}", "success")
+            return results
+        except Exception as e:
+            log_api_call("yahoo", f"earnings/{symbol}", "error", str(e))
+            return []
+
     # --- Alpha Vantage (REST API) ---
 
     @with_retry(max_retries=2, source="alphavantage")

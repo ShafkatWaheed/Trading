@@ -111,9 +111,14 @@ def detect_alerts(symbol: str, new_report_content: str) -> list[Alert]:
     except (ValueError, TypeError):
         pass
 
-    # Save all alerts to DB
+    # Save all alerts to DB + send push notifications
     for a in alerts:
         save_alert(a.symbol, a.alert_type, a.message, a.old_value, a.new_value, a.severity)
+        try:
+            from src.notifications import send_alert as push_alert
+            push_alert(a.symbol, a.alert_type, a.message, a.severity)
+        except Exception:
+            pass  # notifications are best-effort
 
     return alerts
 

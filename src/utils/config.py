@@ -21,3 +21,12 @@ CACHE_TTL_NEWS: int = 60  # 1 hour
 # Rate limits (requests per minute)
 ALPHAVANTAGE_RATE_LIMIT: int = 5
 YAHOO_RATE_LIMIT: int = 60
+
+# Notifications
+SLACK_WEBHOOK_URL: str = os.getenv("SLACK_WEBHOOK_URL", "")
+DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
+SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+SMTP_PORT: str = os.getenv("SMTP_PORT", "587")
+SMTP_USER: str = os.getenv("SMTP_USER", "")
+SMTP_PASS: str = os.getenv("SMTP_PASS", "")
+ALERT_EMAIL: str = os.getenv("ALERT_EMAIL", "")

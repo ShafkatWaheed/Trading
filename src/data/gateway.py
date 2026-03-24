@@ -71,6 +71,12 @@ class DataGateway:
     def get_historical(self, symbol: str, period_days: int = 180) -> pd.DataFrame:
         return self._market.get_historical(symbol, period_days)
 
+    def get_earnings_calendar(self, symbol: str) -> list[dict]:
+        try:
+            return self._market.get_earnings_calendar(symbol)
+        except Exception:
+            return []
+
     def get_stock(self, symbol: str) -> Stock:
         """Convenience: fetch quote + fundamentals together. Either can fail."""
         quote = None

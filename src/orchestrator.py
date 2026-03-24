@@ -33,17 +33,28 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
     symbol = symbol.upper()
     gw = DataGateway()
 
-    # ── Fetch data (each wrapped — missing data = None) ────────
+    # ── Fetch data (parallelized — missing data = None) ────────
 
-    stock = gw.get_stock(symbol)
+    from concurrent.futures import ThreadPoolExecutor
 
-    historical = _safe(lambda: gw.get_historical(symbol))
-    macro_snapshot = gw.get_macro_snapshot()
-    options_summary = gw.get_options_summary(symbol)
-    insider_summary = gw.get_insider_summary(symbol)
-    institutional_summary = gw.get_institutional_summary(symbol)
-    congress_summary = gw.get_congress_summary(symbol)
-    news_articles = gw.get_stock_news(symbol)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        f_stock = executor.submit(lambda: gw.get_stock(symbol))
+        f_hist = executor.submit(lambda: _safe(lambda: gw.get_historical(symbol)))
+        f_macro = executor.submit(lambda: gw.get_macro_snapshot())
+        f_options = executor.submit(lambda: gw.get_options_summary(symbol))
+        f_insider = executor.submit(lambda: gw.get_insider_summary(symbol))
+        f_institutional = executor.submit(lambda: gw.get_institutional_summary(symbol))
+        f_congress = executor.submit(lambda: gw.get_congress_summary(symbol))
+        f_news = executor.submit(lambda: gw.get_stock_news(symbol))
+
+    stock = f_stock.result()
+    historical = f_hist.result()
+    macro_snapshot = f_macro.result()
+    options_summary = f_options.result()
+    insider_summary = f_insider.result()
+    institutional_summary = f_institutional.result()
+    congress_summary = f_congress.result()
+    news_articles = f_news.result()
 
     # ── Run analysis ───────────────────────────────────────────
 
