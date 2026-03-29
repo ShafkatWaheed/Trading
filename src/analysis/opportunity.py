@@ -276,3 +276,103 @@ def _detect_strategies(
     secondaries = [name for _, name in matched[1:]]
 
     return primary, secondaries
+
+
+def explain_strategy(score: OpportunityScore, tech: "TechnicalIndicators | None" = None) -> str:
+    """Generate a 2-3 sentence explanation of why this strategy was detected, using actual indicator values."""
+    sym = score.symbol
+    strat = score.strategy
+
+    # Gather indicator values for dynamic text
+    rsi = f"{float(tech.rsi_14):.0f}" if tech and tech.rsi_14 else None
+    macd_h = f"{float(tech.macd_histogram):.2f}" if tech and tech.macd_histogram else None
+    sma50 = f"${float(tech.sma_50):.2f}" if tech and tech.sma_50 else None
+    sma200 = f"${float(tech.sma_200):.2f}" if tech and tech.sma_200 else None
+    support = f"${float(tech.support):.2f}" if tech and tech.support else None
+    resistance = f"${float(tech.resistance):.2f}" if tech and tech.resistance else None
+    trend = tech.trend if tech else "unknown"
+    vol_trend = tech.volume_trend if tech else "normal"
+
+    # Factor summary
+    factors_aligned = sum(1 for s in [score.volume_score, score.price_score, score.flow_score, score.risk_reward_score] if s >= 16)
+
+    if strat == "Momentum":
+        parts = [f"{sym} is in a strong {trend}"]
+        if rsi:
+            parts.append(f"with RSI at {rsi} (healthy momentum zone)")
+        if macd_h:
+            parts.append(f"and MACD histogram positive at {macd_h}")
+        if vol_trend == "increasing":
+            parts.append("Volume is above average, confirming buying pressure.")
+        else:
+            parts.append(f"{factors_aligned} of 4 factors are aligned.")
+        return ". ".join(parts[:2]) + ". " + parts[-1]
+
+    if strat == "Volume Spike":
+        base = f"{sym} shows unusual volume activity — significantly above the 20-day average."
+        if trend == "uptrend":
+            return base + " Combined with an uptrend, this suggests institutional accumulation. Watch for a breakout continuation."
+        elif trend == "downtrend":
+            return base + " In a downtrend, high volume may signal capitulation or distribution. Proceed with caution."
+        return base + f" {factors_aligned} of 4 scoring factors are favorable. Monitor for directional confirmation."
+
+    if strat == "Breakout":
+        base = f"{sym} is trading near its resistance level"
+        if resistance:
+            base += f" at {resistance}"
+        base += "."
+        if vol_trend == "increasing":
+            return base + " Volume is rising, which increases the probability of a successful breakout. A close above resistance confirms the move."
+        return base + f" Risk/reward ratio is {score.risk_reward_ratio}. Watch for volume confirmation before entering."
+
+    if strat == "Oversold Bounce":
+        base = f"{sym}'s RSI dropped to {rsi} (oversold territory below 30)" if rsi else f"{sym} is in oversold territory"
+        if support:
+            base += f". Price is near the {support} support level with a {score.risk_reward_ratio} risk/reward ratio"
+        base += "."
+        return base + " Historically, extreme oversold readings tend to produce short-term bounces. Look for RSI turning up as confirmation."
+
+    if strat == "Mean Reversion":
+        return f"{sym} has pulled back significantly from its mean in a {trend}. Price is extended below the 20-day moving average, suggesting a potential reversion. This is a counter-trend play — use tight stops and smaller position sizes."
+
+    if strat == "Golden Cross":
+        base = f"{sym}'s 50-day moving average just crossed above the 200-day moving average"
+        if sma50 and sma200:
+            base += f" ({sma50} > {sma200})"
+        return base + ". This is one of the most watched bullish signals — it historically precedes sustained uptrends. Long-term investors often use this as a buy signal."
+
+    if strat == "Death Cross":
+        base = f"{sym}'s 50-day MA just crossed below the 200-day MA"
+        if sma50 and sma200:
+            base += f" ({sma50} < {sma200})"
+        return base + ". This bearish signal historically precedes extended downtrends. Consider reducing exposure or waiting for stabilization."
+
+    if strat == "Insider Accumulation":
+        return f"Multiple corporate insiders purchased {sym} stock within 7 days (cluster buy). This is one of the strongest bullish signals — insiders buying together often precedes positive catalysts. They know their company best."
+
+    if strat == "Congress Buying":
+        return f"Members of Congress from both parties have been buying {sym}. Bipartisan congressional buying can indicate upcoming favorable legislation or sector tailwinds. Note: trades are disclosed with up to 45-day delay."
+
+    if strat == "Earnings Catalyst":
+        return f"{sym} has earnings approaching within 14 days and the technical setup is favorable. Earnings can produce 5-15% moves in either direction. Consider options strategies to define risk around the event."
+
+    if strat == "Dividend Play":
+        return f"{sym} offers an attractive dividend yield above 3%. With stable fundamentals, this provides income while you wait. Check ex-dividend date timing — buy before ex-date to capture the next payment."
+
+    if strat == "Bollinger Squeeze":
+        return f"{sym}'s Bollinger Bands are narrowing (low volatility squeeze). Volatility contraction typically precedes a large directional move. The direction isn't known yet — wait for the breakout, then enter with the trend."
+
+    if strat == "Support Bounce":
+        base = f"{sym} is testing a key support level"
+        if support:
+            base += f" at {support}"
+        return base + f". Risk/reward is {score.risk_reward_ratio} — defined risk below support with upside to resistance. This is a high-probability entry when support holds."
+
+    if strat == "Gap Fill":
+        return f"{sym} has a price gap that is filling back toward the pre-gap level. Gap fills are common — about 70% of gaps fill within a few weeks. This is a reversion trade with a clear target at the gap close."
+
+    if strat == "Sector Leader":
+        return f"{sym} is the top performer in its sector, which is currently seeing positive money inflows. Leading stocks in leading sectors tend to outperform. Ride the sector rotation momentum."
+
+    # Neutral / fallback
+    return f"{sym} shows no clear trading setup at this time. {factors_aligned} of 4 factors are favorable. Consider waiting for a stronger signal alignment before entering a position."

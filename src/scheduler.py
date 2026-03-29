@@ -117,6 +117,73 @@ def start_scheduler(schedule_hours: int = 24, pdf: bool = False) -> None:
         scheduler.shutdown()
 
 
+def run_agent_cycle() -> dict:
+    """Run one AI agent trading cycle. Called by scheduler."""
+    from src.agent import TradingAgent
+    init_db()
+    try:
+        agent = TradingAgent()
+        result = agent.run_cycle()
+        print(f"  Agent cycle complete: {result.get('trades_executed', 0)} trades, portfolio ${result.get('portfolio_value', 0):,.0f}")
+        return result
+    except Exception as e:
+        print(f"  Agent cycle error: {e}")
+        return {"error": str(e)}
+
+
+def start_agent_scheduler() -> None:
+    """Start background agent scheduler based on config frequency."""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.interval import IntervalTrigger
+    except ImportError:
+        print("APScheduler not installed")
+        return
+
+    from src.utils.db import get_connection
+
+    # Read frequency from config
+    conn = get_connection()
+    row = conn.execute("SELECT rebalance_frequency, last_run FROM agent_config WHERE id=1").fetchone()
+    conn.close()
+
+    if not row:
+        return
+
+    freq = row["rebalance_frequency"] if row else "manual"
+    if freq == "manual":
+        return
+
+    interval_map = {"daily": 24, "weekly": 168, "monthly": 720}
+    hours = interval_map.get(freq, 168)
+
+    # Check if overdue
+    last_run = row["last_run"] if row else None
+    run_now = False
+    if last_run:
+        try:
+            from datetime import datetime as dt, timedelta
+            last_dt = dt.strptime(last_run[:16], "%Y-%m-%d %H:%M")
+            if dt.utcnow() > last_dt + timedelta(hours=hours):
+                run_now = True
+        except Exception:
+            run_now = True
+    else:
+        run_now = True
+
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        run_agent_cycle,
+        trigger=IntervalTrigger(hours=hours),
+        id="agent_cycle",
+        name=f"AI Agent ({freq})",
+        next_run_time=datetime.utcnow() if run_now else None,
+        replace_existing=True,
+    )
+    scheduler.start()
+    print(f"  Agent scheduler started — running {freq} (every {hours}h)")
+
+
 def _print_scan_summary(results: list[dict], alerts: list[dict]) -> None:
     print(f"\n{'='*60}")
     print(f"  SCAN COMPLETE — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")

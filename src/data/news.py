@@ -17,9 +17,19 @@ class NewsProvider:
         if cached:
             return cached
 
+        # Get company name for better search results
+        company_name = symbol
+        try:
+            import yfinance as yf
+            info = yf.Ticker(symbol).info
+            company_name = info.get("shortName") or info.get("longName") or symbol
+        except Exception:
+            pass
+
         results = []
-        results.extend(self._tavily_search(f"{symbol} stock news", max_results=7))
-        results.extend(self._exa_search(f"{symbol} earnings analyst rating", num_results=3))
+        # Use company name + ticker for specific results
+        results.extend(self._tavily_search(f'"{company_name}" OR "{symbol}" stock news earnings', max_results=7))
+        results.extend(self._exa_search(f"{company_name} {symbol} stock analysis earnings outlook", num_results=3))
 
         # Deduplicate by URL
         seen: set[str] = set()
@@ -29,8 +39,21 @@ class NewsProvider:
                 seen.add(r["url"])
                 unique.append(r)
 
-        cache_set(cache_key, unique, ttl_minutes=60)
-        return unique
+        # Filter out results that don't mention the stock
+        symbol_upper = symbol.upper()
+        name_lower = company_name.lower()
+        filtered = []
+        for r in unique:
+            text = (r.get("title", "") + " " + r.get("content_snippet", "")).lower()
+            if symbol_upper.lower() in text or name_lower in text:
+                filtered.append(r)
+
+        # If filtering removed everything, keep originals
+        if not filtered:
+            filtered = unique
+
+        cache_set(cache_key, filtered, ttl_minutes=60)
+        return filtered
 
     def search_news(self, query: str, max_results: int = 10) -> list[dict]:
         cache_key = f"news:search:{query}:{max_results}"

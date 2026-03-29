@@ -50,6 +50,10 @@ def build_report(
     congress_score: CongressSignalScore | None = None,
     relative_value_score: RelativeValueScore | None = None,
     confluence: ConfluenceResult | None = None,
+    geopolitical_data: dict | None = None,
+    analyst_data: dict | None = None,
+    holders_data: dict | None = None,
+    community_buzz: dict | None = None,
 ) -> Report:
     # Build sections
     sections = [
@@ -69,6 +73,18 @@ def build_report(
         sections.append(_congress_section(congress_score))
     if relative_value_score:
         sections.append(_relative_value_section(relative_value_score))
+    if geopolitical_data:
+        sections.append(_geopolitical_section(geopolitical_data))
+        # Also add disruption section if disruption data exists
+        disruption_data = geopolitical_data.get("disruption_themes")
+        if disruption_data:
+            sections.append(_disruption_section(disruption_data, geopolitical_data.get("symbol", ""), geopolitical_data.get("stock_sector", "")))
+    if analyst_data:
+        sections.append(_analyst_section(analyst_data))
+    if holders_data:
+        sections.append(_holders_section(holders_data))
+    if community_buzz:
+        sections.append(_community_buzz_section(community_buzz))
     if confluence:
         sections.append(_confluence_section(confluence))
 
@@ -160,7 +176,7 @@ def _sentiment_section(sentiment: SentimentResult) -> ReportSection:
         title="News Sentiment",
         content=sentiment.summary,
         data={
-            "score": str(sentiment.overall_score),
+            "score": str(round(sentiment.overall_score, 5)),
             "sentiment": sentiment.overall_sentiment,
             "article_count": len(sentiment.articles),
         },
@@ -209,6 +225,256 @@ def _congress_section(cong: CongressSignalScore) -> ReportSection:
             "score": cong.score, "signal": cong.signal,
             "bipartisan": cong.bipartisan, "factors": cong.factors,
             "disclaimer": cong.disclaimer,
+        },
+    )
+
+
+def _geopolitical_section(geo_data: dict) -> ReportSection:
+    """Build geopolitical & event risk section from event data."""
+    events = geo_data.get("events", [])
+    sector = geo_data.get("stock_sector", "")
+    symbol = geo_data.get("symbol", "")
+
+    if not events:
+        return ReportSection(
+            title="Geopolitical & Event Risk",
+            content="No major geopolitical risks detected. Low-threat environment.",
+            data={"score": 0, "signal": "clear", "threat_level": "normal", "events": [], "sector_exposure": "none"},
+        )
+
+    # Check if this stock's sector is in any "at risk" list
+    high_count = sum(1 for e in events if e.get("severity") == "high")
+    sector_at_risk = False
+    sector_benefits = False
+    risk_events = []
+    benefit_events = []
+
+    for e in events:
+        neg = [s.lower() for s in e.get("negative_sectors", [])]
+        pos = [s.lower() for s in e.get("positive_sectors", [])]
+        if sector and any(sector.lower() in s for s in neg):
+            sector_at_risk = True
+            risk_events.append(e)
+        if sector and any(sector.lower() in s for s in pos):
+            sector_benefits = True
+            benefit_events.append(e)
+
+    # Determine signal
+    if sector_at_risk and high_count > 0:
+        signal = "bearish"
+        score = -1
+        content = f"HIGH RISK — {symbol}'s sector ({sector}) is directly exposed to {len(risk_events)} active geopolitical threat(s)"
+    elif sector_at_risk:
+        signal = "cautionary"
+        score = -1
+        content = f"MODERATE RISK — {symbol}'s sector ({sector}) may be affected by current geopolitical events"
+    elif sector_benefits:
+        signal = "bullish"
+        score = 1
+        content = f"TAILWIND — {symbol}'s sector ({sector}) may benefit from current geopolitical dynamics"
+    else:
+        signal = "neutral"
+        score = 0
+        content = f"LOW EXPOSURE — {symbol}'s sector ({sector}) has minimal direct exposure to current events"
+
+    threat_level = "elevated" if high_count >= 3 else "heightened" if high_count >= 1 else "normal"
+
+    return ReportSection(
+        title="Geopolitical & Event Risk",
+        content=content,
+        data={
+            "score": score,
+            "signal": signal,
+            "threat_level": threat_level,
+            "high_impact_count": high_count,
+            "sector": sector,
+            "sector_at_risk": sector_at_risk,
+            "sector_benefits": sector_benefits,
+            "events": [{"type": e["type"], "title": e.get("title", ""), "severity": e.get("severity", "")} for e in events[:4]],
+            "risk_events": [e.get("title", "") for e in risk_events[:2]],
+            "benefit_events": [e.get("title", "") for e in benefit_events[:2]],
+        },
+    )
+
+
+def _disruption_section(themes: list[dict], symbol: str, sector: str) -> ReportSection:
+    """Build disruption exposure section for a specific stock."""
+    if not themes:
+        return ReportSection(
+            title="Disruptive Technology",
+            content="No active disruption themes detected.",
+            data={"score": 0, "signal": "neutral", "themes": []},
+        )
+
+    # Check if this stock is a beneficiary or at risk
+    symbol_upper = symbol.upper()
+    sector_lower = sector.lower() if sector else ""
+    beneficiary_themes = []
+    risk_themes = []
+
+    for t in themes:
+        if symbol_upper in t.get("beneficiaries", []):
+            beneficiary_themes.append(t)
+        elif any(sector_lower in s.lower() for s in t.get("at_risk_sectors", [])):
+            risk_themes.append(t)
+        elif any(sector_lower in s.lower() for s in t.get("beneficiary_sectors", [])):
+            beneficiary_themes.append(t)
+
+    if beneficiary_themes:
+        top = beneficiary_themes[0]
+        signal = "bullish"
+        score = 1
+        content = f"TAILWIND — {symbol} benefits from {top['name']} disruption. This technology shift is creating demand for {symbol}'s products/services."
+    elif risk_themes:
+        top = risk_themes[0]
+        signal = "bearish"
+        score = -1
+        content = f"HEADWIND — {symbol}'s sector is being disrupted by {top['name']}. Revenue growth ceiling may be lower than consensus expects."
+    else:
+        signal = "neutral"
+        score = 0
+        content = f"LOW EXPOSURE — {symbol}'s sector ({sector}) has no direct disruption tailwind or headwind from current technology shifts."
+
+    return ReportSection(
+        title="Disruptive Technology",
+        content=content,
+        data={
+            "score": score,
+            "signal": signal,
+            "sector": sector,
+            "beneficiary_of": [t["name"] for t in beneficiary_themes],
+            "at_risk_from": [t["name"] for t in risk_themes],
+            "themes": [{"name": t["name"], "level": t.get("level", ""), "icon": t.get("icon", "")} for t in themes[:4]],
+        },
+    )
+
+
+def _analyst_section(data: dict) -> ReportSection:
+    """Build analyst ratings section."""
+    consensus = data.get("consensus", "hold")
+    target_mean = data.get("target_mean")
+    target_high = data.get("target_high")
+    target_low = data.get("target_low")
+    num_analysts = data.get("num_analysts", 0)
+    current_price = data.get("current_price")
+    strong_buy = data.get("strong_buy", 0)
+    buy = data.get("buy", 0)
+    hold = data.get("hold", 0)
+    sell = data.get("sell", 0)
+    strong_sell = data.get("strong_sell", 0)
+
+    # Determine signal
+    bullish_count = strong_buy + buy
+    bearish_count = sell + strong_sell
+    total = bullish_count + bearish_count + hold
+
+    if consensus in ("strong_buy", "buy") and bullish_count > bearish_count * 3:
+        signal = "bullish"
+        score = 1
+    elif consensus in ("sell", "strong_sell") or bearish_count > bullish_count:
+        signal = "bearish"
+        score = -1
+    else:
+        signal = "neutral"
+        score = 0
+
+    # Upside/downside
+    upside_pct = None
+    if target_mean and current_price and current_price > 0:
+        upside_pct = ((target_mean - current_price) / current_price) * 100
+
+    content_parts = [f"Consensus: {consensus.replace('_', ' ').title()}"]
+    if num_analysts:
+        content_parts.append(f"{num_analysts} analysts")
+    if upside_pct is not None:
+        content_parts.append(f"{'Upside' if upside_pct > 0 else 'Downside'}: {upside_pct:+.1f}% to target ${target_mean:.2f}")
+
+    return ReportSection(
+        title="Analyst Ratings",
+        content=" | ".join(content_parts),
+        data={
+            "score": score,
+            "signal": signal,
+            "consensus": consensus,
+            "target_mean": target_mean,
+            "target_high": target_high,
+            "target_low": target_low,
+            "current_price": current_price,
+            "upside_pct": round(upside_pct, 1) if upside_pct else None,
+            "num_analysts": num_analysts,
+            "strong_buy": strong_buy,
+            "buy": buy,
+            "hold": hold,
+            "sell": sell,
+            "strong_sell": strong_sell,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+        },
+    )
+
+
+def _holders_section(data: dict) -> ReportSection:
+    """Build institutional & fund holders section."""
+    inst_pct = data.get("institutional_pct", 0)
+    insider_pct = data.get("insider_pct", 0)
+    inst_count = data.get("institutional_count", 0)
+    buyers = data.get("buyers", 0)
+    sellers = data.get("sellers", 0)
+    net_dir = data.get("net_direction", "stable")
+    signal = data.get("signal", "neutral")
+    score = data.get("score", 0)
+    notable = data.get("notable", [])
+    top_inst = data.get("top_institutions", [])
+
+    content = f"Institutions: {inst_pct:.1f}% owned by {inst_count} institutions | Insiders: {insider_pct:.1f}% | Net flow: {net_dir} ({buyers} buying, {sellers} selling)"
+    if notable:
+        content += " | " + "; ".join(notable)
+
+    return ReportSection(
+        title="Institutional Holders",
+        content=content,
+        data={
+            "score": score,
+            "signal": signal,
+            "institutional_pct": inst_pct,
+            "insider_pct": insider_pct,
+            "institutional_count": inst_count,
+            "buyers": buyers,
+            "sellers": sellers,
+            "net_direction": net_dir,
+            "notable": notable,
+            "top_holders": [f"{i['name'][:25]} ({i['pct_held']:.1f}%, {i['pct_change']:+.1f}%)" for i in top_inst[:5]],
+        },
+    )
+
+
+def _community_buzz_section(data: dict) -> ReportSection:
+    """Build community buzz section."""
+    signal = data.get("signal", "neutral")
+    score = data.get("score", 0)
+    total = data.get("total_mentions", 0)
+    bullish_pct = data.get("bullish_pct", 0)
+    bearish_pct = data.get("bearish_pct", 0)
+    buzz_level = data.get("buzz_level", "low")
+    sources = data.get("sources", [])
+    posts = data.get("posts", [])
+
+    content = f"Buzz: {buzz_level} ({total} mentions) | Sentiment: {bullish_pct}% bullish, {bearish_pct}% bearish"
+    if sources:
+        content += f" | Sources: {', '.join(sources)}"
+
+    return ReportSection(
+        title="Community Buzz",
+        content=content,
+        data={
+            "score": score,
+            "signal": signal,
+            "total_mentions": total,
+            "bullish_pct": bullish_pct,
+            "bearish_pct": bearish_pct,
+            "buzz_level": buzz_level,
+            "sources": sources,
+            "top_posts": [{"title": p["title"], "source": p["source"], "sentiment": p["sentiment"]} for p in posts[:5]],
         },
     )
 

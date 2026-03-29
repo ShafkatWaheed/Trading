@@ -37,6 +37,6 @@ class RateLimiter:
 
 
 # Pre-configured limiters for each provider
-AV_LIMITER = RateLimiter(max_calls=5, period_seconds=60)
+AV_LIMITER = RateLimiter(max_calls=1, period_seconds=15)
 POLYGON_LIMITER = RateLimiter(max_calls=5, period_seconds=60)
 SEC_LIMITER = RateLimiter(max_calls=10, period_seconds=1)

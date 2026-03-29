@@ -72,8 +72,9 @@ class MacroProvider:
             raise ValueError(f"Unknown series: {series_name}. Available: {list(AV_ECONOMIC.keys())}")
 
         data = self._fetch_av_series(series_name, limit)
-        cache_set(cache_key, [self._point_to_dict(d) for d in data], ttl_minutes=CACHE_TTL_FUNDAMENTALS)
-        log_api_call("alphavantage", f"macro/{series_name}", "success")
+        if data:  # Only cache non-empty results
+            cache_set(cache_key, [self._point_to_dict(d) for d in data], ttl_minutes=CACHE_TTL_FUNDAMENTALS)
+            log_api_call("alphavantage", f"macro/{series_name}", "success")
         return data
 
     def get_latest(self, series_name: str) -> MacroDataPoint | None:
@@ -177,40 +178,52 @@ class MacroProvider:
         except ImportError:
             pass
 
-        # ── Alpha Vantage for slow-moving series (2 calls only) ──
-        av_fields = {
-            "fed_funds_rate": "fed_funds_rate",
-            "unemployment_rate": "unemployment_rate",
-        }
-        for attr, series in av_fields.items():
+        # ── Alpha Vantage for slow-moving economic series ──
+        # These change monthly/quarterly — make direct calls, skip get_series cache layer
+        # to avoid caching empty results from rate limits
+        av_direct_calls = [
+            ("FEDERAL_FUNDS_RATE", {"interval": "monthly"}),
+            ("UNEMPLOYMENT", {}),
+            ("CPI", {"interval": "monthly"}),
+            ("REAL_GDP", {"interval": "quarterly"}),
+        ]
+
+        av_results: dict[str, list[dict]] = {}
+        for func_name, extra_params in av_direct_calls:
             try:
-                point = self.get_latest(series)
-                if point:
-                    setattr(snapshot, attr, point.value)
-            except Exception:
-                continue
+                AV_LIMITER.acquire()
+                params = {"function": func_name, "apikey": ALPHAVANTAGE_API_KEY}
+                params.update(extra_params)
+                resp = httpx.get(self.BASE_URL, params=params, timeout=30)
+                raw = resp.json()
+                data_list = raw.get("data", [])
+                valid = [d for d in data_list if d.get("value", ".") != "." and d.get("value", "") != ""]
+                if valid:
+                    av_results[func_name] = valid
+                    log_api_call("alphavantage", f"macro/{func_name}", "success")
+                else:
+                    log_api_call("alphavantage", f"macro/{func_name}", "error", "empty data")
+            except Exception as e:
+                log_api_call("alphavantage", f"macro/{func_name}", "error", str(e))
 
-        # CPI — fetch separately, use YoY change
-        try:
-            cpi_data = self.get_series("cpi", limit=13)
-            if len(cpi_data) >= 13:
-                current = float(cpi_data[0].value)
-                year_ago = float(cpi_data[12].value)
-                yoy = ((current - year_ago) / year_ago) * 100
-                snapshot.cpi_yoy = Decimal(str(round(yoy, 2)))
-        except Exception:
-            pass
+        # Map results to snapshot fields
+        if "FEDERAL_FUNDS_RATE" in av_results:
+            snapshot.fed_funds_rate = Decimal(av_results["FEDERAL_FUNDS_RATE"][0]["value"])
 
-        # GDP — fetch and compute growth rate
-        try:
-            gdp_data = self.get_series("real_gdp", limit=5)
-            if len(gdp_data) >= 2:
-                current = float(gdp_data[0].value)
-                prev = float(gdp_data[1].value)
-                growth = ((current - prev) / prev) * 100
-                snapshot.gdp_growth = Decimal(str(round(growth, 2)))
-        except Exception:
-            pass
+        if "UNEMPLOYMENT" in av_results:
+            snapshot.unemployment_rate = Decimal(av_results["UNEMPLOYMENT"][0]["value"])
+
+        if "CPI" in av_results and len(av_results["CPI"]) >= 13:
+            current = float(av_results["CPI"][0]["value"])
+            year_ago = float(av_results["CPI"][12]["value"])
+            yoy = ((current - year_ago) / year_ago) * 100
+            snapshot.cpi_yoy = Decimal(str(round(yoy, 2)))
+
+        if "REAL_GDP" in av_results and len(av_results["REAL_GDP"]) >= 2:
+            current = float(av_results["REAL_GDP"][0]["value"])
+            prev = float(av_results["REAL_GDP"][1]["value"])
+            growth = ((current - prev) / prev) * 100
+            snapshot.gdp_growth = Decimal(str(round(growth, 2)))
 
         # Compute yield spread
         if snapshot.treasury_10y and snapshot.treasury_2y:

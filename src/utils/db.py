@@ -111,6 +111,66 @@ def init_db() -> None:
             error_message TEXT,
             timestamp TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS precomputed_scores (
+            symbol TEXT PRIMARY KEY,
+            score_data TEXT NOT NULL,
+            computed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_config (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            starting_capital REAL NOT NULL DEFAULT 100000,
+            current_cash REAL NOT NULL DEFAULT 100000,
+            risk_per_trade REAL NOT NULL DEFAULT 0.02,
+            max_positions INTEGER NOT NULL DEFAULT 5,
+            rebalance_frequency TEXT NOT NULL DEFAULT 'weekly',
+            status TEXT NOT NULL DEFAULT 'stopped',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_run TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL DEFAULT 'long',
+            shares INTEGER NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_date TEXT NOT NULL,
+            stop_loss REAL,
+            target REAL,
+            status TEXT NOT NULL DEFAULT 'open',
+            exit_price REAL,
+            exit_date TEXT,
+            pnl REAL,
+            pnl_percent REAL,
+            ai_reasoning TEXT,
+            source TEXT NOT NULL DEFAULT 'ai',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_date TEXT NOT NULL,
+            step TEXT NOT NULL,
+            symbol TEXT,
+            decision TEXT NOT NULL,
+            reasoning TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'ai',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_equity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            total_value REAL NOT NULL,
+            cash REAL NOT NULL,
+            invested REAL NOT NULL,
+            daily_return REAL DEFAULT 0,
+            cumulative_return REAL DEFAULT 0,
+            benchmark_value REAL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -147,6 +207,40 @@ def cache_delete(key: str) -> None:
     conn.execute("DELETE FROM cache WHERE key = ?", (key,))
     conn.commit()
     conn.close()
+
+
+def save_precomputed_score(symbol: str, score_data: dict) -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO precomputed_scores (symbol, score_data, computed_at) VALUES (?, ?, ?)",
+        (symbol, json.dumps(score_data, default=str), datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_precomputed_score(symbol: str, max_age_minutes: int = 60) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT score_data, computed_at FROM precomputed_scores WHERE symbol = ?", (symbol,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    computed_at = datetime.fromisoformat(row["computed_at"])
+    if datetime.utcnow() - computed_at > timedelta(minutes=max_age_minutes):
+        return None
+    return json.loads(row["score_data"])
+
+
+def get_all_precomputed_scores(max_age_minutes: int = 60) -> dict:
+    conn = get_connection()
+    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
+    rows = conn.execute(
+        "SELECT symbol, score_data FROM precomputed_scores WHERE computed_at > ?", (cutoff,)
+    ).fetchall()
+    conn.close()
+    return {row["symbol"]: json.loads(row["score_data"]) for row in rows}
 
 
 def log_api_call(source: str, endpoint: str, status: str, error: str | None = None) -> None:
