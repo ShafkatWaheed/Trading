@@ -229,6 +229,58 @@ class MacroProvider:
         if snapshot.treasury_10y and snapshot.treasury_2y:
             snapshot.yield_spread_10y2y = snapshot.treasury_10y - snapshot.treasury_2y
 
+        # ── Cross-Asset Ratios ──
+        try:
+            import yfinance as yf
+
+            # Gold/SPY ratio (rising = risk-off, fear)
+            try:
+                gld = yf.download("GLD", period="5d", progress=False, auto_adjust=True)
+                spy_data = yf.download("SPY", period="5d", progress=False, auto_adjust=True)
+                if not gld.empty and not spy_data.empty:
+                    for df in [gld, spy_data]:
+                        if hasattr(df.columns, 'levels') and df.columns.nlevels > 1:
+                            df.columns = df.columns.get_level_values(0)
+                    gld_price = float(gld["Close"].iloc[-1])
+                    spy_price = float(spy_data["Close"].iloc[-1])
+                    if spy_price > 0:
+                        snapshot.gold_spy_ratio = round(gld_price / spy_price, 4)
+            except Exception:
+                pass
+
+            # Copper/Gold ratio (rising = economic strength)
+            try:
+                copper = yf.download("HG=F", period="5d", progress=False, auto_adjust=True)
+                gold = yf.download("GC=F", period="5d", progress=False, auto_adjust=True)
+                if not copper.empty and not gold.empty:
+                    for df in [copper, gold]:
+                        if hasattr(df.columns, 'levels') and df.columns.nlevels > 1:
+                            df.columns = df.columns.get_level_values(0)
+                    copper_price = float(copper["Close"].iloc[-1])
+                    gold_price = float(gold["Close"].iloc[-1])
+                    if gold_price > 0:
+                        snapshot.copper_gold_ratio = round(copper_price / gold_price * 1000, 4)
+                        # Multiply by 1000 for readability (copper ~4.5, gold ~2000)
+            except Exception:
+                pass
+
+            # High Yield Spread (HYG vs TLT — falling HYG/TLT = credit stress)
+            try:
+                hyg = yf.download("HYG", period="5d", progress=False, auto_adjust=True)
+                tlt = yf.download("TLT", period="5d", progress=False, auto_adjust=True)
+                if not hyg.empty and not tlt.empty:
+                    for df in [hyg, tlt]:
+                        if hasattr(df.columns, 'levels') and df.columns.nlevels > 1:
+                            df.columns = df.columns.get_level_values(0)
+                    hyg_price = float(hyg["Close"].iloc[-1])
+                    tlt_price = float(tlt["Close"].iloc[-1])
+                    if tlt_price > 0:
+                        snapshot.high_yield_spread = round(hyg_price / tlt_price, 4)
+            except Exception:
+                pass
+        except ImportError:
+            pass
+
         return snapshot
 
     # --- Serialization ---
@@ -260,6 +312,9 @@ class MacroProvider:
             "vix": str(s.vix) if s.vix else None,
             "consumer_sentiment": str(s.consumer_sentiment) if s.consumer_sentiment else None,
             "dollar_index": str(s.dollar_index) if s.dollar_index else None,
+            "gold_spy_ratio": s.gold_spy_ratio,
+            "copper_gold_ratio": s.copper_gold_ratio,
+            "high_yield_spread": s.high_yield_spread,
         }
 
     def _dict_to_snapshot(self, d: dict) -> MacroSnapshot:
@@ -278,4 +333,7 @@ class MacroProvider:
             vix=dec("vix"),
             consumer_sentiment=dec("consumer_sentiment"),
             dollar_index=dec("dollar_index"),
+            gold_spy_ratio=d.get("gold_spy_ratio"),
+            copper_gold_ratio=d.get("copper_gold_ratio"),
+            high_yield_spread=d.get("high_yield_spread"),
         )

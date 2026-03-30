@@ -55,6 +55,7 @@ def build_report(
     holders_data: dict | None = None,
     community_buzz: dict | None = None,
     short_interest: dict | None = None,
+    job_trend: dict | None = None,
 ) -> Report:
     # Build sections
     sections = [
@@ -88,6 +89,8 @@ def build_report(
         sections.append(_community_buzz_section(community_buzz))
     if short_interest:
         sections.append(_short_interest_section(short_interest))
+    if job_trend:
+        sections.append(_job_trend_section(job_trend))
     if confluence:
         sections.append(_confluence_section(confluence))
 
@@ -503,6 +506,26 @@ def _short_interest_section(data: dict) -> ReportSection:
             "short_pct_float": pct, "short_ratio": ratio,
             "shares_short": data.get("shares_short"),
         },
+    )
+
+
+def _job_trend_section(data: dict) -> ReportSection:
+    trend = data.get("trend", "stable")
+    score = data.get("score", 0)
+    summary = data.get("summary", "")
+    articles = data.get("articles", [])
+
+    if trend == "hiring":
+        content = f"HIRING — {summary}. Company is expanding workforce."
+    elif trend == "layoffs":
+        content = f"LAYOFFS — {summary}. Company is reducing workforce."
+    else:
+        content = f"STABLE — {summary}. No significant workforce changes."
+
+    return ReportSection(
+        title="Job Market Trend",
+        content=content,
+        data={"score": score, "signal": trend, "summary": summary, "articles": articles},
     )
 
 

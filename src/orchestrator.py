@@ -146,6 +146,7 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
         holders_data=holders_data,
         community_buzz=buzz_data,
         short_interest=_safe(lambda: gw.get_short_interest(symbol)),
+        job_trend=_safe(lambda: _fetch_job_trend(symbol)),
     )
 
     # ── Export ──────────────────────────────────────────────────
@@ -442,6 +443,80 @@ def _fetch_community_buzz(symbol: str) -> dict | None:
 
     cache_set(cache_key, result, ttl_minutes=60)
     return result
+
+
+def _fetch_job_trend(symbol: str) -> dict | None:
+    """Fetch hiring/layoff trend via Exa search + Claude interpretation."""
+    from src.utils.db import cache_get, cache_set
+    import httpx
+    from src.utils.config import EXA_API_KEY
+
+    cache_key = f"jobs:{symbol}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    if not EXA_API_KEY:
+        return None
+
+    # Get company name
+    company_name = symbol
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).info
+        company_name = info.get("shortName") or info.get("longName") or symbol
+    except Exception:
+        pass
+
+    try:
+        resp = httpx.post(
+            "https://api.exa.ai/search",
+            headers={"x-api-key": EXA_API_KEY},
+            json={
+                "query": f"{company_name} hiring jobs layoffs workforce 2026",
+                "type": "auto", "num_results": 5,
+                "contents": {"highlights": {"max_characters": 200}},
+            },
+            timeout=15,
+        )
+        results = resp.json().get("results", [])
+
+        if not results:
+            return None
+
+        # Use Claude to interpret
+        articles = "\n".join(
+            f"- {r.get('title', '')[:80]}: {' '.join(r.get('highlights', []))[:100]}"
+            for r in results[:4]
+        )
+
+        import subprocess
+        env = dict(os.environ)
+        env.pop("CLAUDECODE", None)
+
+        prompt = f"""Based on these articles about {company_name} ({symbol}), is the company hiring or laying off?
+
+{articles}
+
+JSON only: {{"trend": "hiring" or "layoffs" or "stable", "score": 1 or -1 or 0, "summary": "10 words max"}}"""
+
+        proc = subprocess.run(
+            ["claude", "-p", prompt, "--model", "haiku"],
+            capture_output=True, text=True, timeout=15, env=env,
+        )
+        resp_text = proc.stdout.strip()
+        j_start = resp_text.find("{")
+        j_end = resp_text.rfind("}") + 1
+        if j_start >= 0 and j_end > j_start:
+            import json
+            result = json.loads(resp_text[j_start:j_end])
+            result["articles"] = [r.get("title", "")[:80] for r in results[:3]]
+            cache_set(cache_key, result, ttl_minutes=60 * 24)
+            return result
+    except Exception:
+        pass
+
+    return None
 
 
 def _fetch_analyst_data(symbol: str) -> dict | None:

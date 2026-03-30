@@ -4059,6 +4059,7 @@ def _render_deep_dive_card(sym: str, report, lookback: int, period: str, signal_
         "Institutional Holders": {"color": "#14b8a6", "max": 1, "icon": "🏛"},
         "Community Buzz": {"color": "#e879f9", "max": 1, "icon": "🗣"},
         "Short Interest": {"color": "#dc2626", "max": 1, "icon": "📉"},
+        "Job Market Trend": {"color": "#84cc16", "max": 1, "icon": "💼"},
     }
 
     for section in report.sections:

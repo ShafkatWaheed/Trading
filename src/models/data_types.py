@@ -35,6 +35,10 @@ class MacroSnapshot:
     vix: Decimal | None = None
     consumer_sentiment: Decimal | None = None
     dollar_index: Decimal | None = None
+    # Cross-asset ratios
+    gold_spy_ratio: float | None = None  # Rising = risk-off
+    copper_gold_ratio: float | None = None  # Rising = economic strength
+    high_yield_spread: float | None = None  # Widening = credit stress
 
     @property
     def yield_curve_inverted(self) -> bool:
