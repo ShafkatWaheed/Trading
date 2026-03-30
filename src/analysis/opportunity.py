@@ -31,6 +31,12 @@ class OpportunityScore:
     strategy: str  # primary detected strategy
     secondary_strategies: list[str] = field(default_factory=list)
     label: str = ""  # "Excellent", "Good", "Fair", "Poor"
+    # Confirmation filters
+    trend_pullback: bool = False  # Price pulling back to SMA20 in uptrend
+    relative_strength: bool = False  # Outperforming benchmark
+    volume_confirmed: bool = False  # Volume above 1.5x average
+    confirmations: int = 0  # Count of filters passed (0-3)
+    momentum_override: bool = False  # Bypasses confirmations for rocket stocks
 
 
 def compute_opportunity(
@@ -43,8 +49,11 @@ def compute_opportunity(
     earnings_days_away: int | None = None,
     dividend_yield: float | None = None,
     sector_rank: int | None = None,
+    stock_change_pct: float | None = None,
+    benchmark_change_pct: float | None = None,
+    is_disruption_beneficiary: bool = False,
 ) -> OpportunityScore:
-    """Compute 4-factor opportunity score with expanded strategy detection."""
+    """Compute 4-factor opportunity score with confirmation filters."""
 
     vol_score = _volume_score(technicals)
     price_score = _price_score(technicals)
@@ -59,6 +68,80 @@ def compute_opportunity(
         earnings_days_away, dividend_yield, sector_rank,
     )
 
+    # ── Confirmation Filters ──────────────────────────
+    trend_pullback = False
+    relative_strength = False
+    volume_confirmed = False
+
+    if technicals:
+        # 1. Trend Pullback: price near SMA20 AND in uptrend AND RSI not overbought
+        if (technicals.sma_20 and technicals.current_price and technicals.trend == "uptrend"):
+            price = float(technicals.current_price)
+            sma20 = float(technicals.sma_20)
+            # Within 3% of SMA20 (pulling back to it, not crashing through)
+            if sma20 > 0 and -0.03 <= (price - sma20) / sma20 <= 0.03:
+                rsi = float(technicals.rsi_14) if technicals.rsi_14 else 50
+                if rsi < 65:  # Not overbought
+                    trend_pullback = True
+
+        # 2. Volume Confirmation: current volume > 1.5x 20-day average
+        if technicals.volume_trend == "increasing":
+            volume_confirmed = True
+        elif technicals.avg_volume_20 and technicals.avg_volume_20 > 0:
+            # Check from raw data if available
+            volume_confirmed = vol_score >= 18  # High volume score = confirmed
+
+    # 3. Relative Strength: stock outperforming S&P 500
+    if stock_change_pct is not None and benchmark_change_pct is not None:
+        if stock_change_pct > benchmark_change_pct:
+            relative_strength = True
+    elif technicals and technicals.trend == "uptrend":
+        # If no benchmark data, assume uptrend = relative strength
+        relative_strength = True
+
+    confirmations = sum([trend_pullback, relative_strength, volume_confirmed])
+
+    # ── Momentum Override ─────────────────────────────
+    # For rocket stocks: if overwhelming signals + disruption theme, bypass confirmations
+    momentum_override = False
+
+    if technicals:
+        # Count bullish signals from scoring components
+        bullish_component_count = sum([
+            vol_score >= 16,      # Strong volume
+            price_score >= 18,    # Strong momentum
+            flow_score >= 16,     # Smart money buying
+            rr_score >= 16,       # Good risk/reward
+        ])
+
+        # Momentum override conditions:
+        # 1. Strong uptrend with high RSI (stock just keeps going up)
+        # 2. Is a disruption beneficiary (AI, GLP-1, etc.)
+        # 3. At least 3 of 4 scoring components are strong
+        is_strong_uptrend = (
+            technicals.trend == "uptrend"
+            and technicals.rsi_14
+            and float(technicals.rsi_14) > 55  # Healthy momentum, not oversold
+            and technicals.sma_50
+            and technicals.current_price
+            and float(technicals.current_price) > float(technicals.sma_50)  # Above SMA50
+        )
+
+        if is_strong_uptrend and is_disruption_beneficiary and bullish_component_count >= 3:
+            momentum_override = True
+            confirmations = 3  # Treat as fully confirmed
+        elif is_strong_uptrend and bullish_component_count >= 3 and total >= 70:
+            # Even without disruption tag, very strong setups get override
+            momentum_override = True
+            confirmations = max(confirmations, 2)  # At least 2/3
+
+    # Boost score
+    confirmation_bonus = confirmations * 5  # +5 per confirmation, max +15
+    if momentum_override:
+        confirmation_bonus += 5  # Extra +5 for momentum override
+    total = min(100, total + confirmation_bonus)
+    label = _score_label(total)
+
     return OpportunityScore(
         symbol=symbol,
         total_score=total,
@@ -70,6 +153,11 @@ def compute_opportunity(
         strategy=strategy,
         secondary_strategies=secondaries,
         label=label,
+        trend_pullback=trend_pullback,
+        relative_strength=relative_strength,
+        volume_confirmed=volume_confirmed,
+        confirmations=confirmations,
+        momentum_override=momentum_override,
     )
 
 

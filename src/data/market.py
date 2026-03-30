@@ -204,6 +204,54 @@ class MarketDataService:
             log_api_call("yahoo", f"earnings/{symbol}", "error", str(e))
             return []
 
+    # --- Short Interest ---
+
+    def get_short_interest(self, symbol: str) -> dict | None:
+        cache_key = f"market:short:{symbol}"
+        cached = cache_get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+
+            short_pct = info.get("shortPercentOfFloat")
+            shares_short = info.get("sharesShort")
+            short_ratio = info.get("shortRatio")  # Days to cover
+            shares_outstanding = info.get("sharesOutstanding")
+            float_shares = info.get("floatShares")
+
+            if short_pct is None and shares_short is None:
+                return None
+
+            result = {
+                "short_pct_float": round(float(short_pct) * 100, 2) if short_pct else None,
+                "shares_short": int(shares_short) if shares_short else None,
+                "short_ratio": round(float(short_ratio), 2) if short_ratio else None,
+                "shares_outstanding": int(shares_outstanding) if shares_outstanding else None,
+                "float_shares": int(float_shares) if float_shares else None,
+            }
+
+            # Determine signal
+            pct = result["short_pct_float"] or 0
+            if pct > 20:
+                result["signal"] = "squeeze_potential"
+                result["score"] = 1
+            elif pct > 10:
+                result["signal"] = "elevated"
+                result["score"] = 0
+            else:
+                result["signal"] = "normal"
+                result["score"] = 0
+
+            cache_set(cache_key, result, ttl_minutes=CACHE_TTL_FUNDAMENTALS)
+            log_api_call("yahoo", f"short_interest/{symbol}", "success")
+            return result
+        except Exception as e:
+            log_api_call("yahoo", f"short_interest/{symbol}", "error", str(e))
+            return None
+
     # --- Alpha Vantage (REST API) ---
 
     @with_retry(max_retries=2, source="alphavantage")

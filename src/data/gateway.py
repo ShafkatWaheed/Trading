@@ -77,6 +77,12 @@ class DataGateway:
         except Exception:
             return []
 
+    def get_short_interest(self, symbol: str) -> dict | None:
+        try:
+            return self._market.get_short_interest(symbol)
+        except Exception:
+            return None
+
     def get_stock(self, symbol: str) -> Stock:
         """Convenience: fetch quote + fundamentals together. Either can fail."""
         quote = None

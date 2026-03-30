@@ -46,6 +46,25 @@ class TechnicalIndicators(BaseModel):
     avg_volume_20: int | None = None
     volume_trend: str = ""
 
+    # OBV
+    obv_trend: str | None = None  # "accumulation" or "distribution"
+
+    # Fibonacci
+    fib_236: Decimal | None = None
+    fib_382: Decimal | None = None
+    fib_500: Decimal | None = None
+    fib_618: Decimal | None = None
+
+    # MACD Divergence
+    macd_divergence: str | None = None  # "bullish" or "bearish"
+
+    # ATR-based stop
+    atr_stop: Decimal | None = None
+    atr_stop_pct: float | None = None
+
+    # Seasonality
+    seasonality_avg: float | None = None  # Avg return for current month
+
     # Derived
     current_price: Decimal | None = None
     trend: str = ""

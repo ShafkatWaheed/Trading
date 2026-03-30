@@ -230,6 +230,197 @@ def _section_header(title: str, cache_key: str = "", refresh_hint: str = "") -> 
     )
 
 
+def _render_simulation_replay(page_step: str) -> dict | None:
+    """Shared simulation replay component. Returns step data if a cycle is selected, None otherwise."""
+    from src.utils.db import get_simulation_runs, get_simulation_cycles, get_simulation_step
+    import html as html_mod
+
+    runs = get_simulation_runs()
+    if not runs:
+        return None
+
+    with st.expander("🕰 Simulation Replay", expanded=False):
+        r1, r2 = st.columns([2, 3])
+        with r1:
+            selected_run = st.selectbox("Simulation run", runs, key=f"sim_run_{page_step}", label_visibility="collapsed",
+                                         format_func=lambda r: r.replace("sim_", "Run ").replace("_", " "))
+        with r2:
+            cycles = get_simulation_cycles(selected_run)
+            if not cycles:
+                st.caption("No cycle data.")
+                return None
+            selected_cycle = st.select_slider("Cycle date", cycles, key=f"sim_cycle_{page_step}")
+
+        data = get_simulation_step(selected_run, selected_cycle, page_step)
+        if not data:
+            st.caption(f"No {page_step.replace('_', ' ')} data for this cycle.")
+            return None
+
+        # Render based on page type
+        if page_step == "market_pulse":
+            regime = data.get("regime", "normal")
+            vix = data.get("vix")
+            rc = "#22c55e" if regime == "normal" else "#ef4444" if regime == "high_volatility" else "#f59e0b"
+
+            st.markdown(
+                f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px;">'
+                f'<div style="font-size:14px; font-weight:700; color:#e5e5e5; margin-bottom:8px;">AI Saw on {selected_cycle}:</div>'
+                f'<div style="font-size:13px; color:{rc}; font-weight:600;">Regime: {regime.title()}'
+                + (f' | VIX: {vix:.1f}' if vix else '') +
+                f'</div>'
+                f'<div style="font-size:12px; color:#9ca3af; margin-top:6px;">{html_mod.escape(data.get("macro_summary", ""))}</div>',
+                unsafe_allow_html=True,
+            )
+            # Sector performance
+            sp = data.get("sector_perf", [])
+            if sp:
+                gaining = [f'{s["sector"]}: {s["change"]:+.1f}%' for s in sp if s.get("change", 0) > 0]
+                losing = [f'{s["sector"]}: {s["change"]:+.1f}%' for s in sp if s.get("change", 0) < 0]
+                st.markdown(
+                    (f'<div style="font-size:11px; color:#22c55e; margin-top:4px;">Gaining: {", ".join(gaining[:4])}</div>' if gaining else "") +
+                    (f'<div style="font-size:11px; color:#ef4444;">Losing: {", ".join(losing[:4])}</div>' if losing else ""),
+                    unsafe_allow_html=True,
+                )
+            # Geo + disruption
+            geo = data.get("geo", "")
+            dis = data.get("disruption", "")
+            if geo:
+                st.markdown(f'<div style="font-size:11px; color:#f59e0b; margin-top:4px;">{html_mod.escape(geo[:150])}</div>', unsafe_allow_html=True)
+            if dis:
+                st.markdown(f'<div style="font-size:11px; color:#a855f7;">{html_mod.escape(dis[:150])}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        elif page_step == "discover":
+            favor = data.get("favor_sectors", [])
+            candidates = data.get("candidates", [])
+            ai_tickers = data.get("ai_tickers", [])
+
+            st.markdown(
+                f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px;">'
+                f'<div style="font-size:14px; font-weight:700; color:#e5e5e5; margin-bottom:8px;">AI Discovery on {selected_cycle}:</div>'
+                + (f'<div style="font-size:12px; color:#f59e0b;">Focus sectors: {", ".join(favor)}</div>' if favor else '') +
+                (f'<div style="font-size:12px; color:#3b82f6;">AI-picked tickers: {", ".join(ai_tickers)}</div>' if ai_tickers else '') +
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if candidates:
+                cand_html = ""
+                for c in candidates[:6]:
+                    sc = "#22c55e" if c.get("score", 0) >= 60 else "#f59e0b" if c.get("score", 0) >= 45 else "#6b7280"
+                    cand_html += f'<span style="display:inline-block; margin:2px; padding:3px 10px; background:rgba({",".join(str(int(sc[i:i+2], 16)) for i in (1,3,5))},0.1); border:1px solid {sc}44; border-radius:20px; font-size:11px; color:{sc}; font-weight:600;">{c["symbol"]} ({c["score"]})</span>'
+                st.markdown(f'<div style="margin-top:6px;">{cand_html}</div>', unsafe_allow_html=True)
+
+        elif page_step == "deep_dive":
+            stocks = data.get("stocks", [])
+            if stocks:
+                st.markdown(
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px;">'
+                    f'<div style="font-size:14px; font-weight:700; color:#e5e5e5; margin-bottom:8px;">AI Deep Dive on {selected_cycle}:</div></div>',
+                    unsafe_allow_html=True,
+                )
+                for s in stocks[:5]:
+                    trend_c = "#22c55e" if s.get("trend") == "uptrend" else "#ef4444" if s.get("trend") == "downtrend" else "#f59e0b"
+                    st.markdown(
+                        f'<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #1a1a1a; font-size:12px;">'
+                        f'<span style="font-weight:700; color:#e5e5e5;">{s["symbol"]}</span>'
+                        f'<span style="color:#6b7280;">Score: {s["score"]}</span>'
+                        f'<span style="color:#6b7280;">{s["strategy"]}</span>'
+                        f'<span style="color:{trend_c};">{s.get("trend", "—")}</span>'
+                        f'<span style="color:#6b7280;">RSI: {s.get("rsi", "—")}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        elif page_step == "portfolio":
+            tv = data.get("total_value", 0)
+            ret = data.get("return_pct", 0)
+            bench = data.get("benchmark_pct", 0)
+            alpha = ret - bench
+            rc = "#22c55e" if ret > 0 else "#ef4444"
+            ac = "#22c55e" if alpha > 0 else "#ef4444"
+
+            st.markdown(
+                f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px;">'
+                f'<div style="font-size:14px; font-weight:700; color:#e5e5e5; margin-bottom:8px;">Portfolio on {selected_cycle}:</div>'
+                f'<div style="display:flex; gap:16px; font-size:13px;">'
+                f'<span style="color:#e5e5e5;">Value: <b>${tv:,.0f}</b></span>'
+                f'<span style="color:{rc};">Return: <b>{ret:+.1f}%</b></span>'
+                f'<span style="color:{ac};">Alpha: <b>{alpha:+.1f}%</b></span>'
+                f'<span style="color:#e5e5e5;">Cash: <b>${data.get("cash", 0):,.0f}</b></span>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+            # Positions
+            poss = data.get("positions", [])
+            if poss:
+                for p in poss:
+                    pc = "#22c55e" if p.get("pnl_pct", 0) > 0 else "#ef4444"
+                    st.markdown(
+                        f'<div style="font-size:11px; padding:2px 0;">'
+                        f'<span style="color:#e5e5e5; font-weight:600;">{p["symbol"]}</span>'
+                        f' {p["shares"]}sh @ ${p["entry"]:.2f} → ${p["current"]:.2f}'
+                        f' <span style="color:{pc}; font-weight:600;">{p["pnl_pct"]:+.1f}%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        elif page_step == "trades":
+            # Chain of thought
+            cot = data.get("chain_of_thought", {})
+            if cot:
+                cot_items = [
+                    ("🌍", "Market", cot.get("market", cot.get("market_read", "")), "#3b82f6"),
+                    ("🌐", "Geopolitical", cot.get("geopolitical", ""), "#f97316"),
+                    ("🚀", "Disruption", cot.get("disruption", ""), "#a855f7"),
+                    ("📊", "Signals", cot.get("signal_breakdown", cot.get("stocks", "")), "#06b6d4"),
+                    ("✓", "Confirmations", cot.get("confirmation_check", ""), "#14b8a6"),
+                    ("🔬", "Backtest", cot.get("backtest_evidence", ""), "#ec4899"),
+                    ("💡", "Decision", cot.get("decision", cot.get("decision_summary", "")), "#22c55e"),
+                ]
+                cot_html = ""
+                for ci_icon, ci_label, ci_text, ci_color in cot_items:
+                    if ci_text:
+                        cot_html += (
+                            f'<div style="display:flex; gap:8px; margin-bottom:6px;">'
+                            f'<span style="font-size:14px;">{ci_icon}</span>'
+                            f'<div><span style="font-size:10px; color:{ci_color}; font-weight:700;">{ci_label}:</span> '
+                            f'<span style="font-size:11px; color:#d1d5db;">{html_mod.escape(ci_text[:150])}</span></div>'
+                            f'</div>'
+                        )
+                if cot_html:
+                    st.markdown(
+                        f'<div style="background:#0d0d0d; border:1px solid #a855f744; border-radius:8px; padding:10px; margin-bottom:8px;">'
+                        f'<div style="font-size:10px; color:#a855f7; font-weight:700; margin-bottom:6px;">AI CHAIN OF THOUGHT</div>'
+                        f'{cot_html}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            trades = data.get("trades", [])
+            if trades:
+                st.markdown(
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px;">'
+                    f'<div style="font-size:14px; font-weight:700; color:#e5e5e5; margin-bottom:8px;">Trades on {selected_cycle}:</div></div>',
+                    unsafe_allow_html=True,
+                )
+                for t in trades:
+                    ac_t = "#22c55e" if "BUY" in t.get("action", "") else "#ef4444"
+                    st.markdown(
+                        f'<div style="font-size:12px; padding:3px 0;">'
+                        f'<span style="color:{ac_t}; font-weight:700;">{t.get("action", "")}</span>'
+                        f' <span style="color:#e5e5e5;">{t.get("symbol", "")}</span>'
+                        f' @ ${t.get("price", 0):.2f}'
+                        + (f' — {t.get("reason", "")}' if t.get("reason") else "") +
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("No trades this cycle.")
+
+        return data
+
+    return None
+
+
 def _fmt(val) -> str:
     if isinstance(val, list):
         return ", ".join(str(v) for v in val) if val else "—"
@@ -918,6 +1109,7 @@ def _render_yield_curve_section(snapshot) -> None:
 def page_market_pulse():
     st.title("Market Pulse")
     st.caption("Understand the market before picking stocks")
+    _render_simulation_replay("market_pulse")
 
     from src.data.gateway import DataGateway
     gw = DataGateway()
@@ -1641,7 +1833,39 @@ def _render_discover_card(sym: str, data: dict, lookback_days: int, disc_period:
                 <div style="height:100%; width:{pct}%; background:{c}; border-radius:3px;"></div>
             </div>
         </div>"""
-    st.markdown(f'<div style="display:flex; gap:12px; margin:4px 0 12px;">{bar_html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="display:flex; gap:12px; margin:4px 0 8px;">{bar_html}</div>', unsafe_allow_html=True)
+
+    # Confirmation filters
+    tp = getattr(score, "trend_pullback", False)
+    rs = getattr(score, "relative_strength", False)
+    vc = getattr(score, "volume_confirmed", False)
+    mo = getattr(score, "momentum_override", False)
+    conf_count = sum([tp, rs, vc])
+    conf_border = "#22c55e" if conf_count >= 2 or mo else "#f59e0b" if conf_count == 1 else "#ef4444"
+
+    tp_html = f'<span style="color:{"#22c55e" if tp else "#333"}; font-weight:700;">{"✓" if tp else "✗"} TP</span>'
+    rs_html = f'<span style="color:{"#22c55e" if rs else "#333"}; font-weight:700;">{"✓" if rs else "✗"} RS</span>'
+    vc_html = f'<span style="color:{"#22c55e" if vc else "#333"}; font-weight:700;">{"✓" if vc else "✗"} VOL</span>'
+    mo_html = f'<span style="color:#f59e0b; font-weight:800;">🚀 MOMENTUM OVERRIDE</span>' if mo else ""
+
+    if mo:
+        status_text = "Momentum rocket — bypasses confirmations"
+    elif conf_count >= 2:
+        status_text = "Trade-ready"
+    elif conf_count == 1:
+        status_text = "Needs more confirmation"
+    else:
+        status_text = "Not confirmed"
+
+    st.markdown(
+        f'<div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:6px 10px; background:#0d0d0d; border:1px solid {conf_border}44; border-radius:8px; font-size:11px;">'
+        f'<span style="color:#6b7280;">Confirmations:</span>'
+        f'<span style="color:{conf_border}; font-weight:800;">{conf_count}/3</span>'
+        f'{tp_html} {rs_html} {vc_html} {mo_html}'
+        f'<span style="color:#6b7280; margin-left:auto; font-size:10px;">{status_text}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # Action buttons
     b1, b2, _ = st.columns([2, 1, 5])
@@ -1659,6 +1883,7 @@ def _render_discover_card(sym: str, data: dict, lookback_days: int, disc_period:
 def page_discover():
     st.title("Discover Opportunities")
     st.caption("Find and rank stocks worth trading")
+    _render_simulation_replay("discover")
 
     # ── Stock selector ─────────────────────────────────────
     watchlist = get_watchlist()
@@ -1784,6 +2009,7 @@ def page_discover():
 
 def page_deep_dive():
     st.title("Deep Dive")
+    _render_simulation_replay("deep_dive")
 
     # ── Multi-stock selector ───────────────────────────────
     watchlist = get_watchlist()
@@ -2716,43 +2942,21 @@ def _fetch_disruption_themes() -> list[dict]:
     articles_text = "\n".join(f"- {a['title']}: {a['content'][:80]}" for a in all_articles[:12])
 
     try:
-        prompt = f"""Analyze these recent articles and identify the top 6 technology disruption themes currently impacting the US stock market.
+        prompt = f"""Identify the top 6 technology disruption themes impacting US stocks based on these articles:
 
-ARTICLES:
 {articles_text}
 
-For each theme, determine:
-1. Name and emoji icon
-2. Current intensity: HIGH (actively moving stocks NOW), MEDIUM (growing, being priced in), EMERGING (early stage)
-3. Which specific US stock tickers BENEFIT (up to 5)
-4. Which sectors benefit
-5. Which specific tickers are AT RISK (up to 4)
-6. Which sectors are at risk
-7. Two recent headline examples
+For each theme provide: name, emoji icon, intensity level (HIGH/MEDIUM/EMERGING), which tickers benefit, which sectors benefit, which tickers are at risk, which sectors are at risk, and 1-2 headline examples.
 
-Include BOTH well-known themes (AI, EVs) AND any NEW disruptions you see emerging from the articles that most investors might miss.
-
-Respond with ONLY a JSON array:
-[
-  {{
-    "name": "AI & Large Language Models",
-    "icon": "🤖",
-    "level": "HIGH",
-    "intensity": 4,
-    "beneficiaries": ["NVDA", "MSFT", "GOOG"],
-    "beneficiary_sectors": ["Semiconductors", "Cloud Computing"],
-    "at_risk": ["INFY", "WIT"],
-    "at_risk_sectors": ["IT Services", "Call Centers"],
-    "headlines": ["Article headline 1", "Article headline 2"]
-  }}
-]"""
+Respond with ONLY a JSON array of 6 items:
+[{{"name":"AI & LLMs","icon":"🤖","level":"HIGH","intensity":5,"beneficiaries":["NVDA","MSFT","GOOG"],"beneficiary_sectors":["Semiconductors","Cloud"],"at_risk":["INFY","WIT"],"at_risk_sectors":["IT Services","Call Centers"],"headlines":["AI chip demand surges"]}}]"""
 
         env = dict(os.environ)
         env.pop("CLAUDECODE", None)
 
         proc = subprocess.run(
-            ["claude", "-p", prompt, "--model", "haiku"],
-            capture_output=True, text=True, timeout=30, env=env,
+            ["claude", "-p", prompt, "--model", "sonnet", "--allowedTools", ""],
+            capture_output=True, text=True, timeout=45, env=env,
         )
         response = proc.stdout.strip()
 
@@ -2789,7 +2993,27 @@ Respond with ONLY a JSON array:
     except Exception:
         pass
 
-    return []
+    # Fallback: hardcoded themes if Claude fails
+    return [
+        {"name": "AI & Large Language Models", "icon": "🤖", "level": "HIGH", "intensity": 5,
+         "beneficiaries": ["NVDA", "MSFT", "GOOG", "AMD"], "beneficiary_sectors": ["Semiconductors", "Cloud"],
+         "at_risk": ["INFY", "WIT"], "at_risk_sectors": ["IT Services"], "headlines": [], "query": "AI"},
+        {"name": "GLP-1 Weight Loss Drugs", "icon": "💊", "level": "HIGH", "intensity": 4,
+         "beneficiaries": ["LLY", "NVO"], "beneficiary_sectors": ["Pharma"],
+         "at_risk": ["MCD", "PEP"], "at_risk_sectors": ["Fast Food"], "headlines": [], "query": "GLP-1"},
+        {"name": "Electric Vehicles & Battery", "icon": "⚡", "level": "MEDIUM", "intensity": 3,
+         "beneficiaries": ["TSLA", "RIVN"], "beneficiary_sectors": ["EV Manufacturers"],
+         "at_risk": ["F", "GM"], "at_risk_sectors": ["Legacy Auto"], "headlines": [], "query": "EV"},
+        {"name": "Nuclear / SMR Energy", "icon": "☢", "level": "MEDIUM", "intensity": 3,
+         "beneficiaries": ["SMR", "CCJ", "OKLO"], "beneficiary_sectors": ["Nuclear Energy"],
+         "at_risk": [], "at_risk_sectors": ["Natural Gas Peakers"], "headlines": [], "query": "nuclear"},
+        {"name": "Quantum Computing", "icon": "🔬", "level": "EMERGING", "intensity": 2,
+         "beneficiaries": ["IONQ", "RGTI", "GOOG"], "beneficiary_sectors": ["Quantum Hardware"],
+         "at_risk": [], "at_risk_sectors": ["Legacy Encryption"], "headlines": [], "query": "quantum"},
+        {"name": "Robotics & Automation", "icon": "🦾", "level": "MEDIUM", "intensity": 3,
+         "beneficiaries": ["ISRG", "ROK"], "beneficiary_sectors": ["Industrial Robotics"],
+         "at_risk": [], "at_risk_sectors": ["Staffing Agencies"], "headlines": [], "query": "robotics"},
+    ]
 
 
 def _render_disruption_section():
@@ -3587,6 +3811,83 @@ def _render_trade_plan(sym: str, report, period: str):
     )
 
     # Risks
+    # Confirmation filters (from technical data in the report)
+    tp_check = False
+    rs_check = False
+    vc_check = False
+    for section in report.sections:
+        if "technical" in section.title.lower():
+            d = section.data
+            trend = d.get("trend", "")
+            rsi = d.get("rsi")
+            sma20 = d.get("sma_20")
+            cur_price_str = str(report.current_price)
+            try:
+                if trend == "uptrend" and sma20 and cur_price_str:
+                    cp = float(cur_price_str)
+                    s20 = float(sma20)
+                    if s20 > 0 and -0.03 <= (cp - s20) / s20 <= 0.03:
+                        if rsi and float(rsi) < 65:
+                            tp_check = True
+                if d.get("signal") in ("Buy", "Strong Buy"):
+                    rs_check = True
+                vol_s = d.get("bullish_signals", 0)
+                if isinstance(vol_s, int) and vol_s >= 2:
+                    vc_check = True
+            except Exception:
+                pass
+
+    conf_filters = sum([tp_check, rs_check, vc_check])
+
+    # Check for momentum override in Deep Dive
+    mo_check = False
+    if not tp_check and conf_filters < 2:
+        # Check if this could be a momentum rocket
+        for section in report.sections:
+            if "technical" in section.title.lower():
+                d = section.data
+                trend = d.get("trend", "")
+                rsi = d.get("rsi")
+                try:
+                    if trend == "uptrend" and rsi and float(rsi) > 55:
+                        # Strong uptrend + high score = momentum candidate
+                        if bull_count >= 7:  # 7+ of 12 bullish
+                            mo_check = True
+                except Exception:
+                    pass
+
+    if mo_check:
+        cf_border = "#f59e0b"
+        conf_filters = 3  # Treat as confirmed
+    else:
+        cf_border = "#22c55e" if conf_filters >= 2 else "#f59e0b" if conf_filters == 1 else "#ef4444"
+
+    mo_badge = f'<span style="color:#f59e0b; font-weight:800; font-size:12px; margin-left:8px;">🚀 MOMENTUM OVERRIDE</span>' if mo_check else ""
+
+    if mo_check:
+        status_text = "Momentum rocket — strong uptrend + overwhelming bullish signals bypass confirmations"
+    elif conf_filters >= 2:
+        status_text = "Trade-ready"
+    elif conf_filters == 1:
+        status_text = "Weak setup — needs more confirmation"
+    else:
+        status_text = "Not confirmed — avoid"
+
+    confirmation_html = (
+        f'<div style="background:#0d0d0d; border:1px solid {cf_border}44; border-radius:12px; padding:14px; margin-bottom:12px;">'
+        f'<div style="font-size:12px; color:#3b82f6; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Trade Confirmation Filters</div>'
+        f'<div style="display:flex; gap:16px; align-items:center;">'
+        f'<div style="font-size:24px; font-weight:900; color:{cf_border};">{conf_filters}/3</div>'
+        f'<div style="display:flex; gap:12px; font-size:12px;">'
+        f'<span style="color:{"#22c55e" if tp_check else "#ef4444"}; font-weight:600;">{"✓" if tp_check else "✗"} Trend Pullback</span>'
+        f'<span style="color:{"#22c55e" if rs_check else "#ef4444"}; font-weight:600;">{"✓" if rs_check else "✗"} Relative Strength</span>'
+        f'<span style="color:{"#22c55e" if vc_check else "#ef4444"}; font-weight:600;">{"✓" if vc_check else "✗"} Volume Confirmed</span>'
+        f'{mo_badge}'
+        f'</div>'
+        f'<span style="margin-left:auto; font-size:11px; color:{cf_border};">{status_text}</span>'
+        f'</div></div>'
+    )
+
     risks_html = ""
     if risk_items:
         risk_bullets = "".join(f'<div style="margin:4px 0; font-size:12px; color:#f87171;">⚠ {r}</div>' for r in risk_items)
@@ -3627,6 +3928,7 @@ def _render_trade_plan(sym: str, report, period: str):
         f'{target2_html}'
         f'{sizing_html}'
         f'{confidence_html}'
+        f'{confirmation_html}'
         f'{risks_html}'
         f'{timing_html}'
         f'<div style="font-size:10px; color:#4b5563; text-align:center; margin-top:8px;">Position sizing based on ${account_size:,} account with {risk_pct}% risk per trade. Adjust in settings. Not financial advice.</div>'
@@ -3756,6 +4058,7 @@ def _render_deep_dive_card(sym: str, report, lookback: int, period: str, signal_
         "Analyst Ratings": {"color": "#0ea5e9", "max": 1, "icon": "🎯"},
         "Institutional Holders": {"color": "#14b8a6", "max": 1, "icon": "🏛"},
         "Community Buzz": {"color": "#e879f9", "max": 1, "icon": "🗣"},
+        "Short Interest": {"color": "#dc2626", "max": 1, "icon": "📉"},
     }
 
     for section in report.sections:
@@ -3943,6 +4246,7 @@ def _render_deep_dive_card(sym: str, report, lookback: int, period: str, signal_
 def page_prove_it():
     st.title("Prove It")
     st.caption("Backtest signals on historical data — did they actually make money?")
+    _render_simulation_replay("trades")
 
     from src.data.gateway import DataGateway
     from src.analysis.backtester import backtest_all_signals, backtest_signal, SIGNALS
@@ -4305,7 +4609,7 @@ REASON: One sentence explaining why."""
                         env.pop("CLAUDECODE", None)
 
                         proc = subprocess.run(
-                            ["claude", "-p", prompt, "--model", "haiku"],
+                            ["claude", "-p", prompt, "--model", "haiku", "--allowedTools", ""],
                             capture_output=True, text=True, timeout=30, env=env,
                         )
                         ai_text = proc.stdout.strip()
@@ -4649,6 +4953,7 @@ REASON: One sentence explaining why."""
 def page_portfolio():
     st.title("My Portfolio")
     st.caption("Log trades, track P/L, and measure which signals make you money")
+    _render_simulation_replay("portfolio")
 
     from src.journal import log_trade, close_trade, get_open_trades, get_trade_history, get_performance_stats
 
@@ -5006,7 +5311,7 @@ def page_ai_agent():
     config = get_agent_config()
 
     # ── Controls ───────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
         capital = st.number_input("Starting Capital ($)", value=int(config.get("starting_capital", 100000)), step=10000, key="agent_cap")
     with c2:
@@ -5014,10 +5319,17 @@ def page_ai_agent():
         risk_pct = float(risk.replace("%", "")) / 100
     with c3:
         max_pos = st.selectbox("Max Positions", [3, 5, 8, 10], index=1, key="agent_maxpos")
+
+    c4, c5, c6, c7 = st.columns(4)
     with c4:
-        st.markdown("<br>", unsafe_allow_html=True)
+        max_buys = st.selectbox("Max Buys/Cycle", [1, 2, 3], index=0, key="agent_maxbuys")
+    with c5:
+        min_score = st.selectbox("Min Score", [45, 50, 55, 60, 65, 70, 75], index=3, key="agent_minscore")
+    with c6:
+        stop_pct = st.selectbox("Stop Loss %", [8, 10, 12, 15, 20], index=2, key="agent_stoppct", format_func=lambda x: f"{x}%")
+    with c7:
         if st.button("Reset Agent", use_container_width=True):
-            reset_agent(capital, risk_pct, max_pos)
+            reset_agent(capital, risk_pct, max_pos, max_buys, min_score, float(stop_pct))
             st.rerun()
 
     # ── Frequency + Run controls ─────────────────────────
@@ -5087,11 +5399,12 @@ def page_ai_agent():
             '<div style="background:#0d0d0d; border-radius:10px; padding:16px;">'
             '<div style="font-size:13px; color:#d1d5db; line-height:1.8;">'
             '<div style="font-size:11px; color:#3b82f6; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Entry Rules</div>'
+            f'• Min opportunity score: <b>{min_score}</b> (configurable above)<br>'
+            f'• Max buys per cycle: <b>{max_buys}</b><br>'
+            '• Require 2+ confirmation filters (Trend Pullback, Relative Strength, Volume)<br>'
             '• Only trade when 7+ of 12 signals agree on direction<br>'
             '• Prioritize signals with 70%+ historical win rate on this stock<br>'
             '• Discount signals with &lt;40% backtest win rate<br>'
-            '• If insider cluster buy detected AND backtest confirms, increase position size<br>'
-            '• If analyst consensus is Strong Buy with 20%+ upside, strong confirming signal<br>'
             '• Follow the money — favor sectors with positive money flow, avoid sectors with outflows<br>'
             '• If sector flow is negative for a stock&#39;s sector, reduce conviction even if other signals are bullish<br>'
             '<br>'
@@ -5099,7 +5412,7 @@ def page_ai_agent():
             f'• Max risk per trade: {risk_pct*100:.0f}% of portfolio (${capital*risk_pct:,.0f})<br>'
             f'• Max {max_pos} open positions at once<br>'
             '• Keep at least 20% in cash at all times<br>'
-            '• Set stop loss on every trade (below support or -8% max)<br>'
+            f'• Set stop loss at <b>-{stop_pct}%</b> on every trade (configurable above)<br>'
             '• Set target on every trade (at resistance or +15% max)<br>'
             '<br>'
             '<div style="font-size:11px; color:#f59e0b; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Market Regime Rules</div>'
@@ -5215,6 +5528,38 @@ def page_ai_agent():
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+            # ── Chain of Thought ───────────────────────────
+            cot = steps.get("chain_of_thought", {})
+            if cot:
+                import html as html_cot
+                cot_steps = [
+                    ("🌍", "Market Read", cot.get("market_read", ""), "#3b82f6"),
+                    ("🌐", "Geopolitical", cot.get("geopolitical", ""), "#f97316"),
+                    ("🚀", "Disruption", cot.get("disruption", ""), "#a855f7"),
+                    ("📊", "12-Signal Breakdown", cot.get("signal_breakdown", ""), "#06b6d4"),
+                    ("✓", "Confirmations", cot.get("confirmation_check", ""), "#14b8a6"),
+                    ("🔬", "Backtest Evidence", cot.get("backtest_evidence", ""), "#ec4899"),
+                    ("💡", "Decision", cot.get("decision_summary", ""), "#22c55e"),
+                ]
+                cot_html = ""
+                for icon, label, text, color in cot_steps:
+                    if text:
+                        cot_html += (
+                            f'<div style="display:flex; gap:10px; margin-bottom:8px;">'
+                            f'<div style="width:28px; height:28px; background:{color}22; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:14px;">{icon}</div>'
+                            f'<div>'
+                            f'<div style="font-size:11px; color:{color}; font-weight:700; text-transform:uppercase;">{label}</div>'
+                            f'<div style="font-size:12px; color:#d1d5db; line-height:1.5;">{html_cot.escape(text[:200])}</div>'
+                            f'</div></div>'
+                        )
+                if cot_html:
+                    st.markdown(
+                        f'<div style="background:#111; border-left:3px solid #a855f7; border-radius:8px; padding:14px; margin-bottom:8px;">'
+                        f'<div style="font-size:12px; color:#a855f7; font-weight:700; text-transform:uppercase; margin-bottom:10px;">AI Chain of Thought</div>'
+                        f'{cot_html}</div>',
+                        unsafe_allow_html=True,
+                    )
 
             # ── Pre-Trade Checklists ───────────────────────
             checklists = steps.get("checklists", {})
@@ -5541,7 +5886,7 @@ def page_ai_agent():
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Tabs ───────────────────────────────────────────────
-    tab_positions, tab_human, tab_history, tab_decisions = st.tabs(["Open Positions", "Add Manual Trade", "Trade History", "AI Decisions"])
+    tab_positions, tab_human, tab_history, tab_decisions, tab_sim = st.tabs(["Open Positions", "Add Manual Trade", "Trade History", "AI Decisions", "Historical Simulation"])
 
     with tab_positions:
         if open_positions:
@@ -5669,6 +6014,7 @@ def page_ai_agent():
                     "ai_trade": "#22c55e", "human_trade": "#3b82f6",
                     "close_position": "#ef4444", "ai_error": "#ef4444",
                     "pre_trade_check": "#06b6d4", "trade_blocked": "#ef4444",
+                    "chain_of_thought": "#a855f7", "hallucination_blocked": "#ef4444",
                 }
                 sc = step_colors.get(d["step"], "#6b7280")
                 sym_html = f' — <b style="color:#e5e5e5;">{d["symbol"]}</b>' if d.get("symbol") else ""
@@ -5687,6 +6033,701 @@ def page_ai_agent():
                 )
         else:
             st.info("No AI decisions yet. Run a cycle to see the agent's reasoning.")
+
+    with tab_sim:
+        st.markdown(
+            '<div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">'
+            '<span style="font-size:22px;">🕰</span>'
+            '<div>'
+            '<div style="font-size:16px; font-weight:800; color:#e5e5e5;">Historical Simulation</div>'
+            '<div style="font-size:12px; color:#6b7280;">Replay the AI Agent on past data — would it have made money?</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        # Row 1: Basic settings
+        sim_c1, sim_c2, sim_c3 = st.columns(3)
+        with sim_c1:
+            sim_months = st.selectbox("Simulation period", [3, 6, 9, 12], index=1, format_func=lambda x: f"{x} months", key="sim_period")
+        with sim_c2:
+            sim_freq = st.selectbox("Rebalance frequency", ["Weekly", "Bi-weekly", "Monthly"], index=0, key="sim_freq")
+        with sim_c3:
+            sim_capital = st.number_input("Starting capital ($)", value=100000, step=10000, key="sim_cap")
+
+        # Row 2: Strategy parameters
+        with st.expander("Strategy Parameters", expanded=True):
+            sp1, sp2, sp3 = st.columns(3)
+            with sp1:
+                sim_min_score = st.slider("Min opportunity score", 30, 80, 60, 5, key="sim_min_score",
+                                           help="Higher = more selective. 45=aggressive, 60=balanced, 75=very picky")
+                sim_stop_pct = st.slider("Stop loss %", 5, 20, 12, 1, key="sim_stop_pct",
+                                          help="How much loss before auto-sell. 8%=tight, 12%=normal, 15%=wide")
+            with sp2:
+                sim_max_buys = st.slider("Max buys per cycle", 1, 4, 1, 1, key="sim_max_buys",
+                                          help="Force best-only selection. 1=most selective, 3=aggressive")
+                sim_cut_pct = st.slider("Cut loss threshold %", 1, 10, 5, 1, key="sim_cut_pct",
+                                         help="Sell if losing more than this after hold period")
+            with sp3:
+                sim_hold_cycles = st.slider("Min hold cycles", 2, 12, 8, 1, key="sim_hold_cycles",
+                                             help="Minimum cycles before reassessing. 4=short, 8=medium, 12=patient")
+                sim_max_positions = st.slider("Max positions", 2, 8, 5, 1, key="sim_max_pos",
+                                               help="Maximum stocks to hold at once")
+                sim_risk_pct = st.slider("Risk per trade %", 1, 5, 2, 1, key="sim_risk_pct",
+                                          help="Max portfolio loss per trade. 1%=conservative, 2%=balanced, 5%=aggressive")
+
+            # Show strategy preset buttons
+            preset_col1, preset_col2, preset_col3 = st.columns(3)
+            with preset_col1:
+                st.markdown('<div style="font-size:11px; color:#6b7280; text-align:center;">Aggressive</div>', unsafe_allow_html=True)
+                st.caption("Score 45, Stop 8%, Risk 3%, 2 buys, Cut 2%, Hold 4")
+            with preset_col2:
+                st.markdown('<div style="font-size:11px; color:#f59e0b; text-align:center;">Balanced</div>', unsafe_allow_html=True)
+                st.caption("Score 60, Stop 12%, Risk 2%, 1 buy, Cut 5%, Hold 8")
+            with preset_col3:
+                st.markdown('<div style="font-size:11px; color:#22c55e; text-align:center;">Conservative</div>', unsafe_allow_html=True)
+                st.caption("Score 75, Stop 15%, Risk 1%, 1 buy, Cut 3%, Hold 12")
+
+        freq_days = {"Weekly": 5, "Bi-weekly": 10, "Monthly": 21}[sim_freq]
+
+        if st.button("Run Historical Simulation", type="primary", use_container_width=True, key="run_hist_sim"):
+            import subprocess, json
+            from datetime import datetime as dt_sim, timedelta
+            from src.data.gateway import DataGateway
+            from src.analysis import technical as tech_mod
+            from src.analysis.opportunity import compute_opportunity
+
+            sim_gw = DataGateway()
+            now = dt_sim.utcnow()
+            env = dict(__import__("os").environ)
+            env.pop("CLAUDECODE", None)
+
+            # Get SPY for benchmark
+            spy_prices = {}
+            try:
+                import yfinance as yf
+                spy = yf.download("SPY", period=f"{sim_months + 1}mo", progress=False, auto_adjust=True)
+                if hasattr(spy.columns, 'levels') and spy.columns.nlevels > 1:
+                    spy.columns = spy.columns.get_level_values(0)
+                spy = spy.reset_index()
+                spy["date_str"] = spy["Date"].dt.strftime("%Y-%m-%d")
+                spy_prices = dict(zip(spy["date_str"], spy["Close"].astype(float)))
+            except Exception:
+                pass
+
+            # Build date samples
+            sorted_spy_dates = sorted(spy_prices.keys())
+            start_str = (now - timedelta(days=sim_months * 30)).strftime("%Y-%m-%d")
+            sim_dates = [d for d in sorted_spy_dates if d >= start_str]
+            sample_dates = sim_dates[::freq_days] if sim_dates else []
+
+            if not sample_dates:
+                st.warning("No trading dates in simulation period.")
+            else:
+                cash = float(sim_capital)
+                positions: dict[str, dict] = {}
+                equity_curve = []
+                trade_log = []
+                cycle_log = []
+                spy_start = spy_prices.get(sim_dates[0])
+
+                # Generate unique run ID and clear old simulation data
+                import uuid
+                sim_run_id = f"sim_{uuid.uuid4().hex[:8]}_{now.strftime('%Y%m%d')}"
+                from src.utils.db import save_simulation_step, clear_simulation
+                clear_simulation()  # Clear previous simulations
+
+                progress = st.progress(0, text="AI Agent simulating through history...")
+
+                for step_i, date in enumerate(sample_dates):
+                    progress.progress((step_i + 1) / len(sample_dates), text=f"Cycle {step_i + 1}/{len(sample_dates)} — {date}")
+
+                    # ── Step 1: Market Pulse (macro at this date) ──
+                    # Use VIX history as proxy for market regime
+                    vix_val = None
+                    try:
+                        vix_hist = yf.download("^VIX", start=date, end=(dt_sim.strptime(date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
+                        if not vix_hist.empty:
+                            if hasattr(vix_hist.columns, 'levels') and vix_hist.columns.nlevels > 1:
+                                vix_hist.columns = vix_hist.columns.get_level_values(0)
+                            vix_val = float(vix_hist["Close"].iloc[0])
+                    except Exception:
+                        pass
+
+                    regime = "normal"
+                    if vix_val and vix_val > 30:
+                        regime = "high_volatility"
+
+                    market_summary = f"Date: {date}, Regime: {regime}" + (f", VIX: {vix_val:.1f}" if vix_val else "")
+
+                    # ── Step 2: AI Discovery (Claude picks based on full market pulse) ──
+                    sectors = sorted(set(s for _, (_, s, _) in STOCK_DB.items()))
+                    tickers_list = ", ".join(f"{s} ({STOCK_DB[s][0]}, {STOCK_DB[s][1]})" for s in list(STOCK_DB.keys())[:40])
+
+                    # Build market context for this date
+                    macro_context = f"Date: {date}. Regime: {regime}."
+                    if vix_val:
+                        macro_context += f" VIX: {vix_val:.1f} ({'high fear' if vix_val > 30 else 'moderate' if vix_val > 20 else 'low fear'})."
+
+                    # Get Treasury/rates for this date
+                    try:
+                        tnx = yf.download("^TNX", start=date, end=(dt_sim.strptime(date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
+                        if not tnx.empty:
+                            if hasattr(tnx.columns, 'levels') and tnx.columns.nlevels > 1:
+                                tnx.columns = tnx.columns.get_level_values(0)
+                            t10y = float(tnx["Close"].iloc[0])
+                            macro_context += f" 10Y Treasury: {t10y:.2f}%."
+                    except Exception:
+                        pass
+
+                    # Get sector performance + money flow for context
+                    sector_etfs = {"XLK": "Technology", "XLV": "Healthcare", "XLE": "Energy", "XLF": "Financials", "XLY": "Cons. Discretionary", "XLP": "Cons. Staples", "XLI": "Industrials", "XLU": "Utilities", "XLRE": "Real Estate", "XLC": "Communication Services", "XLB": "Materials"}
+                    sector_perf = []
+                    sector_flow = []
+                    for etf, sec_name in sector_etfs.items():
+                        try:
+                            d_start_30 = (dt_sim.strptime(date, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
+                            etf_data = yf.download(etf, start=d_start_30, end=date, progress=False, auto_adjust=True)
+                            if not etf_data.empty:
+                                if hasattr(etf_data.columns, 'levels') and etf_data.columns.nlevels > 1:
+                                    etf_data.columns = etf_data.columns.get_level_values(0)
+                                first = float(etf_data["Close"].iloc[0])
+                                last = float(etf_data["Close"].iloc[-1])
+                                chg = ((last - first) / first) * 100
+                                sector_perf.append((sec_name, chg))
+
+                                # Volume trend as proxy for money flow
+                                if "Volume" in etf_data.columns and len(etf_data) >= 10:
+                                    recent_vol = float(etf_data["Volume"].tail(5).mean())
+                                    older_vol = float(etf_data["Volume"].head(5).mean())
+                                    if older_vol > 0:
+                                        vol_change = ((recent_vol - older_vol) / older_vol) * 100
+                                        if abs(vol_change) > 10:
+                                            flow_dir = "inflow" if vol_change > 0 and chg > 0 else "outflow" if vol_change > 0 and chg < 0 else "neutral"
+                                            if flow_dir != "neutral":
+                                                sector_flow.append(f"{sec_name}: {flow_dir} (vol {vol_change:+.0f}%, price {chg:+.1f}%)")
+                        except Exception:
+                            continue
+
+                    if sector_perf:
+                        sector_perf.sort(key=lambda x: x[1], reverse=True)
+                        gaining = [f"{n}: {c:+.1f}%" for n, c in sector_perf if c > 0]
+                        losing = [f"{n}: {c:+.1f}%" for n, c in sector_perf if c < 0]
+                        macro_context += f"\nSector performance (30d):"
+                        if gaining:
+                            macro_context += f"\n  Gaining: {', '.join(gaining[:5])}"
+                        if losing:
+                            macro_context += f"\n  Losing: {', '.join(losing[:5])}"
+
+                    if sector_flow:
+                        macro_context += f"\nMoney flow signals: {'; '.join(sector_flow[:5])}"
+
+                    # Get geopolitical events for this date via Tavily
+                    geo_context = ""
+                    try:
+                        import httpx
+                        from src.utils.config import TAVILY_API_KEY
+                        if TAVILY_API_KEY and step_i % 4 == 0:  # Every 4th cycle to save API calls
+                            d_before = (dt_sim.strptime(date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+                            geo_queries = [
+                                f"tariffs trade war sanctions impact stocks {date[:7]}",
+                                f"war conflict military geopolitical market impact {date[:7]}",
+                            ]
+                            geo_events = []
+                            for gq in geo_queries:
+                                try:
+                                    resp = httpx.post(
+                                        "https://api.tavily.com/search",
+                                        json={"query": gq, "api_key": TAVILY_API_KEY, "max_results": 2, "search_depth": "basic",
+                                              "start_date": d_before, "end_date": date},
+                                        timeout=10,
+                                    )
+                                    for r in resp.json().get("results", [])[:2]:
+                                        geo_events.append(r.get("title", "")[:80])
+                                except Exception:
+                                    continue
+                            if geo_events:
+                                geo_context = "\nGeopolitical events: " + "; ".join(geo_events[:4])
+                    except Exception:
+                        pass
+
+                    # Get disruption themes for this date
+                    disrupt_context = ""
+                    try:
+                        if TAVILY_API_KEY and step_i % 4 == 0:
+                            d_before = (dt_sim.strptime(date, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+                            try:
+                                resp = httpx.post(
+                                    "https://api.tavily.com/search",
+                                    json={"query": f"technology disruption AI EV biotech stocks winners losers {date[:7]}",
+                                          "api_key": TAVILY_API_KEY, "max_results": 3, "search_depth": "basic",
+                                          "start_date": d_before, "end_date": date},
+                                    timeout=10,
+                                )
+                                themes = [r.get("title", "")[:80] for r in resp.json().get("results", [])[:3]]
+                                if themes:
+                                    disrupt_context = "\nDisruption headlines: " + "; ".join(themes)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    # Cache geo+disruption for non-query cycles
+                    if geo_context:
+                        _last_geo = geo_context
+                    else:
+                        geo_context = locals().get("_last_geo", "")
+                    if disrupt_context:
+                        _last_disrupt = disrupt_context
+                    else:
+                        disrupt_context = locals().get("_last_disrupt", "")
+
+                    # Get open positions + P/L for context
+                    pos_context = ""
+                    if positions:
+                        pos_parts = []
+                        for psym, pdata in positions.items():
+                            try:
+                                h = sim_gw.get_historical(psym, period_days=sim_months * 30 + 60)
+                                if h is not None:
+                                    mask = h["date"] <= date
+                                    if mask.sum() > 0:
+                                        cur_p = float(h[mask]["close"].iloc[-1])
+                                        pnl = ((cur_p - pdata["entry_price"]) / pdata["entry_price"]) * 100
+                                        pos_parts.append(f"{psym} ({STOCK_DB.get(psym, ('','',''))[1]}, {pnl:+.1f}%)")
+                            except Exception:
+                                pos_parts.append(psym)
+                        pos_context = f"\nHolding: {', '.join(pos_parts)}. Cash: ${cash:,.0f}. Diversify across sectors."
+                    else:
+                        pos_context = f"\nNo open positions. Cash: ${cash:,.0f}. Fresh start — pick diverse sectors."
+
+                    disc_prompt = f"""You are a portfolio strategist analyzing the market on {date}.
+
+MARKET PULSE:
+{macro_context}
+{geo_context}
+{disrupt_context}
+{pos_context}
+
+AVAILABLE STOCKS:
+{tickers_list}
+
+AVAILABLE SECTORS: {', '.join(sectors)}
+
+Based on the macro environment, sector momentum, and current holdings:
+1. Which 2-3 sectors are best positioned RIGHT NOW?
+2. Which sectors should I avoid?
+3. Pick 3-5 specific tickers from the list above that are best positioned.
+
+Consider: VIX level (risk appetite), rates (growth vs value), sector rotation (follow the money), and diversification from current holdings.
+
+Respond ONLY with JSON: {{"favor": ["Sector1", "Sector2"], "avoid": ["Sector3"], "tickers": ["SYM1", "SYM2", "SYM3", "SYM4", "SYM5"]}}"""
+
+                    favor_sectors = []
+                    ai_tickers = []
+                    try:
+                        proc = subprocess.run(["claude", "-p", disc_prompt, "--model", "haiku", "--allowedTools", ""], capture_output=True, text=True, timeout=15, env=env)
+                        resp = proc.stdout.strip()
+                        j_start = resp.find("{")
+                        j_end = resp.rfind("}") + 1
+                        if j_start >= 0 and j_end > j_start:
+                            disc_data = json.loads(resp[j_start:j_end])
+                            favor_sectors = disc_data.get("favor", [])
+                            ai_tickers = disc_data.get("tickers", [])
+                    except Exception:
+                        pass
+
+                    # ── Step 3: Discover stocks via MCP + AI ──
+                    # Source 1: Claude's AI picks from market pulse
+                    focused_universe = list(set(ai_tickers))
+
+                    # Source 2: Tavily search for trending/recommended stocks at this date
+                    if step_i % 2 == 0:  # Every other cycle to save API calls
+                        try:
+                            import httpx
+                            from src.utils.config import TAVILY_API_KEY
+                            if TAVILY_API_KEY:
+                                d_before = (dt_sim.strptime(date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+                                search_queries = [
+                                    f"best stocks to buy {date[:7]} analyst picks recommendations",
+                                    f"top performing stocks momentum {date[:7]} buy signals",
+                                ]
+                                for sq in search_queries:
+                                    try:
+                                        resp = httpx.post(
+                                            "https://api.tavily.com/search",
+                                            json={"query": sq, "api_key": TAVILY_API_KEY, "max_results": 3,
+                                                  "search_depth": "basic", "start_date": d_before, "end_date": date},
+                                            timeout=10,
+                                        )
+                                        for r in resp.json().get("results", [])[:3]:
+                                            # Extract tickers from article titles/content
+                                            text = (r.get("title", "") + " " + r.get("content", "")[:200]).upper()
+                                            for sym in STOCK_DB.keys():
+                                                if f" {sym} " in f" {text} " or f"({sym})" in text:
+                                                    if sym not in focused_universe:
+                                                        focused_universe.append(sym)
+                                    except Exception:
+                                        continue
+
+                                # Also search for sector-specific picks based on favored sectors
+                                for fav_sec in favor_sectors[:2]:
+                                    try:
+                                        resp = httpx.post(
+                                            "https://api.tavily.com/search",
+                                            json={"query": f"best {fav_sec} stocks to buy {date[:7]}",
+                                                  "api_key": TAVILY_API_KEY, "max_results": 2, "search_depth": "basic",
+                                                  "start_date": d_before, "end_date": date},
+                                            timeout=10,
+                                        )
+                                        for r in resp.json().get("results", [])[:2]:
+                                            text = (r.get("title", "") + " " + r.get("content", "")[:200]).upper()
+                                            for sym in STOCK_DB.keys():
+                                                if f" {sym} " in f" {text} " or f"({sym})" in text:
+                                                    if sym not in focused_universe:
+                                                        focused_universe.append(sym)
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            pass
+
+                        # Cache MCP-discovered stocks for next cycle
+                        _last_mcp_stocks = list(focused_universe)
+                    else:
+                        # Reuse last MCP discovery
+                        mcp_cached = locals().get("_last_mcp_stocks", [])
+                        for ms in mcp_cached:
+                            if ms not in focused_universe:
+                                focused_universe.append(ms)
+
+                    # Source 3: Stocks from favored sectors in our DB
+                    for sym, (_, sector, _) in STOCK_DB.items():
+                        if favor_sectors and any(f.lower() in sector.lower() for f in favor_sectors) and sym not in focused_universe:
+                            focused_universe.append(sym)
+                        if len(focused_universe) >= 20:
+                            break
+
+                    # Fallback: if everything failed, one stock per sector
+                    if len(focused_universe) < 5:
+                        seen_sectors = set()
+                        for s, (_, sec, _) in STOCK_DB.items():
+                            if sec not in seen_sectors and s not in focused_universe:
+                                focused_universe.append(s)
+                                seen_sectors.add(sec)
+                            if len(focused_universe) >= 12:
+                                break
+
+                    candidates = []
+                    # Pre-fetch all historical data on first cycle (cached after)
+                    if step_i == 0:
+                        for sym in focused_universe:
+                            try:
+                                sim_gw.get_historical(sym, period_days=sim_months * 30 + 60)
+                            except Exception:
+                                pass
+
+                    for sym in focused_universe:
+                        if sym in positions:
+                            continue
+                        try:
+                            h = sim_gw.get_historical(sym, period_days=sim_months * 30 + 60)
+                            if h is None or h.empty:
+                                continue
+                            mask = h["date"] <= date
+                            hist_slice = h[mask]
+                            if len(hist_slice) < 20:
+                                continue
+                            tech = tech_mod.analyze(sym, hist_slice)
+                            # Check if stock is a disruption beneficiary
+                            is_disrupt = sym in ai_tickers or any(
+                                sym in (STOCK_DB.get(sym, ("", "", ""))[2] or "")
+                                for _ in [1]  # Just use ai_tickers as proxy
+                            )
+                            score = compute_opportunity(sym, tech, is_disruption_beneficiary=is_disrupt)
+                            min_score = (sim_min_score + 10) if regime == "high_volatility" else sim_min_score
+                            # Momentum override stocks bypass min score (but still need 45+)
+                            effective_min = 45 if score.momentum_override else min_score
+                            if score.total_score >= effective_min:
+                                price = float(hist_slice["close"].iloc[-1])
+                                candidates.append({
+                                    "symbol": sym, "score": score.total_score,
+                                    "strategy": score.strategy, "price": price,
+                                    "rsi": float(tech.rsi_14) if tech.rsi_14 else None,
+                                    "trend": tech.trend,
+                                    "trend_pullback": score.trend_pullback,
+                                    "relative_strength": score.relative_strength,
+                                    "volume_confirmed": score.volume_confirmed,
+                                    "confirmations": score.confirmations,
+                                    "momentum_override": score.momentum_override,
+                                })
+                        except Exception:
+                            continue
+
+                    candidates.sort(key=lambda x: x["score"], reverse=True)
+
+                    # ── Step 4: Monitor positions ──
+                    for sym in list(positions.keys()):
+                        try:
+                            h = sim_gw.get_historical(sym, period_days=sim_months * 30 + 60)
+                            if h is None:
+                                continue
+                            mask = h["date"] <= date
+                            if mask.sum() == 0:
+                                continue
+                            cur_price = float(h[mask]["close"].iloc[-1])
+                            pos = positions[sym]
+
+                            if cur_price <= pos["stop_loss"]:
+                                pnl_pct = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                                cash += cur_price * pos["shares"]
+                                trade_log.append({"date": date, "symbol": sym, "action": "SELL (stop)", "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
+                                del positions[sym]
+                            elif (step_i - pos.get("entry_step", 0)) >= sim_hold_cycles:
+                                pnl_pct = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                                if pnl_pct < -sim_cut_pct:
+                                    cash += cur_price * pos["shares"]
+                                    trade_log.append({"date": date, "symbol": sym, "action": "SELL (cut)", "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
+                                    del positions[sym]
+                        except Exception:
+                            continue
+
+                    # ── Step 5: AI trade decision ──
+                    # Filter: confirmed (2+/3) OR momentum override stocks
+                    confirmed_candidates = [c for c in candidates if c.get("confirmations", 0) >= 2 or c.get("momentum_override")]
+                    # If none confirmed, allow best with 1+ confirmation
+                    if not confirmed_candidates:
+                        confirmed_candidates = [c for c in candidates if c.get("confirmations", 0) >= 1][:2]
+
+                    if confirmed_candidates and len(positions) < sim_max_positions and cash > sim_capital * 0.2:
+                        cand_text = "\n".join(
+                            f"{c['symbol']}: Score {c['score']}, {c['strategy']}, ${c['price']:.2f}, RSI {c.get('rsi', 'N/A')}, {c.get('trend', '')}, Confirmations: {c.get('confirmations', 0)}/3 ({'✓TP ' if c.get('trend_pullback') else ''}{'✓RS ' if c.get('relative_strength') else ''}{'✓VOL' if c.get('volume_confirmed') else ''}){'  🚀 MOMENTUM OVERRIDE — disruption beneficiary, strong uptrend, buy without full confirmations' if c.get('momentum_override') else ''}"
+                            for c in confirmed_candidates[:5]
+                        )
+                        pos_text = ", ".join(f"{s}" for s in positions.keys()) if positions else "None"
+
+                        trade_prompt = f"""Date: {date}. Cash: ${cash:,.0f}. Regime: {regime}. Holding: {pos_text}.
+AI Discovery focused on: {', '.join(favor_sectors) if favor_sectors else 'all sectors'}
+
+Top candidates (scored by 4-factor model):
+{cand_text}
+
+STRICT RULES:
+- Pick up to {sim_max_buys} to BUY. Default is ZERO — only buy if exceptional.
+- ONLY buy if Confirmations >= 2 out of 3 (TP=Trend Pullback, RS=Relative Strength, VOL=Volume).
+- If no stock has 2+ confirmations, return empty buys. Skipping is better than forcing.
+- Score must be >= {sim_min_score}.
+- Stop at -{sim_stop_pct}%.
+JSON only: {{"chain_of_thought": {{"market": "1 sentence", "sector": "1 sentence", "stocks": "1 sentence", "decision": "1 sentence"}}, "buys": [{{"symbol": "X", "reason": "5 words max"}}]}}"""
+
+                        try:
+                            proc = subprocess.run(["claude", "-p", trade_prompt, "--model", "haiku", "--allowedTools", ""], capture_output=True, text=True, timeout=15, env=env)
+                            resp = proc.stdout.strip()
+                            j_start = resp.find("{")
+                            j_end = resp.rfind("}") + 1
+                            if j_start >= 0 and j_end > j_start:
+                                trade_response = json.loads(resp[j_start:j_end])
+                                buys = trade_response.get("buys", [])
+                                sim_cot = trade_response.get("chain_of_thought", {})
+                                # Validate: only allow symbols that were in confirmed_candidates
+                                valid_syms = {c["symbol"] for c in confirmed_candidates}
+                                for buy in buys[:sim_max_buys]:
+                                    bsym = buy.get("symbol", "")
+                                    if not bsym or bsym in positions:
+                                        continue
+                                    if bsym not in valid_syms:
+                                        continue  # Hallucinated ticker — skip
+                                    # Get price
+                                    bprice = next((c["price"] for c in candidates if c["symbol"] == bsym), None)
+                                    if not bprice:
+                                        continue
+                                    stop = round(bprice * (1 - sim_stop_pct / 100), 2)
+                                    risk_per_share = bprice - stop
+                                    if risk_per_share <= 0:
+                                        continue
+                                    shares = int((cash * sim_risk_pct / 100) / risk_per_share)
+                                    cost = shares * bprice
+                                    if cost > cash * 0.3 or shares <= 0:
+                                        continue
+                                    cash -= cost
+                                    positions[bsym] = {"shares": shares, "entry_price": bprice, "entry_date": date, "stop_loss": stop, "entry_step": step_i}
+                                    trade_log.append({"date": date, "symbol": bsym, "action": "BUY", "price": bprice, "pnl_pct": 0, "reason": buy.get("reason", "")})
+                        except Exception:
+                            pass
+
+                    # ── Record equity ──
+                    invested = 0
+                    pos_snapshot = []
+                    for sym, pos in positions.items():
+                        try:
+                            h = sim_gw.get_historical(sym, period_days=sim_months * 30 + 60)
+                            if h is not None:
+                                mask = h["date"] <= date
+                                if mask.sum() > 0:
+                                    cur_p = float(h[mask]["close"].iloc[-1])
+                                    invested += cur_p * pos["shares"]
+                                    pnl_p = ((cur_p - pos["entry_price"]) / pos["entry_price"]) * 100
+                                    pos_snapshot.append({"symbol": sym, "shares": pos["shares"], "entry": pos["entry_price"], "current": cur_p, "pnl_pct": round(pnl_p, 1)})
+                        except Exception:
+                            pass
+                    total_val = cash + invested
+                    ret_pct = ((total_val - sim_capital) / sim_capital) * 100
+                    bench_ret = ((spy_prices.get(date, spy_start or 1) - (spy_start or 1)) / (spy_start or 1)) * 100 if spy_start else 0
+
+                    equity_curve.append({"date": date, "value": total_val, "return": ret_pct, "benchmark": bench_ret})
+                    cycle_log.append({"date": date, "regime": regime, "focus": favor_sectors, "candidates": len(candidates), "positions": len(positions)})
+
+                    # ── Save all step data for replay ──
+                    try:
+                        # Market Pulse
+                        save_simulation_step(sim_run_id, date, "market_pulse", {
+                            "regime": regime, "vix": vix_val,
+                            "sector_perf": [{"sector": n, "change": c} for n, c in sector_perf] if sector_perf else [],
+                            "sector_flow": sector_flow,
+                            "geo": geo_context, "disruption": disrupt_context,
+                            "macro_summary": market_summary,
+                        })
+                        # Discover
+                        save_simulation_step(sim_run_id, date, "discover", {
+                            "favor_sectors": favor_sectors, "avoid_sectors": [],
+                            "ai_tickers": ai_tickers, "focused_universe": focused_universe[:15],
+                            "candidates": [{"symbol": c["symbol"], "score": c["score"], "strategy": c["strategy"], "price": c["price"]} for c in candidates[:10]],
+                        })
+                        # Deep Dive (for stocks that were candidates)
+                        save_simulation_step(sim_run_id, date, "deep_dive", {
+                            "stocks": [{"symbol": c["symbol"], "score": c["score"], "strategy": c["strategy"],
+                                        "rsi": c.get("rsi"), "trend": c.get("trend")} for c in candidates[:5]],
+                        })
+                        # Trades
+                        cycle_trades = [t for t in trade_log if t["date"] == date]
+                        save_simulation_step(sim_run_id, date, "trades", {
+                            "trades": cycle_trades,
+                            "chain_of_thought": locals().get("sim_cot", {}),
+                        })
+                        # Portfolio
+                        save_simulation_step(sim_run_id, date, "portfolio", {
+                            "cash": round(cash, 2), "invested": round(invested, 2),
+                            "total_value": round(total_val, 2), "return_pct": round(ret_pct, 2),
+                            "benchmark_pct": round(bench_ret, 2), "positions": pos_snapshot,
+                        })
+                    except Exception:
+                        pass
+
+                progress.empty()
+
+                # Close remaining positions
+                for sym, pos in list(positions.items()):
+                    try:
+                        h = sim_gw.get_historical(sym, period_days=sim_months * 30 + 60)
+                        if h is not None:
+                            fp = float(h["close"].iloc[-1])
+                            pnl_pct = ((fp - pos["entry_price"]) / pos["entry_price"]) * 100
+                            cash += fp * pos["shares"]
+                            trade_log.append({"date": sample_dates[-1], "symbol": sym, "action": "SELL (end)", "price": fp, "pnl_pct": round(pnl_pct, 1)})
+                    except Exception:
+                        pass
+
+                # ── Results ─────────────────────────────────
+                final_value = cash
+                total_return = ((final_value - sim_capital) / sim_capital) * 100
+                bench_final = equity_curve[-1]["benchmark"] if equity_curve else 0
+                alpha = total_return - bench_final
+
+                sells = [t for t in trade_log if "SELL" in t.get("action", "")]
+                wins = [t for t in sells if t.get("pnl_pct", 0) > 0]
+                losses = [t for t in sells if t.get("pnl_pct", 0) < 0]
+                total_trades = len(sells)
+                win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0
+
+                ret_color = "#22c55e" if total_return > 0 else "#ef4444"
+                alpha_color = "#22c55e" if alpha > 0 else "#ef4444"
+                wr_color = "#22c55e" if win_rate >= 60 else "#ef4444" if win_rate < 40 else "#f59e0b"
+
+                # KPIs
+                st.markdown(
+                    f'<div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin:16px 0;">'
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Final Value</div>'
+                    f'<div style="font-size:20px; font-weight:800; color:#e5e5e5;">${final_value:,.0f}</div></div>'
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">AI Return</div>'
+                    f'<div style="font-size:20px; font-weight:800; color:{ret_color};">{total_return:+.1f}%</div></div>'
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">vs S&P 500</div>'
+                    f'<div style="font-size:20px; font-weight:800; color:{alpha_color};">{alpha:+.1f}%</div>'
+                    f'<div style="font-size:10px; color:#6b7280;">alpha</div></div>'
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Win Rate</div>'
+                    f'<div style="font-size:20px; font-weight:800; color:{wr_color};">{win_rate:.0f}%</div>'
+                    f'<div style="font-size:10px; color:#6b7280;">{len(wins)}W / {len(losses)}L</div></div>'
+                    f'<div style="background:#111; border:1px solid #1a1a1a; border-radius:10px; padding:14px; text-align:center;">'
+                    f'<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Trades</div>'
+                    f'<div style="font-size:20px; font-weight:800; color:#e5e5e5;">{total_trades}</div>'
+                    f'<div style="font-size:10px; color:#6b7280;">{sim_months}mo {sim_freq.lower()}</div></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Equity curve
+                if equity_curve:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=[e["date"] for e in equity_curve], y=[e["return"] for e in equity_curve],
+                                              name="AI Agent", line=dict(color="#22c55e", width=2), fill="tozeroy", fillcolor="rgba(34,197,94,0.06)"))
+                    fig.add_trace(go.Scatter(x=[e["date"] for e in equity_curve], y=[e["benchmark"] for e in equity_curve],
+                                              name="S&P 500", line=dict(color="#6b7280", width=1, dash="dash")))
+                    fig.update_layout(template="plotly_dark", height=350, plot_bgcolor="#0a0a0a", paper_bgcolor="#0a0a0a",
+                                      yaxis_title="Return %", hovermode="x unified", legend=dict(orientation="h", y=1.1), margin=dict(l=0, r=0, t=10, b=0))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Bottom line
+                if total_return > bench_final and total_return > 0:
+                    verdict = f"AI Agent beat the market. {total_return:+.1f}% vs S&P 500 {bench_final:+.1f}% = {alpha:+.1f}% alpha over {sim_months} months. Claude's sector rotation + signal analysis generated real edge."
+                    vc = "#22c55e"
+                elif total_return > 0:
+                    verdict = f"AI Agent was profitable ({total_return:+.1f}%) but underperformed S&P 500 ({bench_final:+.1f}%). Signals worked but passive investing did better."
+                    vc = "#f59e0b"
+                else:
+                    verdict = f"AI Agent lost money ({total_return:+.1f}%). Review which cycles and sectors caused losses."
+                    vc = "#ef4444"
+
+                st.markdown(
+                    f'<div style="background:#0d0d0d; border:1px solid {vc}44; border-radius:10px; padding:16px; margin:12px 0;">'
+                    f'<div style="font-size:14px; color:{vc}; font-weight:700;">Historical Simulation Result</div>'
+                    f'<div style="font-size:13px; color:#d1d5db; margin-top:6px; line-height:1.6;">{verdict}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Cycle log
+                if cycle_log:
+                    with st.expander(f"Cycle Log ({len(cycle_log)} cycles)", expanded=False):
+                        for cl in cycle_log:
+                            st.markdown(
+                                f'<div style="font-size:12px; padding:3px 0; border-bottom:1px solid #1a1a1a;">'
+                                f'<span style="color:#6b7280;">{cl["date"]}</span>'
+                                f' | Regime: <span style="color:#e5e5e5;">{cl["regime"]}</span>'
+                                f' | Focus: <span style="color:#f59e0b;">{", ".join(cl["focus"][:2]) if cl["focus"] else "all"}</span>'
+                                f' | Scored: {cl["candidates"]} stocks'
+                                f' | Holding: {cl["positions"]}'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                # Trade log
+                if trade_log:
+                    with st.expander(f"Trade Log ({len(trade_log)} trades)", expanded=False):
+                        for t in trade_log:
+                            tc = "#22c55e" if t.get("pnl_pct", 0) > 0 else "#ef4444" if t.get("pnl_pct", 0) < 0 else "#6b7280"
+                            ac = "#22c55e" if "BUY" in t["action"] else "#ef4444"
+                            reason = f' — {t["reason"]}' if t.get("reason") else ""
+                            st.markdown(
+                                f'<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #1a1a1a; font-size:12px;">'
+                                f'<span style="color:#6b7280;">{t["date"]}</span>'
+                                f'<span style="color:#e5e5e5; font-weight:700;">{t["symbol"]}</span>'
+                                f'<span style="color:{ac};">{t["action"]}{reason}</span>'
+                                f'<span style="color:#e5e5e5;">${t["price"]:.2f}</span>'
+                                f'<span style="color:{tc}; font-weight:700;">{t["pnl_pct"]:+.1f}%</span>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -145,6 +145,7 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
         analyst_data=analyst_data,
         holders_data=holders_data,
         community_buzz=buzz_data,
+        short_interest=_safe(lambda: gw.get_short_interest(symbol)),
     )
 
     # ── Export ──────────────────────────────────────────────────

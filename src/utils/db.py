@@ -112,6 +112,16 @@ def init_db() -> None:
             timestamp TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS simulation_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            cycle_date TEXT NOT NULL,
+            step TEXT NOT NULL,
+            data TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sim_run ON simulation_runs(run_id, cycle_date, step);
+
         CREATE TABLE IF NOT EXISTS precomputed_scores (
             symbol TEXT PRIMARY KEY,
             score_data TEXT NOT NULL,
@@ -124,6 +134,9 @@ def init_db() -> None:
             current_cash REAL NOT NULL DEFAULT 100000,
             risk_per_trade REAL NOT NULL DEFAULT 0.02,
             max_positions INTEGER NOT NULL DEFAULT 5,
+            max_buys_per_cycle INTEGER NOT NULL DEFAULT 1,
+            min_opportunity_score INTEGER NOT NULL DEFAULT 60,
+            stop_loss_pct REAL NOT NULL DEFAULT 12.0,
             rebalance_frequency TEXT NOT NULL DEFAULT 'weekly',
             status TEXT NOT NULL DEFAULT 'stopped',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -241,6 +254,64 @@ def get_all_precomputed_scores(max_age_minutes: int = 60) -> dict:
     ).fetchall()
     conn.close()
     return {row["symbol"]: json.loads(row["score_data"]) for row in rows}
+
+
+def save_simulation_step(run_id: str, cycle_date: str, step: str, data: dict) -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO simulation_runs (run_id, cycle_date, step, data) VALUES (?, ?, ?, ?)",
+        (run_id, cycle_date, step, json.dumps(data, default=str)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_simulation_runs() -> list[str]:
+    conn = get_connection()
+    rows = conn.execute("SELECT DISTINCT run_id FROM simulation_runs ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [r["run_id"] for r in rows]
+
+
+def get_simulation_cycles(run_id: str) -> list[str]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT cycle_date FROM simulation_runs WHERE run_id = ? ORDER BY cycle_date ASC", (run_id,)
+    ).fetchall()
+    conn.close()
+    return [r["cycle_date"] for r in rows]
+
+
+def get_simulation_step(run_id: str, cycle_date: str, step: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT data FROM simulation_runs WHERE run_id = ? AND cycle_date = ? AND step = ?",
+        (run_id, cycle_date, step),
+    ).fetchone()
+    conn.close()
+    if row:
+        return json.loads(row["data"])
+    return None
+
+
+def get_simulation_all_steps(run_id: str, cycle_date: str) -> dict:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT step, data FROM simulation_runs WHERE run_id = ? AND cycle_date = ?",
+        (run_id, cycle_date),
+    ).fetchall()
+    conn.close()
+    return {r["step"]: json.loads(r["data"]) for r in rows}
+
+
+def clear_simulation(run_id: str | None = None) -> None:
+    conn = get_connection()
+    if run_id:
+        conn.execute("DELETE FROM simulation_runs WHERE run_id = ?", (run_id,))
+    else:
+        conn.execute("DELETE FROM simulation_runs")
+    conn.commit()
+    conn.close()
 
 
 def log_api_call(source: str, endpoint: str, status: str, error: str | None = None) -> None:

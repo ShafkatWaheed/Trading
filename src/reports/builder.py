@@ -54,6 +54,7 @@ def build_report(
     analyst_data: dict | None = None,
     holders_data: dict | None = None,
     community_buzz: dict | None = None,
+    short_interest: dict | None = None,
 ) -> Report:
     # Build sections
     sections = [
@@ -85,6 +86,8 @@ def build_report(
         sections.append(_holders_section(holders_data))
     if community_buzz:
         sections.append(_community_buzz_section(community_buzz))
+    if short_interest:
+        sections.append(_short_interest_section(short_interest))
     if confluence:
         sections.append(_confluence_section(confluence))
 
@@ -475,6 +478,30 @@ def _community_buzz_section(data: dict) -> ReportSection:
             "buzz_level": buzz_level,
             "sources": sources,
             "top_posts": [{"title": p["title"], "source": p["source"], "sentiment": p["sentiment"]} for p in posts[:5]],
+        },
+    )
+
+
+def _short_interest_section(data: dict) -> ReportSection:
+    pct = data.get("short_pct_float", 0)
+    ratio = data.get("short_ratio", 0)
+    signal = data.get("signal", "normal")
+    score = data.get("score", 0)
+
+    if signal == "squeeze_potential":
+        content = f"HIGH short interest ({pct:.1f}% of float). Short squeeze potential. Days to cover: {ratio:.1f}"
+    elif signal == "elevated":
+        content = f"Elevated short interest ({pct:.1f}% of float). Bears are betting against. Days to cover: {ratio:.1f}"
+    else:
+        content = f"Normal short interest ({pct:.1f}% of float). No squeeze potential."
+
+    return ReportSection(
+        title="Short Interest",
+        content=content,
+        data={
+            "score": score, "signal": signal,
+            "short_pct_float": pct, "short_ratio": ratio,
+            "shares_short": data.get("shares_short"),
         },
     )
 

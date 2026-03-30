@@ -21,6 +21,9 @@ class AgentConfig:
     current_cash: float = 100000
     risk_per_trade: float = 0.02
     max_positions: int = 5
+    max_buys_per_cycle: int = 1
+    min_opportunity_score: int = 60
+    stop_loss_pct: float = 12.0
     rebalance_frequency: str = "weekly"
     status: str = "stopped"
     last_run: str | None = None
@@ -84,6 +87,7 @@ class TradingAgent:
         # Step 5: AI decides
         trades = self._ai_decide(run_date, market, analyses)
         steps["trade_decisions"] = trades
+        steps["chain_of_thought"] = getattr(self, "_last_chain_of_thought", {})
 
         # Step 6: Execute paper trades
         executed = self._execute(run_date, trades)
@@ -197,7 +201,7 @@ class TradingAgent:
             favored_sectors = ai_guidance.get("favor_sectors", [])
             avoid_sectors = ai_guidance.get("avoid_sectors", [])
             specific_tickers = ai_guidance.get("specific_tickers", [])
-            min_score = ai_guidance.get("min_score", 50)
+            min_score = max(ai_guidance.get("min_score", 50), self.config.min_opportunity_score)
 
             # Prioritize: AI-specific picks → favored sectors → rest
             universe_ordered = []
@@ -541,11 +545,15 @@ PORTFOLIO:
 STOCK CANDIDATES (analyzed with 12 indicators):
 {candidates_text}
 RULES:
+- Default is HOLD. Only BUY if the setup is exceptional — it's better to skip than force a bad trade
+- Maximum {self.config.max_buys_per_cycle} new buys per cycle
+- Only consider stocks with opportunity score >= {self.config.min_opportunity_score}
+- REQUIRE 2+ confirmation filters (Trend Pullback, Relative Strength, Volume) before buying
 - Only trade if signal alignment is strong (7+ of 12 signals agree)
 - PRIORITIZE signals with proven track records — if backtest shows 70%+ win rate, trust that signal more
 - AVOID signals with poor track records — if backtest shows <40% win rate, discount that signal
 - Follow the money — favor sectors with positive money flow, avoid sectors with outflows
-- Set stop loss on every trade (use support level from technical data, or -8% max)
+- Set stop loss at -{self.config.stop_loss_pct}% on every trade
 - Set target (use resistance level from technical data, or +15% max)
 - Position size based on risk per trade and stop loss distance
 - Maximum {self.config.max_positions} open positions at once
@@ -555,8 +563,24 @@ RULES:
 - If analyst consensus is Strong Buy with 20%+ upside, that's a strong confirming signal
 - If sector money flow is negative for a stock's sector, reduce conviction even if other signals are bullish
 
+Before responding, verify:
+1. Every symbol you mention MUST be from the STOCK CANDIDATES list above — do NOT invent tickers
+2. Do NOT buy stocks that are not in the candidates
+3. If no candidate has 2+ confirmations, return empty trades — skipping is correct
+4. stop_loss must be BELOW entry price, not above
+5. Default is NO trades — only trade if the setup is genuinely strong
+
 Respond in this EXACT JSON format (no other text):
 {{
+  "chain_of_thought": {{
+    "market_read": "Macro regime + VIX + rates + sector flows summary",
+    "geopolitical": "Key geo risks and which sectors are exposed",
+    "disruption": "Active disruption themes and which stocks benefit/lose",
+    "signal_breakdown": "For EACH stock: list all 12 indicators as bullish/bearish/neutral. Format: 'STOCK: Technical=bullish(RSI 55,uptrend), Fundamental=bullish(PE 25,growth 30%), Sentiment=neutral(0.03), Macro=neutral, Options=bullish(PC 0.6), SmartMoney=bullish(insider buying), Congress=neutral, Geopolitical=bearish(tariff), Disruption=bullish(AI), Analyst=bullish(Strong Buy,$950 target), Holders=bullish(accumulating), Buzz=neutral'",
+    "confirmation_check": "For each stock: Trend Pullback yes/no, Relative Strength yes/no, Volume yes/no = X/3",
+    "backtest_evidence": "Which signals have proven track records on this stock and what win rates",
+    "decision_summary": "Final decision with key reason. Reference which indicators drove the decision"
+  }},
   "trades": [
     {{"symbol": "AAPL", "action": "BUY", "shares": 50, "stop_loss": 240.00, "target": 280.00, "reason": "Strong momentum with 9/12 bullish signals"}},
     {{"symbol": "NVDA", "action": "SELL", "reason": "Signal flipped bearish, take profit"}}
@@ -580,6 +604,16 @@ Respond in this EXACT JSON format (no other text):
             if start >= 0 and end > start:
                 data = json.loads(response[start:end])
                 trades = data.get("trades", [])
+
+                # Save chain of thought
+                cot = data.get("chain_of_thought", {})
+                if cot:
+                    cot_text = " | ".join(f"{k}: {v}" for k, v in cot.items() if v)
+                    self._log_decision(run_date, "chain_of_thought", None, "reasoning", cot_text[:500])
+                    self._last_chain_of_thought = cot
+
+                # Validate — reject hallucinated tickers, invalid data
+                trades = self._validate_trade_decision(trades, analyses)
 
                 for t in trades:
                     self._log_decision(run_date, "ai_trade", t.get("symbol"),
@@ -703,6 +737,53 @@ Respond in this EXACT JSON format (no other text):
 
         return all_pass, checks
 
+    def _validate_trade_decision(self, trades: list[dict], candidates: dict) -> list[dict]:
+        """Validate AI trade decisions — reject hallucinated or invalid trades."""
+        valid_symbols = set(candidates.keys())
+        validated = []
+
+        for t in trades:
+            sym = t.get("symbol", "")
+            action = t.get("action", "").upper()
+
+            # Check 1: Symbol must be in the candidates we showed Claude
+            if sym not in valid_symbols and action == "BUY":
+                self._log_decision(
+                    datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                    "hallucination_blocked", sym, "REJECTED",
+                    f"AI suggested {sym} which was NOT in the candidate list — hallucinated ticker",
+                )
+                continue
+
+            # Check 2: Action must be BUY, SELL, or HOLD
+            if action not in ("BUY", "SELL", "HOLD"):
+                continue
+
+            # Check 3: If BUY, verify shares and stop_loss are reasonable
+            if action == "BUY":
+                stop = t.get("stop_loss", 0)
+                price = candidates.get(sym, {}).get("price", 0)
+                if price > 0 and stop > 0:
+                    # Stop can't be above entry price
+                    if stop >= price:
+                        t["stop_loss"] = round(price * (1 - self.config.stop_loss_pct / 100), 2)
+                    # Stop can't be more than 25% below (unreasonable)
+                    if stop < price * 0.75:
+                        t["stop_loss"] = round(price * (1 - self.config.stop_loss_pct / 100), 2)
+
+                shares = t.get("shares", 0)
+                if shares < 0:
+                    continue  # Negative shares = hallucination
+
+            # Check 4: Reason must exist and be reasonable length
+            reason = t.get("reason", "")
+            if len(reason) > 200:
+                t["reason"] = reason[:200]  # Truncate overly verbose reasoning
+
+            validated.append(t)
+
+        return validated
+
     def _get_sector(self, symbol: str) -> str:
         try:
             from dashboard import STOCK_DB
@@ -754,7 +835,7 @@ Respond in this EXACT JSON format (no other text):
         pos = AgentPosition(
             symbol=symbol, direction="long", shares=shares,
             entry_price=price, entry_date=run_date,
-            stop_loss=trade.get("stop_loss", round(price * 0.92, 2)),
+            stop_loss=trade.get("stop_loss", round(price * (1 - self.config.stop_loss_pct / 100), 2)),
             target=trade.get("target", round(price * 1.15, 2)),
             status="open", ai_reasoning=trade.get("reason", ""),
         )
@@ -872,7 +953,7 @@ Respond in this EXACT JSON format (no other text):
         row = conn.execute("SELECT * FROM agent_config WHERE id=1").fetchone()
         if not row:
             conn.execute(
-                "INSERT INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, rebalance_frequency, status, created_at) VALUES (1, 100000, 100000, 0.02, 5, 'weekly', 'stopped', ?)",
+                "INSERT INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, max_buys_per_cycle, min_opportunity_score, stop_loss_pct, rebalance_frequency, status, created_at) VALUES (1, 100000, 100000, 0.02, 5, 1, 60, 12.0, 'weekly', 'stopped', ?)",
                 (datetime.utcnow().isoformat(),),
             )
             conn.commit()
@@ -882,6 +963,9 @@ Respond in this EXACT JSON format (no other text):
         return AgentConfig(
             starting_capital=row["starting_capital"], current_cash=row["current_cash"],
             risk_per_trade=row["risk_per_trade"], max_positions=row["max_positions"],
+            max_buys_per_cycle=row["max_buys_per_cycle"] if "max_buys_per_cycle" in row.keys() else 1,
+            min_opportunity_score=row["min_opportunity_score"] if "min_opportunity_score" in row.keys() else 60,
+            stop_loss_pct=row["stop_loss_pct"] if "stop_loss_pct" in row.keys() else 12.0,
             rebalance_frequency=row["rebalance_frequency"], status=row["status"],
             last_run=row["last_run"],
         )
@@ -963,15 +1047,16 @@ def add_human_trade(symbol: str, direction: str, shares: int, entry_price: float
     return trade_id
 
 
-def reset_agent(capital: float = 100000, risk_pct: float = 0.02, max_pos: int = 5) -> None:
+def reset_agent(capital: float = 100000, risk_pct: float = 0.02, max_pos: int = 5,
+                max_buys: int = 1, min_score: int = 60, stop_pct: float = 12.0) -> None:
     init_db()
     conn = get_connection()
     conn.execute("DELETE FROM agent_positions")
     conn.execute("DELETE FROM agent_decisions")
     conn.execute("DELETE FROM agent_equity")
     conn.execute(
-        "INSERT OR REPLACE INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, rebalance_frequency, status, created_at) VALUES (1, ?, ?, ?, ?, 'weekly', 'stopped', ?)",
-        (capital, capital, risk_pct, max_pos, datetime.utcnow().isoformat()),
+        "INSERT OR REPLACE INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, max_buys_per_cycle, min_opportunity_score, stop_loss_pct, rebalance_frequency, status, created_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, 'weekly', 'stopped', ?)",
+        (capital, capital, risk_pct, max_pos, max_buys, min_score, stop_pct, datetime.utcnow().isoformat()),
     )
     conn.commit()
     conn.close()
