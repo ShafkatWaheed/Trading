@@ -4655,41 +4655,81 @@ def page_prove_it():
                     price = float(closes.iloc[idx])
                     date = dates[idx]
 
-                    # Build signal summary for Claude
+                    # Build FULL signal summary (all 16 indicators)
                     signal_summary = f"Stock: {ai_symbol}, Date: {date}, Price: ${price:.2f}\n"
                     if tech:
-                        signal_summary += f"RSI: {float(tech.rsi_14):.0f}, " if tech.rsi_14 else ""
-                        signal_summary += f"MACD: {'positive' if tech.macd_histogram and tech.macd_histogram > 0 else 'negative'}, "
-                        signal_summary += f"Trend: {tech.trend}, "
-                        if tech.sma_50:
-                            signal_summary += f"Price vs SMA50: {'above' if price > float(tech.sma_50) else 'below'}, "
-                        if tech.support:
-                            signal_summary += f"Support: ${float(tech.support):.2f}, "
-                        if tech.resistance:
-                            signal_summary += f"Resistance: ${float(tech.resistance):.2f}, "
+                        # Technical (standard)
+                        signal_summary += f"\nTECHNICAL:"
+                        signal_summary += f" RSI14={float(tech.rsi_14):.0f}" if tech.rsi_14 else ""
+                        signal_summary += f", RSI5={float(tech.rsi_5):.0f}" if tech.rsi_5 else ""
+                        signal_summary += f", MACD={'positive' if tech.macd_histogram and tech.macd_histogram > 0 else 'negative'}"
+                        signal_summary += f", Trend={tech.trend}"
+                        signal_summary += f", SMA50={'above' if tech.sma_50 and price > float(tech.sma_50) else 'below'}" if tech.sma_50 else ""
+                        signal_summary += f", Support=${float(tech.support):.2f}" if tech.support else ""
+                        signal_summary += f", Resistance=${float(tech.resistance):.2f}" if tech.resistance else ""
 
-                    # 20-day price change for context
-                    if idx >= 20:
-                        price_20d_ago = float(closes.iloc[idx - 20])
-                        recent_change = ((price - price_20d_ago) / price_20d_ago) * 100
-                        signal_summary += f"\n20-day price change: {recent_change:+.1f}%"
+                        # Short-term signals
+                        signal_summary += f"\nSHORT-TERM:"
+                        signal_summary += f" EMA8 {'>' if tech.ema_8 and tech.ema_21 and float(tech.ema_8) > float(tech.ema_21) else '<'} EMA21" if tech.ema_8 and tech.ema_21 else ""
+                        signal_summary += f", StochRSI={float(tech.stoch_rsi):.2f}" if tech.stoch_rsi else ""
+                        signal_summary += f", Momentum3d={tech.momentum_3d:+.1f}%" if tech.momentum_3d else ""
+                        signal_summary += f", ATR_breakout={'YES' if tech.atr_breakout else 'no'}"
 
-                    # Volume trend
+                        # New indicators
+                        signal_summary += f"\nADVANCED:"
+                        signal_summary += f" OBV={tech.obv_trend}" if tech.obv_trend else ""
+                        signal_summary += f", MACD_divergence={tech.macd_divergence}" if tech.macd_divergence else ""
+                        signal_summary += f", Seasonality={tech.seasonality_avg:+.2f}%" if tech.seasonality_avg else ""
+                        signal_summary += f", ATR_stop=${float(tech.atr_stop):.2f}({tech.atr_stop_pct}%)" if tech.atr_stop else ""
+
+                        # Fibonacci
+                        if tech.fib_382:
+                            signal_summary += f"\nFIBONACCI: 38.2%=${float(tech.fib_382):.2f}, 50%=${float(tech.fib_500):.2f}, 61.8%=${float(tech.fib_618):.2f}"
+
+                    # Volume context
                     if idx >= 20:
                         recent_vol = float(ai_hist["volume"].iloc[idx])
                         avg_vol = float(ai_hist["volume"].iloc[idx - 20:idx].mean())
                         if avg_vol > 0:
-                            vol_ratio = recent_vol / avg_vol
-                            signal_summary += f"\nVolume: {vol_ratio:.1f}x average"
+                            signal_summary += f"\nVOLUME: {recent_vol / avg_vol:.1f}x average"
+
+                    # Price context
+                    if idx >= 20:
+                        price_20d_ago = float(closes.iloc[idx - 20])
+                        recent_change = ((price - price_20d_ago) / price_20d_ago) * 100
+                        signal_summary += f"\n20-day change: {recent_change:+.1f}%"
+
+                    # Confirmation filters
+                    conf_count = 0
+                    if tech:
+                        if tech.sma_20 and tech.current_price and tech.trend == "uptrend":
+                            cp = float(tech.current_price)
+                            s20 = float(tech.sma_20)
+                            if s20 > 0 and abs(cp - s20) / s20 <= 0.03:
+                                conf_count += 1
+                        if tech.trend == "uptrend":
+                            conf_count += 1
+                        if tech.volume_trend == "increasing":
+                            conf_count += 1
+                    signal_summary += f"\nCONFIRMATIONS: {conf_count}/3"
 
                     try:
-                        prompt = f"""You are a professional stock trader. Based on these signals, make a trading decision.
+                        prompt = f"""You are a professional stock trader analyzing {ai_symbol}. Use ALL the data below to make a trading decision.
 
 {signal_summary}
 
+RULES:
+- Default is HOLD. Only BUY if setup is genuinely strong.
+- Require 2+ confirmations or strong uptrend momentum.
+- Check short-term signals (RSI5, EMA8/21, StochRSI) for entry timing.
+- If RSI5 > 80 and EMA8 < EMA21, that's a SELL signal (reversal).
+- If OBV shows distribution + MACD divergence bearish, SELL.
+- Consider Fibonacci levels for support/resistance.
+- Use ATR-based stop, not fixed percentage.
+
 Respond in EXACTLY this format (no other text):
 DECISION: BUY or SELL or HOLD
-REASON: One sentence explaining why."""
+REASON: 2 sentences — reference specific indicators and their values."""
 
                         env = dict(__import__("os").environ)
                         env.pop("CLAUDECODE", None)
@@ -4719,16 +4759,60 @@ REASON: One sentence explaining why."""
                         decision = "HOLD"
                         reason = f"AI unavailable: {str(e)[:50]}"
 
-                    # Calculate outcome
-                    exit_idx = min(idx + hold_days, len(closes) - 1)
-                    exit_price = float(closes.iloc[exit_idx])
-
+                    # Calculate outcome with trailing stop
                     if decision == "BUY":
+                        highest_seen = price
+                        exit_price = price
+                        exit_idx = idx
+                        atr_pct = tech.atr_stop_pct if tech and tech.atr_stop_pct else 12.0
+                        stop = price * (1 - atr_pct / 100)
+
+                        for future_i in range(idx + 1, min(idx + hold_days + 1, len(closes))):
+                            fp = float(closes.iloc[future_i])
+                            if fp > highest_seen:
+                                highest_seen = fp
+                            cur_pnl = ((fp - price) / price) * 100
+
+                            # Trailing stop phases
+                            if cur_pnl < 10:
+                                eff_stop = stop
+                            elif cur_pnl < 20:
+                                eff_stop = price
+                            elif cur_pnl < 30:
+                                eff_stop = highest_seen * 0.90
+                            else:
+                                eff_stop = highest_seen * 0.92
+
+                            if fp <= eff_stop:
+                                exit_price = fp
+                                exit_idx = future_i
+                                break
+
+                            # Exit signals
+                            if cur_pnl > 10 and future_i - idx > 5:
+                                try:
+                                    exit_slice = ai_hist.iloc[:future_i + 1]
+                                    if len(exit_slice) >= 10:
+                                        tech_e = tech_mod.analyze(ai_symbol, exit_slice)
+                                        if tech_e.rsi_5 and float(tech_e.rsi_5) > 85 and tech_e.ema_8 and tech_e.ema_21 and float(tech_e.ema_8) < float(tech_e.ema_21):
+                                            exit_price = fp
+                                            exit_idx = future_i
+                                            break
+                                except Exception:
+                                    pass
+
+                            exit_price = fp
+                            exit_idx = future_i
+
                         pnl_pct = ((exit_price - price) / price) * 100
                     elif decision == "SELL":
+                        exit_idx = min(idx + hold_days, len(closes) - 1)
+                        exit_price = float(closes.iloc[exit_idx])
                         pnl_pct = ((price - exit_price) / price) * 100
                     else:
-                        pnl_pct = 0  # Hold = no trade
+                        exit_price = price
+                        exit_idx = idx
+                        pnl_pct = 0
 
                     ai_decisions.append({
                         "date": date,
@@ -5388,9 +5472,87 @@ def page_portfolio():
 # STEP 6: AI AGENT
 # ═══════════════════════════════════════════════════════════════
 
+def _render_agent_personalities():
+    """Render the agent personality showcase."""
+    import html as html_mod
+    from src.personalities import AGENT_PERSONALITIES, RISK_MANAGER
+
+    with st.expander("Meet the Trading Agents", expanded=False):
+        # Agent cards in a grid
+        agents = list(AGENT_PERSONALITIES.values())
+        for row_start in range(0, len(agents), 2):
+            cols = st.columns(2)
+            for col_idx in range(2):
+                idx = row_start + col_idx
+                if idx >= len(agents):
+                    break
+                agent = agents[idx]
+                with cols[col_idx]:
+                    risk_colors = {"aggressive": "#ef4444", "moderate": "#f59e0b", "conservative": "#22c55e"}
+                    risk_c = risk_colors.get(agent["risk_tolerance"], "#6b7280")
+
+                    strengths = "".join(f'<div style="font-size:11px; color:#22c55e; margin:1px 0;">+ {html_mod.escape(s)}</div>' for s in agent["strengths"])
+                    weaknesses = "".join(f'<div style="font-size:11px; color:#ef4444; margin:1px 0;">- {html_mod.escape(w)}</div>' for w in agent["weaknesses"])
+                    priorities = "".join(f'<div style="font-size:10px; color:#9ca3af; margin:1px 0;">• {html_mod.escape(p)}</div>' for p in agent["prioritizes"][:4])
+
+                    st.markdown(
+                        f'<div style="background:linear-gradient(135deg, #0d0d0d, #111); border:1px solid {agent["color"]}44; border-radius:12px; padding:18px; height:100%;">'
+                        # Header
+                        f'<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">'
+                        f'<div>'
+                        f'<div style="font-size:24px; margin-bottom:4px;">{agent["icon"]}</div>'
+                        f'<div style="font-size:16px; font-weight:800; color:#e5e5e5;">{agent["name"]}</div>'
+                        f'<div style="font-size:11px; color:{agent["color"]}; font-style:italic;">{html_mod.escape(agent["tagline"])}</div>'
+                        f'</div>'
+                        f'<div style="text-align:right;">'
+                        f'<span style="font-size:10px; color:{risk_c}; background:rgba({",".join(str(int(risk_c[i:i+2], 16)) for i in (1,3,5))},0.15); padding:3px 8px; border-radius:12px; font-weight:700; text-transform:uppercase;">{agent["risk_tolerance"]}</span>'
+                        f'</div>'
+                        f'</div>'
+                        # Philosophy
+                        f'<div style="font-size:12px; color:#d1d5db; line-height:1.5; margin-bottom:12px;">{html_mod.escape(agent["philosophy"][:150])}...</div>'
+                        # Strengths / Weaknesses
+                        f'<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">'
+                        f'<div>{strengths}</div>'
+                        f'<div>{weaknesses}</div>'
+                        f'</div>'
+                        # Prioritizes
+                        f'<div style="font-size:10px; color:{agent["color"]}; font-weight:700; text-transform:uppercase; margin-bottom:4px;">Focuses On</div>'
+                        f'{priorities}'
+                        # Market + edge
+                        f'<div style="margin-top:8px; padding-top:8px; border-top:1px solid #1a1a1a; font-size:10px; color:#6b7280;">'
+                        f'Best in: {html_mod.escape(agent["ideal_market"])}'
+                        f'</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        # Risk Manager card (full width)
+        rm = RISK_MANAGER
+        checks_html = "".join(f'<span style="display:inline-block; margin:2px; padding:3px 8px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); border-radius:16px; font-size:10px; color:#f87171;">{html_mod.escape(c)}</span>' for c in rm["checks"])
+
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg, #0d0d0d, #111); border:1px solid {rm["color"]}44; border-radius:12px; padding:18px; margin-top:8px;">'
+            f'<div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">'
+            f'<span style="font-size:24px;">{rm["icon"]}</span>'
+            f'<div>'
+            f'<div style="font-size:16px; font-weight:800; color:#e5e5e5;">{rm["name"]}</div>'
+            f'<div style="font-size:11px; color:{rm["color"]}; font-style:italic;">{rm["tagline"]}</div>'
+            f'</div>'
+            f'<span style="margin-left:auto; font-size:10px; color:#ef4444; background:rgba(239,68,68,0.15); padding:3px 8px; border-radius:12px; font-weight:700;">VETO POWER</span>'
+            f'</div>'
+            f'<div style="font-size:12px; color:#d1d5db; line-height:1.5; margin-bottom:10px;">{rm["philosophy"]}</div>'
+            f'<div style="display:flex; flex-wrap:wrap; gap:2px;">{checks_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def page_ai_agent():
     st.title("AI Agent")
     st.caption("Autonomous paper trading — Claude analyzes markets, picks stocks, and tracks P/L")
+
+    # Agent personality showcase
+    _render_agent_personalities()
 
     from src.agent import TradingAgent, get_agent_config, get_agent_positions, get_agent_decisions, get_agent_equity, reset_agent, add_human_trade
 
@@ -5447,7 +5609,11 @@ def page_ai_agent():
                 pass
 
     with run_col:
-        run_clicked = st.button("Run AI Agent Cycle Now", type="primary", use_container_width=True, key="run_agent")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            run_clicked = st.button("Single Agent Cycle", use_container_width=True, key="run_agent")
+        with rc2:
+            multi_run = st.button("Multi-Agent Cycle", type="primary", use_container_width=True, key="run_multi")
 
     with status_col:
         st.markdown(
@@ -5522,6 +5688,145 @@ def page_ai_agent():
             '</div></div>',
             unsafe_allow_html=True,
         )
+
+    if multi_run:
+        # ── MULTI-AGENT CYCLE ──────────────────────────
+        import html as html_ma
+        from src.multi_agent import MultiAgentSystem
+        from src.personalities import AGENT_PERSONALITIES as AP
+
+        risk_config = {
+            "max_picks": max_pos, "min_score": min_score,
+            "min_backtest": 55, "max_sector_pct": 40, "duplicate_action": "half",
+        }
+        mas = MultiAgentSystem(risk_config)
+
+        with st.spinner("Multi-agent pipeline running..."):
+            try:
+                # Get macro context
+                from src.data.gateway import DataGateway
+                gw_ma = DataGateway()
+                snapshot = gw_ma.get_macro_snapshot()
+                macro_ctx = ""
+                if snapshot:
+                    macro_ctx = f"VIX: {snapshot.vix}, Regime: {'normal' if not snapshot.yield_curve_inverted else 'recession_warning'}"
+
+                # Get inflowing sectors
+                try:
+                    flows = gw_ma.get_sector_flows("1mo")
+                    inflowing = [f["sector"] for f in flows if f.get("change", 0) > 0][:4] if flows else ["Technology", "Healthcare", "Financials"]
+                except Exception:
+                    inflowing = ["Technology", "Healthcare", "Financials"]
+
+                # Run multi-agent
+                result = mas.run_cycle(inflowing, macro_ctx, STOCK_DB,
+                                       existing_positions=[p["symbol"] for p in get_agent_positions(status="open")])
+
+            except Exception as e:
+                st.error(f"Multi-agent error: {str(e)[:200]}")
+                result = None
+
+        if result:
+            # ── Tree Visualization ──────────────────────
+            st.markdown(
+                '<div style="display:flex; align-items:center; gap:8px; margin:20px 0 12px;">'
+                '<div style="height:2px; flex:1; background:linear-gradient(to right, #a855f7, transparent);"></div>'
+                '<span style="font-size:13px; font-weight:700; color:#a855f7; text-transform:uppercase; letter-spacing:1px;">Multi-Agent Pipeline</span>'
+                '<div style="height:2px; flex:1; background:linear-gradient(to left, #a855f7, transparent);"></div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Market Pulse node
+            st.markdown(
+                f'<div style="background:#111; border-left:3px solid #3b82f6; border-radius:8px; padding:12px; margin-bottom:8px;">'
+                f'<div style="font-size:12px; color:#3b82f6; font-weight:700;">MARKET PULSE</div>'
+                f'<div style="font-size:12px; color:#d1d5db;">{html_ma.escape(macro_ctx)}</div>'
+                f'<div style="font-size:11px; color:#6b7280;">Sectors: {", ".join(inflowing)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Per-sector agent competition
+            for sector in result.sectors_analyzed:
+                sector_picks = []
+                for agent_key, agent_sectors in result.agent_picks.items():
+                    pick = agent_sectors.get(sector)
+                    if pick:
+                        sector_picks.append(pick)
+
+                if not sector_picks:
+                    continue
+
+                winner = result.sector_winners.get(sector)
+                winner_sym = winner.symbol if winner else ""
+
+                # Sector header
+                st.markdown(
+                    f'<div style="background:#0d0d0d; border:1px solid #1a1a1a; border-radius:10px; padding:14px; margin-bottom:8px;">'
+                    f'<div style="font-size:13px; font-weight:700; color:#e5e5e5; margin-bottom:10px;">{html_ma.escape(sector)}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Agent cards in a row
+                agent_cols = st.columns(len(sector_picks))
+                for col, pick in zip(agent_cols, sorted(sector_picks, key=lambda p: p.combined_score, reverse=True)):
+                    with col:
+                        is_winner = pick.symbol == winner_sym
+                        border = f"border:2px solid {AP[pick.agent_name]['color']};" if is_winner else f"border:1px solid #222;"
+                        badge = '<div style="font-size:10px; color:#f59e0b; font-weight:800;">🏆 WINNER</div>' if is_winner else ""
+
+                        score_c = "#22c55e" if pick.score >= 70 else "#f59e0b" if pick.score >= 55 else "#ef4444"
+                        bt_c = "#22c55e" if pick.backtest_win_rate >= 65 else "#f59e0b" if pick.backtest_win_rate >= 50 else "#ef4444"
+
+                        st.markdown(
+                            f'<div style="background:#111; {border} border-radius:8px; padding:10px; text-align:center;">'
+                            f'{badge}'
+                            f'<div style="font-size:16px;">{pick.agent_icon}</div>'
+                            f'<div style="font-size:10px; color:{AP[pick.agent_name]["color"]}; font-weight:600;">{pick.agent_name.title()}</div>'
+                            f'<div style="font-size:16px; font-weight:800; color:#e5e5e5; margin:4px 0;">{pick.symbol}</div>'
+                            f'<div style="font-size:20px; font-weight:800; color:{score_c};">{pick.score}</div>'
+                            f'<div style="font-size:10px; color:#6b7280;">score</div>'
+                            f'<div style="font-size:13px; font-weight:700; color:{bt_c};">{pick.backtest_win_rate:.0f}%</div>'
+                            f'<div style="font-size:10px; color:#6b7280;">backtest</div>'
+                            f'<div style="font-size:10px; color:#6b7280; margin-top:4px;">{pick.confirmations}/3 conf</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # Risk Manager decision
+            st.markdown(
+                f'<div style="background:#111; border-left:3px solid #ef4444; border-radius:8px; padding:14px; margin-top:8px;">'
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">'
+                f'<span style="font-size:18px;">🛡</span>'
+                f'<span style="font-size:14px; font-weight:800; color:#e5e5e5;">Risk Manager Decision</span>'
+                f'</div>'
+                f'<div style="font-size:12px; color:#d1d5db; margin-bottom:8px;">{html_ma.escape(result.risk_manager_reasoning)}</div>',
+                unsafe_allow_html=True,
+            )
+
+            for fp in result.final_portfolio:
+                size_c = "#22c55e" if fp.get("size") == "full" else "#f59e0b"
+                agent_info = AP.get(fp.get("agent", ""), {})
+                st.markdown(
+                    f'<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #1a1a1a;">'
+                    f'<div>'
+                    f'<span style="font-size:14px; font-weight:800; color:#e5e5e5;">{fp.get("symbol", "")}</span>'
+                    f'<span style="font-size:11px; color:#6b7280; margin-left:8px;">{fp.get("sector", "")}</span>'
+                    f'<span style="font-size:11px; color:{agent_info.get("color", "#6b7280")}; margin-left:8px;">{agent_info.get("icon", "")} {fp.get("agent", "").title()}</span>'
+                    f'</div>'
+                    f'<div>'
+                    f'<span style="font-size:12px; font-weight:700; color:{size_c};">{fp.get("size", "full").upper()}</span>'
+                    f'<span style="font-size:11px; color:#9ca3af; margin-left:8px;">{fp.get("reason", "")}</span>'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.success(f"Multi-agent complete — {len(result.final_portfolio)} picks selected from {len(result.sectors_analyzed)} sectors")
 
     if run_clicked:
         agent = TradingAgent()
@@ -6132,6 +6437,9 @@ def page_ai_agent():
             unsafe_allow_html=True,
         )
 
+        # Show agent personalities in simulation too
+        _render_agent_personalities()
+
         # Row 1: Basic settings
         sim_c1, sim_c2, sim_c3 = st.columns(3)
         with sim_c1:
@@ -6589,6 +6897,38 @@ Respond ONLY with JSON: {{"favor": ["Sector1", "Sector2"], "avoid": ["Sector3"],
                                     action = "SELL (stop)"
                                 trade_log.append({"date": date, "symbol": sym, "action": action, "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
                                 del positions[sym]
+                                continue
+
+                            # Exit signals (only when in profit > 10%)
+                            if pnl_pct > 10:
+                                try:
+                                    hist_slice = h[mask]
+                                    if len(hist_slice) >= 10:
+                                        tech_exit = tech_mod.analyze(sym, hist_slice)
+                                        exit_reason = None
+
+                                        # RSI5 overbought + EMA reversal
+                                        if (tech_exit.rsi_5 and float(tech_exit.rsi_5) > 85
+                                            and tech_exit.ema_8 and tech_exit.ema_21
+                                            and float(tech_exit.ema_8) < float(tech_exit.ema_21)):
+                                            exit_reason = f"RSI5={float(tech_exit.rsi_5):.0f} overbought + EMA reversal"
+
+                                        # OBV distribution + MACD divergence
+                                        elif tech_exit.obv_trend == "distribution" and tech_exit.macd_divergence == "bearish":
+                                            exit_reason = "OBV distribution + MACD divergence"
+
+                                        # Strong negative momentum
+                                        elif (tech_exit.momentum_3d and tech_exit.momentum_3d < -3.0
+                                              and tech_exit.rsi_5 and float(tech_exit.rsi_5) < 40):
+                                            exit_reason = f"Momentum {tech_exit.momentum_3d:.1f}% + RSI5 weak"
+
+                                        if exit_reason:
+                                            cash += cur_price * pos["shares"]
+                                            trade_log.append({"date": date, "symbol": sym, "action": f"SELL (exit: {exit_reason})", "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
+                                            del positions[sym]
+                                            continue
+                                except Exception:
+                                    pass
                         except Exception:
                             continue
 
@@ -6641,6 +6981,34 @@ JSON only: {{"chain_of_thought": {{"market": "1 sentence", "sector": "1 sentence
                                     bprice = next((c["price"] for c in candidates if c["symbol"] == bsym), None)
                                     if not bprice:
                                         continue
+
+                                    # Tactical entry check — use short-term signals
+                                    tactical_ok = True
+                                    try:
+                                        h_tac = sim_gw.get_historical(bsym, period_days=sim_months * 30 + 60)
+                                        if h_tac is not None:
+                                            mask_tac = h_tac["date"] <= date
+                                            slice_tac = h_tac[mask_tac]
+                                            if len(slice_tac) >= 10:
+                                                tech_tac = tech_mod.analyze(bsym, slice_tac)
+                                                # Check: RSI5 oversold, or Fib support, or EMA cross, or momentum override
+                                                has_entry = False
+                                                if tech_tac.rsi_5 and float(tech_tac.rsi_5) < 35:
+                                                    has_entry = True  # Oversold dip
+                                                elif tech_tac.ema_8 and tech_tac.ema_21 and float(tech_tac.ema_8) > float(tech_tac.ema_21):
+                                                    has_entry = True  # Micro uptrend
+                                                elif tech_tac.momentum_3d and tech_tac.momentum_3d > 1.0:
+                                                    has_entry = True  # Positive momentum
+                                                elif tech_tac.rsi_5 and float(tech_tac.rsi_5) > 55 and tech_tac.trend == "uptrend":
+                                                    has_entry = True  # Momentum stock — don't wait
+                                                if not has_entry:
+                                                    tactical_ok = False
+                                    except Exception:
+                                        pass
+
+                                    if not tactical_ok:
+                                        continue  # Skip — waiting for better entry
+
                                     stop = round(bprice * (1 - sim_stop_pct / 100), 2)
                                     risk_per_share = bprice - stop
                                     if risk_per_share <= 0:
