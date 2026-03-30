@@ -2563,14 +2563,35 @@ def _fetch_geopolitical_events() -> list[dict]:
 
     events = []
     try:
+        from src.utils.config import EXA_API_KEY
         for cat in categories:
             try:
-                resp = httpx.post(
-                    "https://api.tavily.com/search",
-                    json={"query": cat["query"], "api_key": TAVILY_API_KEY, "max_results": 3, "search_depth": "basic"},
-                    timeout=15,
-                )
-                results = resp.json().get("results", [])
+                # Try Tavily first
+                results = []
+                try:
+                    resp = httpx.post(
+                        "https://api.tavily.com/search",
+                        json={"query": cat["query"], "api_key": TAVILY_API_KEY, "max_results": 3, "search_depth": "basic"},
+                        timeout=15,
+                    )
+                    results = resp.json().get("results", [])
+                except Exception:
+                    pass
+
+                # Fallback to Exa if Tavily returns nothing
+                if not results and EXA_API_KEY:
+                    try:
+                        resp = httpx.post(
+                            "https://api.exa.ai/search",
+                            headers={"x-api-key": EXA_API_KEY},
+                            json={"query": cat["query"], "type": "auto", "num_results": 3,
+                                  "contents": {"highlights": {"max_characters": 200}}},
+                            timeout=15,
+                        )
+                        exa_results = resp.json().get("results", [])
+                        results = [{"title": r.get("title", ""), "content": " ".join(r.get("highlights", []))[:200], "url": r.get("url", "")} for r in exa_results]
+                    except Exception:
+                        pass
 
                 for r in results[:2]:
                     title = r.get("title", "")
@@ -2910,30 +2931,54 @@ def _fetch_disruption_themes() -> list[dict]:
     import os
     from src.utils.config import TAVILY_API_KEY
 
-    if not TAVILY_API_KEY:
+    from src.utils.config import EXA_API_KEY
+
+    if not TAVILY_API_KEY and not EXA_API_KEY:
         return []
 
-    # Step 1: Fetch broad disruption news from Tavily
+    # Step 1: Fetch broad disruption news — Tavily first, Exa fallback
     all_articles = []
     queries = [
-        "technology disruption stocks industry impact 2026",
-        "emerging technology reshaping industries stocks winners losers 2026",
-        "AI biotech energy innovation disrupt market 2026",
+        "technology disruption stocks industry impact",
+        "AI biotech energy innovation disrupt market winners losers",
+        "emerging technology reshaping industries stocks",
     ]
-    for q in queries:
-        try:
-            resp = httpx.post(
-                "https://api.tavily.com/search",
-                json={"query": q, "api_key": TAVILY_API_KEY, "max_results": 5, "search_depth": "basic"},
-                timeout=15,
-            )
-            for r in resp.json().get("results", [])[:5]:
-                all_articles.append({
-                    "title": r.get("title", "")[:100],
-                    "content": r.get("content", "")[:150],
-                })
-        except Exception:
-            continue
+
+    # Try Tavily
+    if TAVILY_API_KEY:
+        for q in queries:
+            try:
+                resp = httpx.post(
+                    "https://api.tavily.com/search",
+                    json={"query": q, "api_key": TAVILY_API_KEY, "max_results": 5, "search_depth": "basic"},
+                    timeout=15,
+                )
+                for r in resp.json().get("results", [])[:5]:
+                    all_articles.append({
+                        "title": r.get("title", "")[:100],
+                        "content": r.get("content", "")[:150],
+                    })
+            except Exception:
+                continue
+
+    # Fallback to Exa if Tavily returned nothing
+    if not all_articles and EXA_API_KEY:
+        for q in queries:
+            try:
+                resp = httpx.post(
+                    "https://api.exa.ai/search",
+                    headers={"x-api-key": EXA_API_KEY},
+                    json={"query": q, "type": "auto", "num_results": 5,
+                          "contents": {"highlights": {"max_characters": 200}}},
+                    timeout=15,
+                )
+                for r in resp.json().get("results", [])[:5]:
+                    all_articles.append({
+                        "title": r.get("title", "")[:100],
+                        "content": " ".join(r.get("highlights", []))[:150],
+                    })
+            except Exception:
+                continue
 
     if not all_articles:
         return []
@@ -3728,6 +3773,45 @@ def _render_trade_plan(sym: str, report, period: str):
         f'</div>'
     )
 
+    # Trailing stop visualization
+    breakeven_price = round(price * 1.10, 2)
+    trail_start_price = round(price * 1.20, 2)
+    tighten_price = round(price * 1.30, 2)
+    # Use ATR-based stop if available
+    atr_stop_note = ""
+    for section in report.sections:
+        if "technical" in section.title.lower():
+            atr_val = section.data.get("atr_stop")
+            atr_pct = section.data.get("atr_stop_pct")
+            if atr_val and atr_pct:
+                atr_stop_note = f' | ATR-based: ${float(atr_val):.2f} ({atr_pct}%)'
+                break
+
+    trailing_html = (
+        f'<div style="background:#0d0d0d; border:1px solid #f59e0b44; border-radius:8px; padding:14px; margin-bottom:12px;">'
+        f'<div style="font-size:12px; color:#f59e0b; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Trailing Stop Plan</div>'
+        f'<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; font-size:11px;">'
+        f'<div style="background:#111; border-radius:6px; padding:8px; text-align:center;">'
+        f'<div style="color:#ef4444; font-weight:600;">Initial</div>'
+        f'<div style="color:#e5e5e5; font-weight:700;">${stop_loss:.2f}</div>'
+        f'<div style="color:#6b7280;">-{stop_pct}% from entry</div></div>'
+        f'<div style="background:#111; border-radius:6px; padding:8px; text-align:center;">'
+        f'<div style="color:#f59e0b; font-weight:600;">Breakeven</div>'
+        f'<div style="color:#e5e5e5; font-weight:700;">${price:.2f}</div>'
+        f'<div style="color:#6b7280;">At +10% gain</div></div>'
+        f'<div style="background:#111; border-radius:6px; padding:8px; text-align:center;">'
+        f'<div style="color:#22c55e; font-weight:600;">Trail 10%</div>'
+        f'<div style="color:#e5e5e5; font-weight:700;">Peak × 0.90</div>'
+        f'<div style="color:#6b7280;">At +20% gain</div></div>'
+        f'<div style="background:#111; border-radius:6px; padding:8px; text-align:center;">'
+        f'<div style="color:#22c55e; font-weight:600;">Tighten 8%</div>'
+        f'<div style="color:#e5e5e5; font-weight:700;">Peak × 0.92</div>'
+        f'<div style="color:#6b7280;">At +30% gain</div></div>'
+        f'</div>'
+        f'<div style="font-size:10px; color:#6b7280; margin-top:6px;">Stop moves UP as price rises — never moves down. Locks in gains automatically.{atr_stop_note}</div>'
+        f'</div>'
+    )
+
     # Position sizing
     sizing_html = (
         f'<div style="background:#0d0d0d; border:1px solid #2a2a2a; border-radius:8px; padding:14px; margin-bottom:12px;">'
@@ -3926,6 +4010,7 @@ def _render_trade_plan(sym: str, report, period: str):
         f'</div>'
         f'{levels_html}'
         f'{target2_html}'
+        f'{trailing_html}'
         f'{sizing_html}'
         f'{confidence_html}'
         f'{confirmation_html}'
@@ -6016,6 +6101,7 @@ def page_ai_agent():
                     "close_position": "#ef4444", "ai_error": "#ef4444",
                     "pre_trade_check": "#06b6d4", "trade_blocked": "#ef4444",
                     "chain_of_thought": "#a855f7", "hallucination_blocked": "#ef4444",
+                    "tactical_check": "#14b8a6", "tactical_wait": "#f59e0b", "exit_signal": "#ec4899",
                 }
                 sc = step_colors.get(d["step"], "#6b7280")
                 sym_html = f' — <b style="color:#e5e5e5;">{d["symbol"]}</b>' if d.get("symbol") else ""
@@ -6477,17 +6563,32 @@ Respond ONLY with JSON: {{"favor": ["Sector1", "Sector2"], "avoid": ["Sector3"],
                             cur_price = float(h[mask]["close"].iloc[-1])
                             pos = positions[sym]
 
-                            if cur_price <= pos["stop_loss"]:
-                                pnl_pct = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                            # Update highest price for trailing stop
+                            if cur_price > pos.get("highest_price", pos["entry_price"]):
+                                pos["highest_price"] = cur_price
+
+                            highest = pos.get("highest_price", pos["entry_price"])
+                            pnl_pct = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * 100
+
+                            # Trailing stop logic
+                            if pnl_pct < 10:
+                                effective_stop = pos["stop_loss"]
+                            elif pnl_pct < 20:
+                                effective_stop = pos["entry_price"]  # Breakeven
+                            elif pnl_pct < 30:
+                                effective_stop = highest * 0.90  # Trail 10% from peak
+                            else:
+                                effective_stop = highest * 0.92  # Tighten to 8%
+
+                            if cur_price <= effective_stop:
                                 cash += cur_price * pos["shares"]
-                                trade_log.append({"date": date, "symbol": sym, "action": "SELL (stop)", "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
+                                if pnl_pct > 0:
+                                    peak_gain = ((highest - pos["entry_price"]) / pos["entry_price"]) * 100
+                                    action = f"SELL (trail +{pnl_pct:.0f}%, peak +{peak_gain:.0f}%)"
+                                else:
+                                    action = "SELL (stop)"
+                                trade_log.append({"date": date, "symbol": sym, "action": action, "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
                                 del positions[sym]
-                            elif (step_i - pos.get("entry_step", 0)) >= sim_hold_cycles:
-                                pnl_pct = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * 100
-                                if pnl_pct < -sim_cut_pct:
-                                    cash += cur_price * pos["shares"]
-                                    trade_log.append({"date": date, "symbol": sym, "action": "SELL (cut)", "price": cur_price, "pnl_pct": round(pnl_pct, 1)})
-                                    del positions[sym]
                         except Exception:
                             continue
 
@@ -6549,7 +6650,7 @@ JSON only: {{"chain_of_thought": {{"market": "1 sentence", "sector": "1 sentence
                                     if cost > cash * 0.3 or shares <= 0:
                                         continue
                                     cash -= cost
-                                    positions[bsym] = {"shares": shares, "entry_price": bprice, "entry_date": date, "stop_loss": stop, "entry_step": step_i}
+                                    positions[bsym] = {"shares": shares, "entry_price": bprice, "entry_date": date, "stop_loss": stop, "entry_step": step_i, "highest_price": bprice}
                                     trade_log.append({"date": date, "symbol": bsym, "action": "BUY", "price": bprice, "pnl_pct": 0, "reason": buy.get("reason", "")})
                         except Exception:
                             pass

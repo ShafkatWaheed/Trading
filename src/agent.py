@@ -168,20 +168,87 @@ class TradingAgent:
                 if current_price is None:
                     continue
 
-                # Check stop loss
-                if pos.stop_loss and current_price <= pos.stop_loss:
-                    self._close_position(pos, current_price, run_date, "Stop loss hit")
-                    closed.append({"symbol": pos.symbol, "reason": "stop_loss", "pnl_pct": pos.pnl_percent})
+                # Update highest price (for trailing stop)
+                highest = getattr(pos, "highest_price", None) or pos.entry_price
+                if current_price > highest:
+                    highest = current_price
+                    pos.highest_price = highest
+                    # Save to DB
+                    conn = get_connection()
+                    conn.execute("UPDATE agent_positions SET highest_price=? WHERE id=?", (highest, pos.id))
+                    conn.commit()
+                    conn.close()
 
-                # Check target
-                elif pos.target and current_price >= pos.target:
-                    self._close_position(pos, current_price, run_date, "Target reached")
-                    closed.append({"symbol": pos.symbol, "reason": "target", "pnl_pct": pos.pnl_percent})
+                # Calculate trailing stop
+                pnl_pct = ((current_price - pos.entry_price) / pos.entry_price) * 100
+                gain_from_peak = ((current_price - highest) / highest) * 100 if highest > 0 else 0
+
+                # Trailing stop logic:
+                # Phase 1: Initial stop (before breakeven)
+                if pnl_pct < 10:
+                    effective_stop = pos.stop_loss or (pos.entry_price * (1 - self.config.stop_loss_pct / 100))
+                # Phase 2: Breakeven (after +10%, move stop to entry)
+                elif pnl_pct < 20:
+                    effective_stop = pos.entry_price
+                # Phase 3: Lock gains (after +20%, trail 10% below peak)
+                elif pnl_pct < 30:
+                    effective_stop = highest * 0.90
+                # Phase 4: Tighten (after +30%, trail 8% below peak)
+                else:
+                    effective_stop = highest * 0.92
+
+                # Check if stop hit
+                if current_price <= effective_stop:
+                    if pnl_pct > 0:
+                        reason = f"Trailing stop — locked +{pnl_pct:.1f}% (peak was +{((highest - pos.entry_price) / pos.entry_price) * 100:.1f}%)"
+                    else:
+                        reason = "Stop loss hit"
+                    self._close_position(pos, current_price, run_date, reason)
+                    closed.append({"symbol": pos.symbol, "reason": "trailing_stop" if pnl_pct > 0 else "stop_loss", "pnl_pct": pos.pnl_percent})
+                    continue
+
+                # Short-term exit signals (only check if in profit)
+                if pnl_pct > 10:
+                    exit_signal = self._check_exit_signals(pos.symbol)
+                    if exit_signal:
+                        reason = f"Exit signal — {exit_signal} (locking +{pnl_pct:.1f}%)"
+                        self._close_position(pos, current_price, run_date, reason)
+                        closed.append({"symbol": pos.symbol, "reason": "exit_signal", "pnl_pct": pos.pnl_percent})
 
             except Exception:
                 continue
 
         return closed
+
+    def _check_exit_signals(self, symbol: str) -> str | None:
+        """Check short-term reversal signals — return reason to exit or None."""
+        try:
+            from src.data.gateway import DataGateway
+            from src.analysis import technical
+            gw = DataGateway()
+            hist = gw.get_historical(symbol, period_days=30)
+            if hist is None or hist.empty or len(hist) < 10:
+                return None
+
+            tech = technical.analyze(symbol, hist)
+
+            # Exit 1: RSI5 extremely overbought + EMA8 crossing below EMA21
+            if (tech.rsi_5 and float(tech.rsi_5) > 85
+                and tech.ema_8 and tech.ema_21
+                and float(tech.ema_8) < float(tech.ema_21)):
+                return f"RSI5={float(tech.rsi_5):.0f} overbought + EMA8 < EMA21 reversal"
+
+            # Exit 2: OBV flipped to distribution
+            if tech.obv_trend == "distribution" and tech.macd_divergence == "bearish":
+                return "OBV distribution + MACD bearish divergence"
+
+            # Exit 3: 3 consecutive down days with negative momentum
+            if tech.momentum_3d and tech.momentum_3d < -3.0 and tech.rsi_5 and float(tech.rsi_5) < 40:
+                return f"3-day momentum {tech.momentum_3d:.1f}% + RSI5 weak"
+
+            return None
+        except Exception:
+            return None
 
     # ── Step 3: Discover Stocks ────────────────────────────
 
@@ -784,6 +851,62 @@ Respond in this EXACT JSON format (no other text):
 
         return validated
 
+    def _check_tactical_entry(self, symbol: str) -> tuple[bool, str]:
+        """Check if short-term signals favor entry RIGHT NOW."""
+        try:
+            from src.data.gateway import DataGateway
+            from src.analysis import technical
+            gw = DataGateway()
+            hist = gw.get_historical(symbol, period_days=30)
+            if hist is None or hist.empty or len(hist) < 10:
+                return True, "Insufficient data — entering on strategic signal"
+
+            tech = technical.analyze(symbol, hist)
+
+            reasons = []
+
+            # Check 1: RSI5 oversold dip
+            if tech.rsi_5 and float(tech.rsi_5) < 30:
+                reasons.append(f"RSI5={float(tech.rsi_5):.0f} oversold dip")
+                return True, " + ".join(reasons)
+
+            # Check 2: Price near Fibonacci support
+            if tech.fib_382 and tech.current_price:
+                if float(tech.current_price) <= float(tech.fib_382) * 1.01:
+                    reasons.append(f"At Fib 38.2% support (${float(tech.fib_382):.2f})")
+                    return True, " + ".join(reasons)
+
+            # Check 3: EMA8 crossing above EMA21 (micro uptrend starting)
+            if tech.ema_8 and tech.ema_21:
+                if float(tech.ema_8) > float(tech.ema_21):
+                    reasons.append("EMA8 > EMA21 (micro uptrend)")
+
+            # Check 4: Stochastic RSI < 20 (oversold)
+            if tech.stoch_rsi and float(tech.stoch_rsi) < 0.20:
+                reasons.append(f"StochRSI={float(tech.stoch_rsi):.2f} oversold")
+
+            # Check 5: Volume spike with bounce
+            if tech.atr_breakout and tech.momentum_3d and tech.momentum_3d > 0:
+                reasons.append("ATR breakout + positive momentum")
+                return True, " + ".join(reasons)
+
+            # Check 6: 3-day momentum positive
+            if tech.momentum_3d and tech.momentum_3d > 1.0:
+                reasons.append(f"3-day momentum +{tech.momentum_3d:.1f}%")
+
+            # If we have 2+ micro signals, enter
+            if len(reasons) >= 2:
+                return True, " + ".join(reasons)
+
+            # Momentum override — rockets don't dip
+            if tech.rsi_5 and float(tech.rsi_5) > 60 and tech.trend == "uptrend":
+                return True, "Momentum stock — strong uptrend, not waiting for dip"
+
+            return False, "Waiting for better entry — " + (reasons[0] if reasons else "no tactical signals yet")
+
+        except Exception:
+            return True, "Tactical check failed — entering on strategic signal"
+
     def _get_sector(self, symbol: str) -> str:
         try:
             from dashboard import STOCK_DB
@@ -796,6 +919,17 @@ Respond in this EXACT JSON format (no other text):
     def _execute_buy(self, symbol: str, trade: dict, run_date: str) -> dict | None:
         price = self._get_current_price(symbol)
         if not price:
+            return None
+
+        # Run tactical entry check (short-term timing)
+        tactical_ok, tactical_reason = self._check_tactical_entry(symbol)
+        self._log_decision(run_date, "tactical_check", symbol,
+                          "ENTER" if tactical_ok else "WAIT",
+                          tactical_reason)
+
+        if not tactical_ok:
+            self._log_decision(run_date, "tactical_wait", symbol,
+                              "DEFERRED", f"Strategic BUY confirmed but waiting for better entry: {tactical_reason}")
             return None
 
         # Run pre-trade checklist

@@ -40,6 +40,17 @@ def analyze(symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
     bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
     atr = ta.volatility.average_true_range(high, low, close, window=14)
 
+    # Short-term (fast signals)
+    rsi_5 = ta.momentum.rsi(close, window=5)
+    sma_3 = ta.trend.sma_indicator(close, window=3)
+    sma_5 = ta.trend.sma_indicator(close, window=5)
+    ema_8 = ta.trend.ema_indicator(close, window=8)
+    ema_21 = ta.trend.ema_indicator(close, window=21)
+    try:
+        stoch_rsi_val = ta.momentum.stochrsi(close, window=14)
+    except Exception:
+        stoch_rsi_val = pd.Series([None] * len(close))
+
     # Get latest values
     latest = len(df) - 1
     current_price = Decimal(str(close.iloc[latest]))
@@ -64,7 +75,25 @@ def analyze(symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
         bb_lower=_dec(bb.bollinger_lband().iloc[latest]),
         atr_14=_dec(atr.iloc[latest]),
         avg_volume_20=int(volume.tail(20).mean()),
+        # Short-term
+        rsi_5=_dec(rsi_5.iloc[latest]),
+        sma_3=_dec(sma_3.iloc[latest]),
+        sma_5=_dec(sma_5.iloc[latest]),
+        ema_8=_dec(ema_8.iloc[latest]),
+        ema_21=_dec(ema_21.iloc[latest]),
+        stoch_rsi=_dec(stoch_rsi_val.iloc[latest]),
     )
+
+    # 3-day momentum
+    if len(close) >= 4:
+        mom_3d = ((float(close.iloc[latest]) / float(close.iloc[latest - 3])) - 1) * 100
+        indicators.momentum_3d = round(mom_3d, 3)
+
+    # ATR breakout (today's move > 1.5x ATR)
+    if len(close) >= 2 and indicators.atr_14:
+        daily_move = abs(float(close.iloc[latest]) - float(close.iloc[latest - 1]))
+        if daily_move > float(indicators.atr_14) * 1.5:
+            indicators.atr_breakout = True
 
     # Determine trend
     if indicators.sma_50 and indicators.sma_200:

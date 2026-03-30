@@ -46,6 +46,16 @@ class TechnicalIndicators(BaseModel):
     avg_volume_20: int | None = None
     volume_trend: str = ""
 
+    # Short-term (fast signals for tactical entry)
+    rsi_5: Decimal | None = None
+    sma_3: Decimal | None = None
+    sma_5: Decimal | None = None
+    ema_8: Decimal | None = None
+    ema_21: Decimal | None = None
+    stoch_rsi: Decimal | None = None
+    momentum_3d: float | None = None  # 3-day price change %
+    atr_breakout: bool = False  # Price moved > 1.5x ATR in one day
+
     # OBV
     obv_trend: str | None = None  # "accumulation" or "distribution"
 
