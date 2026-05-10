@@ -153,9 +153,29 @@ Trading/
 └── requirements.txt
 ```
 
+## Data Integrity (STRICTLY ENFORCED)
+
+### NEVER Use Fake Data
+- NEVER fabricate, mock, hardcode, or simulate market data, prices, fundamentals, news, trades, or any other input that drives analysis or reports
+- NEVER use placeholder/sample values (e.g. `price = 100.0`, `rsi = 50`) to "make a function work" — if real data is unavailable, the function must raise an explicit error
+- NEVER fall back to synthetic data when an API fails — log the failure and propagate the error
+- NEVER generate or guess values for missing fields — return `None`/null and let the caller decide
+- Test fixtures with fake data are allowed ONLY in `tests/` and must never be importable from `src/`
+- If demo/example data is genuinely needed, it must be clearly labeled (e.g. `EXAMPLE_`, `DEMO_`) and isolated from production code paths
+
+### NEVER Look at Future Data (No Lookahead Bias)
+- At any point-in-time `t`, analysis, signals, backtests, and reports must use ONLY data that was actually available at or before `t`
+- NEVER use closing prices, fundamentals, news, or events from after the decision timestamp to inform a signal at that timestamp
+- Backtests MUST respect data availability: a signal computed for date `t` may only use bars up to and including `t` (and only `t-1` for next-day decisions)
+- Account for reporting lag: earnings, 13F filings, and STOCK Act disclosures are NOT available on the report period end date — use the actual filing/disclosure date as the "available at" timestamp
+- Indicators that use future windows (e.g. centered moving averages, look-ahead-shifted features) are FORBIDDEN in any signal or backtest path
+- Every backtest function must document its point-in-time guarantee in its docstring
+
 ## What NOT To Do
 - Do NOT build order execution or broker integration
 - Do NOT store real trading credentials
 - Do NOT use `float` for financial calculations
 - Do NOT make unbounded API calls without caching
 - Do NOT generate reports without a risk disclaimer
+- Do NOT use fake, mock, or synthetic data in `src/` — see Data Integrity above
+- Do NOT use future data to compute past signals — see Data Integrity above

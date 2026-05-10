@@ -1,0 +1,179 @@
+symbol,commodity_code,role,polarity,elasticity,evidence,notes
+# Hand-curated Tier A commodity-exposure spine.
+# polarity: +1 = stock rises with commodity price; -1 = stock falls.
+# elasticity: 0..1, magnitude of pass-through.
+#
+# For OUTPUTS (the company sells the commodity / a refined version):
+#   polarity is positive — revenue tracks the commodity price.
+# For INPUTS (the company buys the commodity as feedstock / fuel):
+#   polarity is typically negative — costs rise, margins compress.
+#   (Refiners are nuanced: input crude pressure may flip positive when crack
+#    spreads widen, but on average we model input pressure as polarity=-1.)
+# Lines starting with # are skipped by the loader.
+
+# ─── Energy: integrated and pure E&P ────────────────────────────────────
+XOM,crude_oil,output,1.0,0.85,"oil major — revenue tracks crude",
+XOM,natural_gas,output,1.0,0.40,"gas segment ~25% of revenue mix",
+CVX,crude_oil,output,1.0,0.85,"oil major",
+CVX,natural_gas,output,1.0,0.40,"gas segment",
+COP,crude_oil,output,1.0,0.85,"pure E&P — oil dominant",
+COP,natural_gas,output,1.0,0.45,"sizeable gas exposure",
+OXY,crude_oil,output,1.0,0.85,"pure E&P",
+OXY,natural_gas,output,1.0,0.30,"smaller gas weight",
+EOG,crude_oil,output,1.0,0.85,"shale E&P",
+EOG,natural_gas,output,1.0,0.35,"shale gas adjacency",
+
+# ─── Refining ──────────────────────────────────────────────────────────
+VLO,crude_oil,input,-1.0,0.55,"refiners buy crude — cost squeeze",
+VLO,gasoline,output,1.0,0.60,"refined product output",
+VLO,diesel,output,1.0,0.45,"refined product output",
+MPC,crude_oil,input,-1.0,0.55,"refiners buy crude",
+MPC,gasoline,output,1.0,0.60,"refined product",
+MPC,diesel,output,1.0,0.45,"refined product",
+PSX,crude_oil,input,-1.0,0.55,"refiners buy crude",
+PSX,gasoline,output,1.0,0.55,"refined product",
+PSX,diesel,output,1.0,0.45,"refined product",
+
+# ─── Midstream (pipelines, gas LDCs) ───────────────────────────────────
+KMI,natural_gas,output,1.0,0.30,"gas pipeline volume — lower elasticity than producers",
+KMI,crude_oil,output,1.0,0.20,"oil pipeline adjacency",
+ENB,crude_oil,output,1.0,0.25,"Canadian oil sands pipelines",
+ENB,natural_gas,output,1.0,0.30,"gas distribution + storage",
+
+# ─── Oilfield services ──────────────────────────────────────────────────
+SLB,crude_oil,output,1.0,0.65,"capex follows oil price → service revenue",
+SLB,natural_gas,output,1.0,0.30,"service capex follows gas modestly",
+HAL,crude_oil,output,1.0,0.65,"capex follows oil price",
+HAL,natural_gas,output,1.0,0.30,"capex follows gas",
+
+# ─── Mining: precious / industrial metals ──────────────────────────────
+NEM,gold,output,1.0,0.85,"pure-play gold miner",
+NEM,silver,output,1.0,0.20,"silver byproduct",
+FCX,copper,output,1.0,0.85,"world's largest publicly-traded copper miner",
+FCX,gold,output,1.0,0.30,"gold byproduct (Grasberg)",
+CCJ,uranium,output,1.0,0.85,"largest uranium producer",
+NUE,steel,output,1.0,0.70,"mini-mill steelmaker",
+NUE,iron_ore,input,-1.0,0.30,"some iron ore input but mostly scrap",
+NUE,coal,input,-1.0,0.15,"electrode coke",
+
+# ─── Industrial metals / chemicals ─────────────────────────────────────
+LIN,natural_gas,input,-1.0,0.30,"feedstock for industrial gases (hydrogen, ammonia)",
+SHW,crude_oil,input,-1.0,0.30,"paint feedstock from petroleum derivatives",
+ECL,natural_gas,input,-1.0,0.20,"chemicals feedstock",
+
+# ─── Defense (commodity inputs to airframes / vehicles) ────────────────
+LMT,aluminum,input,-1.0,0.15,"airframe materials — relatively small share",
+LMT,steel,input,-1.0,0.10,"steel content modest",
+LMT,copper,input,-1.0,0.10,"wiring / electronics",
+LMT,rare_earths,input,-1.0,0.20,"missile guidance / radar magnets",
+RTX,aluminum,input,-1.0,0.15,"airframe / engine cases",
+RTX,steel,input,-1.0,0.10,"engines / structures",
+RTX,rare_earths,input,-1.0,0.20,"radar / engine alloys",
+NOC,aluminum,input,-1.0,0.15,"airframe materials",
+NOC,rare_earths,input,-1.0,0.25,"high — radar / sensors heavy",
+GD,aluminum,input,-1.0,0.10,"combat vehicle / shipbuilding (mostly steel)",
+GD,steel,input,-1.0,0.15,"combat vehicles + ships",
+HII,steel,input,-1.0,0.20,"shipbuilding — steel-intensive",
+BA,aluminum,input,-1.0,0.25,"airframe — aluminum-heavy on metallic frames",
+BA,steel,input,-1.0,0.10,"engine + structural",
+BA,rare_earths,input,-1.0,0.10,"avionics / engines",
+
+# ─── Auto (Detroit + EV) ───────────────────────────────────────────────
+F,steel,input,-1.0,0.30,"vehicle body + chassis",
+F,aluminum,input,-1.0,0.20,"F-150 body + engine block",
+F,copper,input,-1.0,0.10,"wiring",
+GM,steel,input,-1.0,0.30,"vehicle body + chassis",
+GM,aluminum,input,-1.0,0.20,"vehicle body + engine block",
+GM,copper,input,-1.0,0.10,"wiring",
+GM,lithium,input,-1.0,0.15,"EV programs — Ultium",
+TSLA,lithium,input,-1.0,0.30,"battery cathode — major cost driver",
+TSLA,nickel,input,-1.0,0.25,"battery cathode",
+TSLA,cobalt,input,-1.0,0.15,"battery cathode (declining mix)",
+TSLA,copper,input,-1.0,0.20,"motor windings + wiring (3x ICE)",
+TSLA,steel,input,-1.0,0.20,"vehicle body",
+TSLA,aluminum,input,-1.0,0.15,"vehicle body",
+
+# ─── Industrials: heavy equipment + electrical ─────────────────────────
+CAT,steel,input,-1.0,0.30,"heavy machinery body",
+CAT,copper,input,-1.0,0.10,"electrical components",
+CAT,iron_ore,input,-1.0,0.10,"upstream — castings",
+DE,steel,input,-1.0,0.30,"agricultural / construction equipment",
+DE,aluminum,input,-1.0,0.10,"equipment",
+GE,steel,input,-1.0,0.20,"engines + power equipment",
+GE,copper,input,-1.0,0.15,"generators + motors",
+GE,rare_earths,input,-1.0,0.25,"wind turbines + jet engines",
+GEV,copper,input,-1.0,0.30,"transformers + grid power equipment — copper-heavy",
+GEV,steel,input,-1.0,0.20,"power equipment",
+GEV,rare_earths,input,-1.0,0.25,"wind turbines + grid magnets",
+ETN,copper,input,-1.0,0.30,"electrical equipment — copper-intensive",
+ETN,steel,input,-1.0,0.15,"equipment housings",
+EMR,copper,input,-1.0,0.25,"electrical / process automation",
+EMR,steel,input,-1.0,0.15,"equipment",
+HON,copper,input,-1.0,0.15,"avionics + automation",
+HON,aluminum,input,-1.0,0.10,"aerospace materials",
+ITW,steel,input,-1.0,0.25,"diversified industrial — steel feedstock",
+MMM,crude_oil,input,-1.0,0.15,"polymers / adhesives feedstock",
+
+# ─── Logistics / Transport: fuel-input sensitivity ─────────────────────
+UPS,gasoline,input,-1.0,0.40,"ground fleet + air ops",
+UPS,diesel,input,-1.0,0.40,"truck fleet",
+UPS,crude_oil,input,-1.0,0.50,"jet fuel proxy + diesel proxy",
+FDX,gasoline,input,-1.0,0.30,"smaller ground fleet share",
+FDX,diesel,input,-1.0,0.35,"truck fleet",
+FDX,crude_oil,input,-1.0,0.55,"FedEx Express jet fuel — big driver",
+UNP,diesel,input,-1.0,0.30,"locomotive diesel",
+NSC,diesel,input,-1.0,0.30,"locomotive diesel",
+CSX,diesel,input,-1.0,0.30,"locomotive diesel",
+ODFL,diesel,input,-1.0,0.45,"trucking — diesel-heavy",
+
+# ─── Utilities: fuel inputs (varies by mix) ────────────────────────────
+NEE,natural_gas,input,-1.0,0.20,"fuel mix — passes through with lag",
+NEE,uranium,input,-1.0,0.10,"FPL nuclear fleet — small fuel-cost share",
+DUK,natural_gas,input,-1.0,0.30,"more gas-heavy mix",
+DUK,coal,input,-1.0,0.15,"declining coal mix",
+SO,natural_gas,input,-1.0,0.30,"gas mix",
+SO,uranium,input,-1.0,0.10,"Vogtle nuclear",
+AEP,natural_gas,input,-1.0,0.20,"gas + coal mix",
+AEP,coal,input,-1.0,0.20,"coal-heavy historical",
+EXC,uranium,input,-1.0,0.30,"largest US nuclear operator",
+EXC,natural_gas,input,-1.0,0.20,"gas peakers",
+CEG,uranium,input,-1.0,0.40,"nuclear pure-play (post-spin)",
+CEG,natural_gas,input,-1.0,0.20,"some gas",
+VST,natural_gas,input,-1.0,0.45,"gas-heavy independent power producer",
+VST,uranium,input,-1.0,0.20,"Comanche Peak nuclear",
+VST,coal,input,-1.0,0.15,"declining coal exposure",
+AES,natural_gas,input,-1.0,0.30,"diversified IPP",
+
+# ─── Consumer staples: agricultural inputs ─────────────────────────────
+KO,corn,input,-1.0,0.20,"HFCS (high-fructose corn syrup) — sweetener",
+KO,sugar,input,-1.0,0.25,"cane sugar in non-US markets",
+PEP,corn,input,-1.0,0.20,"HFCS + corn snacks (Frito-Lay)",
+PEP,sugar,input,-1.0,0.20,"cane sugar non-US",
+PEP,wheat,input,-1.0,0.15,"snack inputs",
+PEP,cocoa,input,-1.0,0.10,"limited",
+MDLZ,cocoa,input,-1.0,0.45,"cocoa-intensive — chocolate dominant",
+MDLZ,sugar,input,-1.0,0.30,"confectionery",
+MDLZ,wheat,input,-1.0,0.25,"crackers + biscuits",
+SBUX,coffee,input,-1.0,0.50,"coffee-heavy COGS",
+SBUX,sugar,input,-1.0,0.10,"sweetener",
+MCD,wheat,input,-1.0,0.15,"buns / breaded items",
+
+# ─── Consumer discretionary: home + apparel ─────────────────────────────
+HD,lumber,input,-1.0,0.30,"sells lumber + indirect home construction demand",
+LOW,lumber,input,-1.0,0.30,"sells lumber + home construction",
+NKE,cotton,input,-1.0,0.20,"apparel inputs",
+
+# ─── Tech: minor commodity inputs ──────────────────────────────────────
+NVDA,copper,input,-1.0,0.05,"chip wires / packaging — small share",
+NVDA,rare_earths,input,-1.0,0.10,"semiconductor materials",
+TSM,copper,input,-1.0,0.10,"foundry — process / packaging metal",
+TSM,rare_earths,input,-1.0,0.15,"semis manufacturing",
+INTC,copper,input,-1.0,0.05,"manufacturing inputs",
+INTC,rare_earths,input,-1.0,0.10,"manufacturing inputs",
+AMD,copper,input,-1.0,0.05,"packaging",
+
+# ─── Healthcare: cocoa-style raw inputs (less direct) ──────────────────
+JNJ,cotton,input,-1.0,0.05,"medical textiles / consumer products",
+PG,crude_oil,input,-1.0,0.10,"plastics / packaging",
+PG,natural_gas,input,-1.0,0.05,"feedstock",
+CL,crude_oil,input,-1.0,0.10,"packaging materials",

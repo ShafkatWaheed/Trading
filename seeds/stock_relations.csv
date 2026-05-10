@@ -1,0 +1,118 @@
+from_symbol,to_symbol,relation_type,strength,polarity,evidence,notes
+# Hand-curated supply-chain spine for the Tier A universe.
+# Convention: from_symbol is the SUBJECT of the edge; to_symbol is the related party.
+#   (NVDA, TSM, "supplier")  ⇒ NVDA's supplier is TSM      (NVDA depends on TSM)
+#   (TSM, NVDA, "customer")  ⇒ TSM's customer is NVDA      (revenue concentration)
+# The loader writes both rows where both are knowable so traversal works either way.
+#
+# relation_type: supplier | customer | substitute | complement
+#   supplier  → upstream input dependency
+#   customer  → downstream revenue dependency
+#   substitute→ direct substitute / displacement (oil ↔ EV, ICE ↔ EV)
+#   complement→ co-purchased (NVDA + memory; AMD + cooling)
+#
+# strength: 0..1   how critical / large the relationship is
+# polarity: usually +1; -1 for substitutes (when one rises, the other falls)
+# Lines starting with # are skipped by the loader.
+
+# ─── Semis: NVDA's upstream supply chain ────────────────────────────────
+NVDA,TSM,supplier,0.95,1.0,"public 10-K — TSM is sole foundry for NVDA's leading-edge AI accelerators",
+NVDA,ASML,supplier,0.55,1.0,"indirect via TSM — ASML EUV is irreplaceable for advanced node",2nd-hop dependency
+NVDA,CDNS,supplier,0.55,1.0,"EDA tool supplier (Cadence) — chip design dependency",
+NVDA,SNPS,supplier,0.55,1.0,"EDA tool supplier (Synopsys) — chip design dependency",SNPS not in Tier A; orphan-ok
+NVDA,MU,complement,0.65,1.0,"HBM memory pairs with GPU — coupled demand",
+
+# ─── Semis: NVDA's downstream customers ─────────────────────────────────
+NVDA,MSFT,customer,0.85,1.0,"hyperscaler — billions in GPU spend disclosed",
+NVDA,GOOGL,customer,0.65,1.0,"hyperscaler — designs own TPU but still buys NVDA",
+NVDA,META,customer,0.85,1.0,"hyperscaler — Llama training on H100/H200 clusters",
+NVDA,AMZN,customer,0.65,1.0,"AWS hyperscaler — also designs Trainium",
+NVDA,TSLA,customer,0.45,1.0,"Tesla DOJO + AI training — historical NVDA buyer",
+NVDA,ORCL,customer,0.55,1.0,"OCI hyperscaler — disclosed multi-billion GPU buyer",
+
+# ─── Semis: TSM's customers (the other side of NVDA-TSM and AAPL-TSM) ───
+TSM,NVDA,customer,0.95,1.0,"largest disclosed customer for AI accelerators",
+TSM,AAPL,customer,0.95,1.0,"AAPL is TSM's largest customer overall (>20% of revenue)",
+TSM,AMD,customer,0.85,1.0,"foundry for Ryzen/EPYC/Instinct",
+TSM,QCOM,customer,0.65,1.0,"foundry for Snapdragon",
+TSM,AVGO,customer,0.65,1.0,"foundry for custom AI silicon",
+
+# ─── Semis: equipment chain ──────────────────────────────────────────────
+TSM,ASML,supplier,0.95,1.0,"EUV lithography monopoly",
+TSM,AMAT,supplier,0.85,1.0,"deposition / process equipment",
+TSM,LRCX,supplier,0.85,1.0,"etch equipment",
+TSM,KLAC,supplier,0.80,1.0,"process control / metrology",
+ASML,TSM,customer,0.95,1.0,"largest disclosed customer",
+
+# ─── Apple supply chain ─────────────────────────────────────────────────
+AAPL,TSM,supplier,0.95,1.0,"sole foundry for A-series and M-series chips",
+AAPL,AVGO,supplier,0.65,1.0,"wireless / RF chips for iPhone",
+AAPL,QCOM,supplier,0.55,1.0,"5G modems (transitioning to in-house)",
+
+# ─── Energy supply chain ────────────────────────────────────────────────
+VLO,XOM,supplier,0.65,1.0,"refiners buy crude from majors",
+MPC,XOM,supplier,0.65,1.0,"refiners buy crude from majors",
+PSX,XOM,supplier,0.65,1.0,"refiners buy crude from majors",
+VLO,COP,supplier,0.55,1.0,"crude purchases from independent E&Ps",
+MPC,COP,supplier,0.55,1.0,"crude purchases from independent E&Ps",
+SLB,XOM,customer,0.75,1.0,"oilfield services major customer",
+SLB,CVX,customer,0.75,1.0,"oilfield services major customer",
+SLB,COP,customer,0.65,1.0,"oilfield services customer",
+SLB,OXY,customer,0.65,1.0,"oilfield services customer",
+HAL,XOM,customer,0.75,1.0,"oilfield services major customer",
+HAL,CVX,customer,0.75,1.0,"oilfield services major customer",
+KMI,XOM,customer,0.55,1.0,"midstream pipeline customer",
+KMI,CVX,customer,0.55,1.0,"midstream pipeline customer",
+
+# ─── Pharma → PBM/insurer customers ─────────────────────────────────────
+LLY,CVS,customer,0.75,1.0,"PBM / pharmacy distribution",
+LLY,UNH,customer,0.65,1.0,"OptumRx PBM",
+LLY,CI,customer,0.65,1.0,"Express Scripts PBM",
+PFE,CVS,customer,0.75,1.0,"PBM / pharmacy distribution",
+PFE,UNH,customer,0.65,1.0,"OptumRx PBM",
+MRK,CVS,customer,0.65,1.0,"PBM / pharmacy distribution",
+MRK,UNH,customer,0.65,1.0,"OptumRx PBM",
+JNJ,CVS,customer,0.55,1.0,"PBM / pharmacy distribution",
+
+# ─── Defense ────────────────────────────────────────────────────────────
+RTX,LMT,supplier,0.45,1.0,"RTX (Pratt & Whitney) supplies F-35 engines to LMT",F-135 engine
+LMT,RTX,customer,0.45,1.0,"F-35 engine procurement from RTX",
+NOC,RTX,supplier,0.35,1.0,"electronics / sensors integration",
+GE,BA,supplier,0.85,1.0,"GE Aerospace supplies CFM engines (joint w/ Safran) for 737 MAX",
+GE,RTX,supplier,0.30,1.0,"engine adjacency",
+
+# ─── AI infrastructure: hyperscalers ↔ DC REITs / utilities ────────────
+MSFT,DLR,customer,0.55,1.0,"Microsoft is anchor tenant in many DLR data centers",
+MSFT,EQIX,customer,0.55,1.0,"Microsoft Azure interconnects via EQIX",
+GOOGL,EQIX,customer,0.55,1.0,"Google Cloud interconnect ecosystem",
+META,DLR,customer,0.45,1.0,"Meta data center capacity",
+DLR,NEE,customer,0.45,1.0,"data center power buyer (FL/TX/VA)",
+EQIX,NEE,customer,0.45,1.0,"data center power buyer",
+DLR,AEP,customer,0.45,1.0,"power buyer in AEP territory",
+EQIX,DUK,customer,0.40,1.0,"power buyer in DUK territory (NC/SC)",
+DLR,CEG,customer,0.55,1.0,"nuclear PPA for AI compute clusters",announced deals
+DLR,VST,customer,0.45,1.0,"AI-power PPAs",
+
+# ─── Telecoms → tower REITs ─────────────────────────────────────────────
+T,AMT,customer,0.85,1.0,"AT&T leases tower space from American Tower",
+T,CCI,customer,0.65,1.0,"Crown Castle tenant",
+VZ,AMT,customer,0.85,1.0,"Verizon tower lessee",
+VZ,CCI,customer,0.65,1.0,"Crown Castle tenant",
+TMUS,AMT,customer,0.85,1.0,"T-Mobile tower lessee",
+TMUS,CCI,customer,0.65,1.0,"Crown Castle tenant",
+
+# ─── EVs ↔ ICE substitution ──────────────────────────────────────────────
+TSLA,F,substitute,0.55,-1.0,"EVs displacing ICE light vehicles",
+TSLA,GM,substitute,0.55,-1.0,"EVs displacing ICE light vehicles",
+F,TSLA,substitute,0.55,-1.0,"reverse: ICE displaced by EVs",
+GM,TSLA,substitute,0.55,-1.0,"reverse: ICE displaced by EVs",
+
+# ─── Oil ↔ EV substitution (commodity-mediated demand pull) ─────────────
+TSLA,XOM,substitute,0.30,-1.0,"high oil prices boost EV economics; loose substitution",
+TSLA,CVX,substitute,0.30,-1.0,"loose substitution via fuel cost",
+
+# ─── Complementary tech demand pairs ────────────────────────────────────
+NVDA,VRT,complement,0.45,1.0,"GPU clusters drive datacenter cooling demand",
+NVDA,GEV,complement,0.40,1.0,"GPU clusters drive grid power demand",
+NVDA,ETN,complement,0.45,1.0,"GPU clusters drive electrical equipment demand",
+NVDA,CCJ,complement,0.30,1.0,"GPU clusters drive nuclear PPA demand",2nd-derivative

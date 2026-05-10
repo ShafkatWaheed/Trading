@@ -1,0 +1,129 @@
+from_symbol,to_symbol,similarity,overlap_dimensions,notes
+# Cross-industry / cross-sector Tier A peer edges that within-industry tagging
+# misses. Captures business-line overlaps where two companies compete on a
+# specific dimension despite living in different yfinance industries.
+#
+# Example: MSFT (Software—Infrastructure) and AMZN (Internet Retail) compete
+# on cloud (Azure vs AWS) — the within-industry seed wouldn't link them.
+#
+# Same loader as tier_a_peers.csv. Lines starting with # are skipped.
+
+# ─── Cloud / AI infrastructure ───────────────────────────────────────────
+MSFT,AMZN,0.85,"cloud,ai infrastructure,enterprise",Azure vs AWS
+MSFT,GOOGL,0.85,"cloud,ai,productivity,search",
+GOOGL,AMZN,0.80,"cloud,ai,advertising,ecommerce",
+GOOGL,MSFT,0.85,"cloud,ai,productivity",
+AMZN,MSFT,0.85,"cloud,ai infrastructure,enterprise",
+AMZN,GOOGL,0.80,"cloud,advertising,ai,ecommerce",
+ORCL,AMZN,0.65,"cloud,databases",OCI vs AWS
+ORCL,GOOGL,0.55,"cloud,enterprise databases",
+ORCL,MSFT,0.75,"cloud,enterprise software,databases",
+
+# ─── Streaming + ad-supported media ──────────────────────────────────────
+NFLX,GOOGL,0.40,"streaming/ad-supported video,subscriber,YT vs NFLX",
+NFLX,AMZN,0.50,"streaming,prime video competitor",
+DIS,AMZN,0.45,"streaming,prime video,content",
+META,GOOGL,0.85,"digital advertising,ai",duopoly already in within-industry but cross-sub-industry
+META,AMZN,0.55,"advertising,ai",ad network competition
+META,NFLX,0.40,"streaming,subscriber engagement",reels vs short-form
+
+# ─── Payments / Fintech ──────────────────────────────────────────────────
+V,PYPL,0.55,"digital payments",
+MA,PYPL,0.55,"digital payments",
+PYPL,V,0.55,"digital payments",
+PYPL,MA,0.55,"digital payments",
+AXP,V,0.65,"credit cards,payments",duplicate of within-industry but explicit cross-segment
+AXP,COIN,0.30,"fintech adjacency",
+COIN,PYPL,0.50,"fintech,digital assets,payments",
+
+# ─── Devices + Services + Ads (Apple-Google-Amazon ecosystems) ───────────
+AAPL,GOOGL,0.65,"consumer electronics,services,operating system,ai assistant",iOS vs Android battle
+AAPL,AMZN,0.50,"services,subscriptions,ecosystem",
+AAPL,MSFT,0.55,"productivity,services,enterprise,operating system",
+AAPL,META,0.45,"consumer,advertising,vr/ar,wearables",
+
+# ─── EV / Auto / Energy crossovers ───────────────────────────────────────
+TSLA,GM,0.65,"ev,auto,autonomous,battery",
+TSLA,F,0.65,"ev,auto,truck",
+TSLA,LCID,0.55,"ev luxury,battery",
+TSLA,RIVN,0.55,"ev pickup,battery,startup",
+TSLA,ENPH,0.45,"solar,residential energy,battery storage",cross-industry — solar tie-up
+TSLA,NVDA,0.30,"autonomous driving,ai chips",cross-sector AI overlap
+
+# ─── AI infrastructure: chips ↔ datacenter REITs ↔ utilities ─────────────
+NVDA,EQIX,0.40,"datacenter compute → datacenter real estate",AI capex pulls REIT demand
+NVDA,DLR,0.40,"datacenter compute → datacenter real estate",
+NVDA,VRT,0.45,"datacenter compute → cooling and power",
+NVDA,GEV,0.40,"datacenter compute → grid power",
+NVDA,CEG,0.35,"datacenter compute → nuclear PPA",
+NVDA,CCJ,0.30,"datacenter compute → uranium fuel",
+EQIX,NVDA,0.40,"datacenter REIT ↔ AI compute demand",
+DLR,NVDA,0.40,"datacenter REIT ↔ AI compute demand",
+DLR,EQIX,0.95,"datacenter REIT,duopoly",duplicate of within-industry but explicit
+EQIX,DLR,0.95,"datacenter REIT,duopoly",
+CEG,VST,0.95,"independent power,ai-power thesis",
+CEG,CCJ,0.50,"nuclear power ↔ uranium fuel supplier",
+VST,CEG,0.95,"independent power",
+GEV,VRT,0.65,"grid power equipment ↔ datacenter cooling",AI capex bridge
+ETN,VRT,0.65,"electrical equipment ↔ datacenter cooling",
+VRT,GEV,0.65,"datacenter cooling ↔ grid power",
+VRT,ETN,0.65,"datacenter cooling ↔ electrical equipment",
+VRT,DLR,0.55,"datacenter equipment ↔ datacenter REITs",
+VRT,EQIX,0.55,"datacenter equipment ↔ datacenter REITs",
+
+# ─── Defense ↔ Cybersecurity (modern conflict has cyber dimension) ───────
+LMT,PANW,0.30,"physical defense ↔ cyber defense",
+LMT,CRWD,0.30,"physical defense ↔ cyber defense",
+NOC,PANW,0.30,"physical defense ↔ cyber defense",
+PANW,LMT,0.30,"cyber ↔ physical defense",
+CRWD,LMT,0.30,"cyber ↔ physical defense",
+
+# ─── Pharma + medical devices: GLP-1 ripple effects ──────────────────────
+LLY,ISRG,0.30,"glp-1 substitution ↔ bariatric surgery alternative",GLP-1 reduces bariatric demand
+NVO,ISRG,0.30,"glp-1 substitution ↔ bariatric",
+LLY,ABT,0.30,"glp-1 ↔ continuous glucose monitor adjacency",
+
+# ─── Energy: oil ↔ gas ↔ renewables ↔ EV ↔ utilities ─────────────────────
+XOM,NEE,0.35,"fossil fuel ↔ renewable utility",substitution dynamics
+CVX,NEE,0.35,"fossil fuel ↔ renewable utility",
+XOM,TSLA,0.35,"oil ↔ ev demand substitution",when oil up, EV up
+TSLA,XOM,0.35,"ev ↔ oil substitution",
+NEE,VST,0.65,"regulated utility ↔ independent power",renewable mix overlap
+NEE,CEG,0.65,"regulated utility ↔ nuclear independent",
+
+# ─── Insurance / Reinsurance / Banks (financial conglomerates) ──────────
+BRK-B,PGR,0.55,"insurance,float investing,personal lines",
+BRK-B,TRV,0.55,"insurance,p&c",
+JPM,BRK-B,0.45,"financial conglomerate,banks vs insurance",
+
+# ─── Consumer staples: GLP-1 hits + retail concentration ─────────────────
+LLY,KO,0.25,"glp-1 ↔ sugary beverage demand",GLP-1 pressures snacks/beverages
+LLY,PEP,0.25,"glp-1 ↔ snack demand",
+NVO,KO,0.25,"glp-1 ↔ sugary beverage",
+NVO,PEP,0.25,"glp-1 ↔ snack demand",
+
+# ─── Real estate: REIT crossovers ────────────────────────────────────────
+PLD,AMZN,0.55,"industrial REIT ↔ ecommerce logistics demand",
+AMT,T,0.40,"tower REIT ↔ telco tenant",
+AMT,VZ,0.40,"tower REIT ↔ telco tenant",
+AMT,TMUS,0.40,"tower REIT ↔ telco tenant",
+CCI,T,0.40,"tower REIT ↔ telco tenant",
+CCI,VZ,0.40,"tower REIT ↔ telco tenant",
+
+# ─── Consumer + ad-tech crossovers ───────────────────────────────────────
+AMZN,WMT,0.70,"retail,prime vs walmart+",
+WMT,AMZN,0.70,"retail,ecommerce",
+COST,AMZN,0.55,"membership retail,bulk vs prime",
+
+# ─── Crypto-adjacent ─────────────────────────────────────────────────────
+COIN,NVDA,0.30,"crypto exchange ↔ gpu mining adjacency",
+COIN,BLK,0.40,"crypto exchange ↔ asset manager (BTC ETF dynamic)",
+BLK,COIN,0.40,"asset manager ↔ crypto exchange",IBIT-COIN custody relationship
+
+# ─── Industrials: railroads ↔ trucking ↔ shipping ↔ ports ────────────────
+UPS,UNP,0.35,"parcel ↔ rail freight",different modes, similar demand drivers
+UPS,FDX,0.95,"parcel,duopoly",duplicate
+UPS,XPO,0.45,"parcel ↔ ltl trucking",
+FDX,UNP,0.35,"parcel ↔ rail freight",
+UNP,UPS,0.35,"rail freight ↔ parcel adjacency",
+NSC,UNP,0.85,"railroads,duopoly",duplicate within-industry

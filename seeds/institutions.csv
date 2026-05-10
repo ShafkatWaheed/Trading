@@ -1,0 +1,74 @@
+cik,name,type,total_aum,notes
+# Phase 7A: top institutional investors. Real CIKs where verified;
+# placeholder CIKs (10000xxx) for prototype where not yet confirmed.
+# Live 13F loader will overwrite/insert with authoritative values.
+# Total AUM in USD; rough/approximate.
+# Lines starting with # are skipped.
+
+# ─── The Big Three (real CIKs verified) ─────────────────────────────────
+1364742,BlackRock Inc,index_fund,10500000000000,World's largest asset manager
+102909,Vanguard Group,index_fund,9300000000000,Pioneer of low-cost index funds
+93751,State Street Corp,index_fund,3700000000000,SPDR ETFs
+
+# ─── Major asset managers (mostly placeholder CIKs for prototype) ──────
+10000001,Fidelity Investments (FMR LLC),active_mgr,4900000000000,Mutual fund + ETF mix
+10000002,Capital Group (Capital Research & Mgmt),active_mgr,2800000000000,American Funds
+10000003,T. Rowe Price Group,active_mgr,1400000000000,
+10000004,Wellington Management,active_mgr,1200000000000,
+10000005,Geode Capital Management,index_fund,1500000000000,Sub-advisor for Fidelity index funds
+
+# ─── Sovereign / pension giants ─────────────────────────────────────────
+949840,Norges Bank Investment Management,sovereign,1700000000000,Norwegian SWF
+10000010,GIC Pte Ltd,sovereign,800000000000,Singapore
+10000011,Saudi Arabia Public Investment Fund,sovereign,925000000000,
+10000012,Abu Dhabi ADIA,sovereign,1100000000000,UAE SWF
+10000013,China Investment Corporation (CIC),sovereign,1350000000000,
+10000014,Kuwait Investment Authority,sovereign,750000000000,
+10000015,Temasek Holdings,sovereign,290000000000,Singapore
+10000016,Korea Investment Corp,sovereign,205000000000,
+
+# ─── Active managers at the bank-affiliated arms ───────────────────────
+10000020,JPMorgan Asset Management,active_mgr,3300000000000,
+10000021,Bank of America (Merrill) Wealth,active_mgr,2800000000000,
+10000022,Morgan Stanley Investment Management,active_mgr,1700000000000,
+10000023,Goldman Sachs Asset Management,active_mgr,2700000000000,
+10000024,Wells Fargo Asset Management,active_mgr,600000000000,
+
+# ─── Hedge funds ───────────────────────────────────────────────────────
+10000030,Bridgewater Associates,hedge_fund,140000000000,Ray Dalio macro
+10000031,Renaissance Technologies,hedge_fund,105000000000,Quant
+10000032,Citadel Advisors,hedge_fund,65000000000,Ken Griffin multi-strat
+10000033,Two Sigma Investments,hedge_fund,60000000000,Quant
+10000034,Millennium Management,hedge_fund,68000000000,Izzy Englander multi-strat
+10000035,DE Shaw,hedge_fund,60000000000,Quant
+10000036,Soros Fund Management,hedge_fund,28000000000,Family office
+10000037,Tiger Global Management,hedge_fund,50000000000,
+10000038,Coatue Management,hedge_fund,52000000000,Tech-focused
+10000039,Pershing Square Capital Management,hedge_fund,18000000000,Bill Ackman activist
+10000040,Third Point LLC,hedge_fund,9000000000,Dan Loeb activist
+10000041,Elliott Investment Management,hedge_fund,65000000000,Paul Singer activist
+10000042,Lone Pine Capital,hedge_fund,18000000000,Stephen Mandel
+10000043,Whale Rock Capital,hedge_fund,12000000000,Tech-focused
+10000044,Light Street Capital,hedge_fund,5000000000,
+10000045,Altimeter Capital,hedge_fund,9000000000,Brad Gerstner
+10000046,Icahn Capital LP,hedge_fund,4000000000,Carl Icahn activist
+10000047,Trian Fund Management,hedge_fund,9000000000,Nelson Peltz
+10000048,ValueAct Capital,hedge_fund,16000000000,
+10000049,Starboard Value,hedge_fund,5000000000,Jeff Smith activist
+10000050,Engine No 1,hedge_fund,300000000,ESG activist
+
+# ─── Tech-focused / specialty managers ─────────────────────────────────
+10000060,ARK Investment Management,active_mgr,15000000000,Cathie Wood thematic ETFs
+10000061,Dimensional Fund Advisors,active_mgr,720000000000,DFA factor funds
+10000062,Charles Schwab Investment Management,index_fund,900000000000,
+10000063,PIMCO,active_mgr,2000000000000,Bond fund giant
+10000064,Allianz Global Investors,active_mgr,2500000000000,
+10000065,Schroders plc,active_mgr,950000000000,UK active manager
+10000066,Franklin Resources Inc,active_mgr,1500000000000,
+10000067,Invesco Ltd,active_mgr,1500000000000,
+10000068,Northern Trust Corp,active_mgr,1300000000000,Custody + asset mgmt
+10000069,Janus Henderson,active_mgr,360000000000,
+10000070,Nuveen LLC (TIAA),active_mgr,1300000000000,
+
+# ─── Berkshire (the value-investing exception) ─────────────────────────
+1067983,Berkshire Hathaway Inc,active_mgr,500000000000,Warren Buffett

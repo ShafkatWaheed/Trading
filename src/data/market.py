@@ -154,9 +154,20 @@ class MarketDataService:
         if df.empty:
             raise ValueError(f"No Yahoo historical data for {symbol}")
 
-        # Flatten multi-level columns if present
-        if hasattr(df.columns, 'levels') and df.columns.nlevels > 1:
-            df.columns = df.columns.get_level_values(0)
+        # Flatten multi-level columns. Under parallel use yfinance may return a
+        # multi-symbol frame with columns like [('Close', 'AAPL'), ('Close', 'MSFT')].
+        # Naively dropping level-0 leaves duplicates that silently corrupt cached
+        # data — so first slice down to *this* symbol's columns when possible.
+        if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+            sym_level = df.columns.get_level_values(-1)
+            if symbol in sym_level:
+                df = df.xs(symbol, axis=1, level=-1)
+            else:
+                df.columns = df.columns.get_level_values(0)
+        # Final defense: drop any duplicated columns that survived (they would
+        # produce non-unique cache writes).
+        if df.columns.duplicated().any():
+            df = df.loc[:, ~df.columns.duplicated()]
 
         df = df.reset_index()
         df = df.rename(columns={

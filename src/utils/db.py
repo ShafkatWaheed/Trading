@@ -184,6 +184,202 @@ def init_db() -> None:
             benchmark_value REAL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        -- ── Knowledge-graph prototype tables (PROTOTYPE_PLAN.md) ──
+
+        -- Industries (yfinance taxonomy + sector mapping)
+        CREATE TABLE IF NOT EXISTS industries (
+            code TEXT PRIMARY KEY,
+            sector TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        -- 4,800-stock target universe with tier classification
+        CREATE TABLE IF NOT EXISTS stocks_universe (
+            symbol TEXT PRIMARY KEY,
+            name TEXT,
+            tier TEXT NOT NULL CHECK (tier IN ('A','B','C','D')),
+            exchange TEXT,                      -- NASDAQ, NYSE, TSX, TSXV, CSE
+            country TEXT,                       -- US, CA
+            market_cap REAL,
+            avg_dollar_volume REAL,
+            in_sp500 INTEGER DEFAULT 0,
+            in_russell1000 INTEGER DEFAULT 0,
+            in_russell2000 INTEGER DEFAULT 0,
+            in_tsx60 INTEGER DEFAULT 0,
+            in_qqq INTEGER DEFAULT 0,
+            source TEXT,                        -- where the row came from (hand|etf|tsx|tsxv|cse|nasdaq)
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_stocks_universe_tier ON stocks_universe(tier);
+
+        -- Stock → industry M2M (multi-tag for conglomerates with weights summing to 1.0)
+        CREATE TABLE IF NOT EXISTS stock_industry (
+            symbol TEXT NOT NULL,
+            industry_code TEXT NOT NULL,
+            weight REAL NOT NULL DEFAULT 1.0,
+            is_primary INTEGER NOT NULL DEFAULT 1,
+            source TEXT,                        -- 'yfinance' | 'hand'
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (symbol, industry_code)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_industry_industry ON stock_industry(industry_code);
+
+        -- Peer / competitor edges
+        CREATE TABLE IF NOT EXISTS stock_peers (
+            from_symbol TEXT NOT NULL,
+            to_symbol TEXT NOT NULL,
+            similarity REAL NOT NULL,           -- 0..1
+            overlap_dimensions TEXT,            -- "cloud,AI,productivity" (Tier A only, NULL elsewhere)
+            source TEXT NOT NULL,               -- 'hand' | 'claude_batch' | 'claude_validated'
+            confidence TEXT NOT NULL,           -- 'high' | 'medium' | 'low'
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            evidence TEXT,
+            PRIMARY KEY (from_symbol, to_symbol)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_peers_from ON stock_peers(from_symbol);
+        CREATE INDEX IF NOT EXISTS idx_stock_peers_to ON stock_peers(to_symbol);
+
+        -- Supply-chain + structural relations
+        CREATE TABLE IF NOT EXISTS stock_relations (
+            from_symbol TEXT NOT NULL,
+            to_symbol TEXT NOT NULL,
+            relation_type TEXT NOT NULL,        -- supplier | customer | substitute | complement
+            strength REAL NOT NULL,             -- 0..1
+            polarity REAL NOT NULL DEFAULT 1.0, -- usually +1; -1 for substitutes (zero-sum)
+            evidence TEXT,                      -- "10-K 2024 Item 1A" | "manual"
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (from_symbol, to_symbol, relation_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_relations_from ON stock_relations(from_symbol);
+        CREATE INDEX IF NOT EXISTS idx_stock_relations_to ON stock_relations(to_symbol);
+        CREATE INDEX IF NOT EXISTS idx_stock_relations_type ON stock_relations(relation_type);
+
+        -- Keyword → industry/stock impacts (the news engine's brain)
+        CREATE TABLE IF NOT EXISTS keyword_impact (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT NOT NULL,
+            industry_code TEXT,                 -- nullable if target_stock is set
+            target_stock TEXT,                  -- nullable if industry_code is set
+            polarity REAL NOT NULL,             -- -1.0 to +1.0
+            weight REAL NOT NULL,               -- 0..1
+            domain TEXT,                        -- 'ai' | 'oil' | 'war' | 'tariff' | 'rates' | 'fda' | 'court' | 'm&a' | ...
+            notes TEXT,
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (industry_code IS NOT NULL OR target_stock IS NOT NULL)
+        );
+        CREATE INDEX IF NOT EXISTS idx_keyword_impact_kw ON keyword_impact(keyword);
+        CREATE INDEX IF NOT EXISTS idx_keyword_impact_domain ON keyword_impact(domain);
+
+        -- Optional: keyword groups for backtest aggregation (deferred)
+        CREATE TABLE IF NOT EXISTS keyword_groups (
+            group_name TEXT NOT NULL,
+            keyword TEXT NOT NULL,
+            PRIMARY KEY (group_name, keyword)
+        );
+
+        -- Resumable per-industry peer-ranking job ledger (Phase 3 Day 13).
+        -- Each row tracks one (industry, tier) batch sent to Claude. Lets us
+        -- pause / resume across subscription budget windows.
+        CREATE TABLE IF NOT EXISTS peer_jobs (
+            industry_code TEXT NOT NULL,
+            tier TEXT NOT NULL CHECK (tier IN ('A','B','C','D')),
+            status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'in_progress' | 'done' | 'failed'
+            last_attempt TEXT,
+            symbols_processed INTEGER DEFAULT 0,
+            edges_written INTEGER DEFAULT 0,
+            error TEXT,
+            PRIMARY KEY (industry_code, tier)
+        );
+        CREATE INDEX IF NOT EXISTS idx_peer_jobs_status ON peer_jobs(status);
+
+        -- Resumable per-stock 10-K extraction job ledger (Phase 4 Day 17).
+        -- One row per stock; tracks extraction state for SEC EDGAR Item 1A mining.
+        CREATE TABLE IF NOT EXISTS tenk_jobs (
+            symbol TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'in_progress' | 'done' | 'failed' | 'skipped'
+            last_attempt TEXT,
+            filing_url TEXT,
+            edges_written INTEGER DEFAULT 0,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenk_jobs_status ON tenk_jobs(status);
+
+        -- Phase 6: commodity nodes + stock-commodity exposure edges.
+        -- Captures how stock prices respond to commodity price moves, which
+        -- powers cross-sector causal chains ("gas crisis → fertilizer up").
+        CREATE TABLE IF NOT EXISTS commodities (
+            code TEXT PRIMARY KEY,            -- 'oil', 'gas', 'copper', etc.
+            name TEXT NOT NULL,
+            unit TEXT,                        -- 'barrel', 'mmbtu', 'lb', etc.
+            benchmark_ticker TEXT,            -- ETF / proxy ticker for price tracking
+            description TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_commodity_exposure (
+            symbol TEXT NOT NULL,
+            commodity_code TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('input','output','hedge')),
+            polarity REAL NOT NULL,           -- -1..+1
+            elasticity REAL NOT NULL,         -- 0..1, pass-through strength
+            confidence TEXT NOT NULL,         -- 'high' | 'medium' | 'low' | 'validated' | 'disputed' | 'weak'
+            evidence TEXT,                    -- '10-K Item 7' | 'industry standard' | 'manual'
+            as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            source TEXT NOT NULL,             -- 'hand' | 'claude' | 'backtest'
+            PRIMARY KEY (symbol, commodity_code, role)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sce_symbol ON stock_commodity_exposure(symbol);
+        CREATE INDEX IF NOT EXISTS idx_sce_commodity ON stock_commodity_exposure(commodity_code);
+
+        -- Resumable per-stock causal-extraction job ledger (Phase 6).
+        CREATE TABLE IF NOT EXISTS causal_jobs (
+            symbol TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'pending',
+            last_attempt TEXT,
+            edges_written INTEGER DEFAULT 0,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_causal_jobs_status ON causal_jobs(status);
+
+        -- ── Phase 7A: Institutional ownership (BlackRock/Vanguard/etc.) ──
+        CREATE TABLE IF NOT EXISTS institutions (
+            cik TEXT PRIMARY KEY,             -- SEC CIK (string, leading zeros allowed)
+            name TEXT NOT NULL,
+            type TEXT,                        -- 'index_fund' | 'active_mgr' | 'hedge_fund' | 'pension' | 'sovereign'
+            total_aum REAL,                   -- USD
+            last_updated TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS institution_holdings (
+            cik TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            value_usd REAL,
+            shares REAL,
+            pct_portfolio REAL,               -- % of institution's portfolio
+            pct_outstanding REAL,             -- % of company's float (more actionable)
+            rank_in_portfolio INTEGER,
+            as_of TEXT NOT NULL,              -- typically the filing's period end
+            source TEXT,                      -- '13F' | 'hand'
+            PRIMARY KEY (cik, symbol, as_of)
+        );
+        CREATE INDEX IF NOT EXISTS idx_holdings_symbol ON institution_holdings(symbol);
+        CREATE INDEX IF NOT EXISTS idx_holdings_cik ON institution_holdings(cik);
+
+        -- ── Phase 7B: Edge freshness ────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS edge_freshness (
+            symbol TEXT PRIMARY KEY,
+            last_extracted_at TEXT,
+            last_summary_hash TEXT,
+            last_correlation_check TEXT,
+            last_filing_check TEXT,
+            last_baseline_correlation REAL,
+            status TEXT NOT NULL DEFAULT 'fresh',   -- 'fresh' | 'aging' | 'needs_review' | 'stale'
+            trigger_reason TEXT,
+            flagged_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_freshness_status ON edge_freshness(status);
     """)
     conn.commit()
     conn.close()

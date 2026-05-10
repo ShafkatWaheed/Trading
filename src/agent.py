@@ -20,8 +20,8 @@ class AgentConfig:
     starting_capital: float = 100000
     current_cash: float = 100000
     risk_per_trade: float = 0.02
-    max_positions: int = 5
-    max_buys_per_cycle: int = 1
+    max_positions: int = 8
+    max_buys_per_cycle: int = 3
     min_opportunity_score: int = 60
     stop_loss_pct: float = 12.0
     rebalance_frequency: str = "weekly"
@@ -257,7 +257,7 @@ class TradingAgent:
             from src.analysis import technical
             from src.analysis.opportunity import compute_opportunity
             from src.data.gateway import DataGateway
-            from dashboard import STOCK_DB
+            from src.data.stock_db import STOCK_DB
 
             gw = DataGateway()
 
@@ -295,6 +295,19 @@ class TradingAgent:
 
             universe = universe_ordered[:40]
 
+            # Phase 8: pull active themes from agent_config so the graph
+            # relevance scorer can boost stocks aligned with current macro/news.
+            # Empty list when no themes are set → graph_boost is a no-op (1.0×).
+            try:
+                from src.agent_graph import (
+                    get_active_themes_from_agent_config,
+                    graph_boost_for_candidates,
+                )
+                active_themes = get_active_themes_from_agent_config()
+                graph_boosts = graph_boost_for_candidates(universe, active_themes)
+            except Exception:
+                graph_boosts = {sym: 1.0 for sym in universe}
+
             # Step 3: Score each stock
             results = []
             already_holding = {p.symbol for p in self.positions if p.status == "open"}
@@ -316,10 +329,15 @@ class TradingAgent:
                     is_favored = any(f.lower() in sector.lower() for f in favored_sectors)
                     is_specific = sym in specific_tickers
 
+                    base_score = score.total_score + (10 if is_specific else 5 if is_favored else 0)
+                    graph_mult = graph_boosts.get(sym, 1.0)
+                    final_score = base_score * graph_mult
+
                     results.append({
                         "symbol": sym,
-                        "score": score.total_score + (10 if is_specific else 5 if is_favored else 0),
+                        "score": final_score,
                         "raw_score": score.total_score,
+                        "graph_boost": graph_mult,
                         "strategy": score.strategy,
                         "label": score.label,
                         "sector": sector,
@@ -336,7 +354,7 @@ class TradingAgent:
     def _ai_discover_guidance(self, market: dict) -> dict:
         """Ask Claude which sectors and stocks to focus on — uses full market context."""
         try:
-            from dashboard import STOCK_DB
+            from src.data.stock_db import STOCK_DB
             from src.utils.db import cache_get
 
             sectors = sorted(set(s for _, (_, s, _) in STOCK_DB.items()))
@@ -538,6 +556,43 @@ Respond in this EXACT JSON format (no other text):
                 except Exception:
                     pass
 
+                # Trade plan data from technical analysis
+                trade_plan = {}
+                try:
+                    from src.analysis import technical as tech_tp
+                    from src.data.gateway import DataGateway as GW_TP
+                    gw_tp = GW_TP()
+                    hist_tp = gw_tp.get_historical(c["symbol"], period_days=60)
+                    if hist_tp is not None and not hist_tp.empty:
+                        tech_data = tech_tp.analyze(c["symbol"], hist_tp)
+                        price_val = float(tech_data.current_price) if tech_data.current_price else 0
+                        support_val = float(tech_data.support) if tech_data.support else 0
+                        resistance_val = float(tech_data.resistance) if tech_data.resistance else 0
+                        rr = 0
+                        if support_val and resistance_val and price_val > support_val and resistance_val > price_val:
+                            downside = price_val - support_val
+                            upside = resistance_val - price_val
+                            rr = round(upside / downside, 1) if downside > 0 else 0
+
+                        trade_plan = {
+                            "support": round(support_val, 2),
+                            "resistance": round(resistance_val, 2),
+                            "risk_reward": rr,
+                            "atr_stop": round(float(tech_data.atr_stop), 2) if tech_data.atr_stop else None,
+                            "atr_stop_pct": tech_data.atr_stop_pct,
+                            "rsi_5": round(float(tech_data.rsi_5), 1) if tech_data.rsi_5 else None,
+                            "ema8_above_ema21": (float(tech_data.ema_8) > float(tech_data.ema_21)) if tech_data.ema_8 and tech_data.ema_21 else None,
+                            "momentum_3d": tech_data.momentum_3d,
+                            "obv_trend": tech_data.obv_trend,
+                            "macd_divergence": tech_data.macd_divergence,
+                            "seasonality": tech_data.seasonality_avg,
+                            "fib_382": round(float(tech_data.fib_382), 2) if tech_data.fib_382 else None,
+                            "confirmations": f"{score.confirmations}/3" if hasattr(score, 'confirmations') else "N/A",
+                            "momentum_override": score.momentum_override if hasattr(score, 'momentum_override') else False,
+                        }
+                except Exception:
+                    pass
+
                 analyses[c["symbol"]] = {
                     "verdict": report.verdict.value,
                     "confidence": report.confidence,
@@ -550,6 +605,7 @@ Respond in this EXACT JSON format (no other text):
                     "reasoning": report.reasoning[:3],
                     "signals": signals,
                     "backtest": backtest_summary,
+                    "trade_plan": trade_plan,
                 }
             except Exception:
                 continue
@@ -588,6 +644,22 @@ Respond in this EXACT JSON format (no other text):
                 if sig.get("data"):
                     data_str = " | ".join(f"{k}={v}" for k, v in list(sig["data"].items())[:5])
                     candidates_text += f"       Data: {data_str}\n"
+
+            # Add trade plan
+            tp = data.get("trade_plan", {})
+            if tp:
+                candidates_text += f"    ── Trade Plan ──\n"
+                if tp.get("support") and tp.get("resistance"):
+                    candidates_text += f"    Support: ${tp['support']}, Resistance: ${tp['resistance']}, R/R: {tp.get('risk_reward', 0)}:1\n"
+                if tp.get("atr_stop"):
+                    candidates_text += f"    ATR Stop: ${tp['atr_stop']} ({tp.get('atr_stop_pct', 0)}%)\n"
+                if tp.get("rsi_5") is not None:
+                    candidates_text += f"    Short-term: RSI5={tp['rsi_5']}, EMA8>21={'yes' if tp.get('ema8_above_ema21') else 'no'}, Mom3d={tp.get('momentum_3d', 0):+.1f}%\n"
+                if tp.get("obv_trend"):
+                    candidates_text += f"    OBV: {tp['obv_trend']}, MACD divergence: {tp.get('macd_divergence', 'none')}, Seasonality: {tp.get('seasonality', 0):+.1f}%\n"
+                if tp.get("fib_382"):
+                    candidates_text += f"    Fibonacci 38.2%: ${tp['fib_382']}\n"
+                candidates_text += f"    Confirmations: {tp.get('confirmations', 'N/A')}{'  🚀MOMENTUM OVERRIDE' if tp.get('momentum_override') else ''}\n"
 
             # Add backtest track record
             bt = data.get("backtest", [])
@@ -743,7 +815,7 @@ Respond in this EXACT JSON format (no other text):
         # Check 2: Sector concentration — max 3 in same sector
         stock_sector = "Unknown"
         try:
-            from dashboard import STOCK_DB
+            from src.data.stock_db import STOCK_DB
             if symbol in STOCK_DB:
                 stock_sector = STOCK_DB[symbol][1]
         except Exception:
@@ -909,7 +981,7 @@ Respond in this EXACT JSON format (no other text):
 
     def _get_sector(self, symbol: str) -> str:
         try:
-            from dashboard import STOCK_DB
+            from src.data.stock_db import STOCK_DB
             if symbol in STOCK_DB:
                 return STOCK_DB[symbol][1]
         except Exception:
@@ -1087,7 +1159,7 @@ Respond in this EXACT JSON format (no other text):
         row = conn.execute("SELECT * FROM agent_config WHERE id=1").fetchone()
         if not row:
             conn.execute(
-                "INSERT INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, max_buys_per_cycle, min_opportunity_score, stop_loss_pct, rebalance_frequency, status, created_at) VALUES (1, 100000, 100000, 0.02, 5, 1, 60, 12.0, 'weekly', 'stopped', ?)",
+                "INSERT INTO agent_config (id, starting_capital, current_cash, risk_per_trade, max_positions, max_buys_per_cycle, min_opportunity_score, stop_loss_pct, rebalance_frequency, status, created_at) VALUES (1, 100000, 100000, 0.02, 8, 3, 60, 12.0, 'weekly', 'stopped', ?)",
                 (datetime.utcnow().isoformat(),),
             )
             conn.commit()
@@ -1181,8 +1253,8 @@ def add_human_trade(symbol: str, direction: str, shares: int, entry_price: float
     return trade_id
 
 
-def reset_agent(capital: float = 100000, risk_pct: float = 0.02, max_pos: int = 5,
-                max_buys: int = 1, min_score: int = 60, stop_pct: float = 12.0) -> None:
+def reset_agent(capital: float = 100000, risk_pct: float = 0.02, max_pos: int = 8,
+                max_buys: int = 3, min_score: int = 60, stop_pct: float = 12.0) -> None:
     init_db()
     conn = get_connection()
     conn.execute("DELETE FROM agent_positions")

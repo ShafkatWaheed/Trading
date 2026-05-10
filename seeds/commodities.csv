@@ -1,0 +1,47 @@
+code,name,unit,benchmark_ticker,description
+# Phase 6 commodity nodes. Each one is a price-bearing input/output that
+# multiple stocks expose to. The benchmark_ticker is a public ETF or futures
+# proxy used by the validator (Phase 6 backtest validation step).
+# Lines starting with # are skipped by the loader.
+
+# ─── Energy ──────────────────────────────────────────────────────────────
+crude_oil,Crude Oil (WTI),barrel,USO,WTI futures via United States Oil Fund
+brent_oil,Crude Oil (Brent),barrel,BNO,Brent futures via United States Brent Oil Fund
+natural_gas,Natural Gas (Henry Hub),mmbtu,UNG,US Natural Gas Fund
+gasoline,Gasoline (RBOB),gallon,UGA,US Gasoline Fund
+diesel,Diesel / Heating Oil,gallon,UHN,heating-oil fund (illiquid; use crude_oil as proxy)
+coal,Thermal Coal,ton,KOL,Global X Coal Miners ETF
+uranium,Uranium U3O8,pound,URA,Global X Uranium ETF
+
+# ─── Industrial / Precious Metals ───────────────────────────────────────
+copper,Copper,pound,COPX,Global X Copper Miners ETF
+gold,Gold,ounce,GLD,SPDR Gold Trust
+silver,Silver,ounce,SLV,iShares Silver Trust
+palladium,Palladium,ounce,PALL,abrdn Palladium ETF
+platinum,Platinum,ounce,PPLT,abrdn Platinum ETF
+nickel,Nickel,ton,JJN,iPath Nickel ETN
+cobalt,Cobalt,ton,BATT,Amplify Lithium & Battery ETF (proxy)
+aluminum,Aluminum,ton,JJU,iPath Aluminum ETN (illiquid)
+steel,Steel,ton,SLX,VanEck Steel ETF
+iron_ore,Iron Ore,ton,PICK,iShares MSCI Global Metals & Mining (proxy)
+lithium,Lithium Carbonate,ton,LIT,Global X Lithium & Battery Tech ETF
+rare_earths,Rare Earth Elements,ton,REMX,VanEck Rare Earth/Strategic Metals ETF
+
+# ─── Agriculture ─────────────────────────────────────────────────────────
+wheat,Wheat,bushel,WEAT,Teucrium Wheat Fund
+corn,Corn,bushel,CORN,Teucrium Corn Fund
+soybeans,Soybeans,bushel,SOYB,Teucrium Soybean Fund
+coffee,Coffee,pound,JO,iPath Coffee ETN
+sugar,Sugar,pound,CANE,Teucrium Sugar Fund
+cotton,Cotton,pound,BAL,iPath Cotton ETN
+cocoa,Cocoa,ton,NIB,iPath Cocoa ETN
+
+# ─── Industrial / Soft ──────────────────────────────────────────────────
+lumber,Lumber,thousand-board-feet,WOOD,iShares Global Timber & Forestry ETF
+ammonia,Ammonia / Urea (fertilizer feedstock),ton,,no liquid public ETF; track CF / NTR as proxy
+phosphate,Phosphate Rock,ton,,track MOS as proxy
+potash,Potash,ton,,track NTR / MOS as proxy
+
+# ─── Other ──────────────────────────────────────────────────────────────
+hydrogen,Hydrogen H2,kg,HDRO,Defiance Next Gen H2 ETF
+helium,Helium He,liter,,no liquid ETF

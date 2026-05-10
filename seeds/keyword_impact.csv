@@ -1,0 +1,258 @@
+keyword,industry_code,target_stock,polarity,weight,domain,notes
+# Format: keyword,industry_code,target_stock,polarity (-1..1),weight (0..1),domain,notes
+# Either industry_code OR target_stock must be set (CHECK constraint).
+# polarity: +1 = bullish, -1 = bearish, magnitude = strength.
+# weight: keyword strength (how much this row contributes when keyword fires).
+# Comments start with '#' and are skipped by loader.
+
+# ─── AI / Data Centers ───────────────────────────────────────────────────
+AI,Semiconductors,,0.95,0.90,ai,direct GPU beneficiaries
+AI,Semiconductor Equipment & Materials,,0.85,0.80,ai,upstream tooling (TSM/ASML)
+AI,Software—Infrastructure,,0.70,0.75,ai,cloud + AI infra software
+AI,Electrical Equipment & Parts,,0.65,0.70,ai,DC power infrastructure
+AI,Utilities—Regulated Electric,,0.60,0.65,ai,DC power demand
+AI,Utilities—Renewable,,0.55,0.60,ai,green PPAs for hyperscalers
+AI,Uranium,,0.55,0.60,ai,nuclear PPA demand
+AI,REIT—Specialty,,0.55,0.60,ai,data center REITs (DLR/EQIX)
+AI,Engineering & Construction,,0.50,0.50,ai,DC build-out general contractors
+AI,Communication Equipment,,0.55,0.60,ai,networking switches (ANET)
+GPU,Semiconductors,,0.95,0.90,ai,direct
+data center,REIT—Specialty,,0.85,0.80,ai,DLR/EQIX/IRM
+data center,Utilities—Regulated Electric,,0.70,0.65,ai,power demand
+data center,Electrical Equipment & Parts,,0.75,0.70,ai,VRT/GEV/ETN
+hyperscaler,Software—Infrastructure,,0.70,0.65,ai,cloud platforms
+hyperscaler,Semiconductors,,0.85,0.80,ai,GPU buyers
+training cluster,Semiconductors,,0.90,0.85,ai,AI compute
+inference,Semiconductors,,0.75,0.70,ai,inference accelerators
+
+# ─── Oil & Energy ────────────────────────────────────────────────────────
+oil,Oil & Gas E&P,,0.85,0.80,oil,upstream producers
+oil,Oil & Gas Integrated,,0.80,0.75,oil,majors
+oil,Oil & Gas Refining & Marketing,,0.55,0.60,oil,refiners (mixed - margin compression vs revenue)
+oil,Airlines,,-0.75,0.80,oil,fuel cost (DAL/UAL/AAL)
+oil,Trucking,,-0.55,0.60,oil,diesel cost
+oil,Auto Manufacturers,,-0.45,0.55,oil,gas prices hurt ICE demand
+oil,Marine Shipping,,-0.55,0.60,oil,bunker fuel cost
+crude,Oil & Gas E&P,,0.85,0.80,oil,
+crude,Oil & Gas Integrated,,0.80,0.75,oil,
+oil refinery,Oil & Gas Refining & Marketing,,0.70,0.70,oil,refining margins benefit on crude shock
+oil refinery,Oil & Gas E&P,,0.55,0.60,oil,
+gas,Oil & Gas E&P,,0.65,0.70,oil,nat gas producers
+gas,Oil & Gas Midstream,,0.55,0.60,oil,LNG export volume
+gas,Utilities—Regulated Gas,,-0.50,0.60,oil,cost squeeze on regulated utilities
+gas,Agricultural Inputs,,0.65,0.65,oil,fertilizer cost squeeze flips to revenue tailwind (CF/MOS/NTR)
+gas,Chemicals,,-0.55,0.60,oil,feedstock cost increase
+gas,Steel,,-0.50,0.55,oil,energy-intensive production
+fertilizer,Agricultural Inputs,,0.85,0.80,oil,direct
+natural gas,Oil & Gas E&P,,0.65,0.70,oil,
+natural gas,Agricultural Inputs,,0.65,0.65,oil,feedstock
+LNG,Oil & Gas Midstream,,0.85,0.80,oil,export terminals
+output cut,Oil & Gas E&P,,0.70,0.70,oil,co-occur with oil
+OPEC,Oil & Gas E&P,,0.65,0.65,oil,
+OPEC,Oil & Gas Integrated,,0.60,0.60,oil,
+oilfield,Oil & Gas Equipment & Services,,0.55,0.60,oil,SLB/HAL/BKR
+
+# ─── War / Geopolitics ───────────────────────────────────────────────────
+war,Aerospace & Defense,,0.85,0.85,war,LMT/NOC/RTX/GD/HII
+war,Oil & Gas E&P,,0.55,0.60,war,supply disruption fear
+war,Airlines,,-0.55,0.65,war,route disruption
+war,Travel Services,,-0.45,0.55,war,demand softening
+missile,Aerospace & Defense,,0.80,0.80,war,
+drone strike,Aerospace & Defense,,0.65,0.70,war,
+defense,Aerospace & Defense,,0.85,0.80,war,
+military,Aerospace & Defense,,0.75,0.75,war,
+sanctions,Aerospace & Defense,,0.45,0.55,war,
+sanctions,Oil & Gas E&P,,0.40,0.50,war,supply tightness
+invasion,Aerospace & Defense,,0.85,0.85,war,
+invasion,Oil & Gas E&P,,0.55,0.60,war,
+nuclear,Aerospace & Defense,,0.55,0.60,war,
+nuclear,Uranium,,0.85,0.85,war,
+ammunition,Aerospace & Defense,,0.85,0.85,war,
+hypersonic,Aerospace & Defense,,0.75,0.80,war,
+shipyard,Aerospace & Defense,,0.65,0.70,war,
+cybersecurity,Software—Infrastructure,,0.75,0.75,war,PANW/CRWD/ZS
+cyberattack,Software—Infrastructure,,0.75,0.75,war,demand spike for security
+
+# ─── Tariffs / Trade Wars ────────────────────────────────────────────────
+tariff,Steel,,0.75,0.75,tariff,domestic producers protected
+tariff,Aluminum,,0.70,0.70,tariff,
+tariff,Auto Manufacturers,,-0.55,0.65,tariff,higher input costs (mixed for domestic)
+tariff,Internet Retail,,-0.55,0.60,tariff,import-dependent
+tariff,Semiconductors,,-0.40,0.50,tariff,China-revenue exposed
+tariff,Specialty Retail,,-0.50,0.55,tariff,import margins compress
+tariff,Apparel Retail,,-0.55,0.60,tariff,Asia-sourced apparel cost
+tariff,Footwear & Accessories,,-0.55,0.60,tariff,
+tariff,Gold,,0.45,0.55,tariff,risk-off / safe haven
+tariff,Industrial Distribution,,0.30,0.40,tariff,domestic substitution
+trade war,Steel,,0.65,0.65,tariff,
+trade war,Auto Manufacturers,,-0.45,0.55,tariff,
+trade war,Internet Retail,,-0.55,0.60,tariff,
+import duty,Steel,,0.65,0.65,tariff,
+export controls,Semiconductors,,-0.55,0.65,tariff,China revenue affected (NVDA/AMD)
+section 301,Steel,,0.65,0.70,tariff,
+chip export ban,Semiconductors,,-0.65,0.70,tariff,
+
+# ─── Rates / Fed ─────────────────────────────────────────────────────────
+rate cut,Software—Application,,0.55,0.60,rates,growth/tech beneficiaries
+rate cut,Software—Infrastructure,,0.55,0.60,rates,growth/tech
+rate cut,REIT—Industrial,,0.65,0.70,rates,REITs benefit
+rate cut,REIT—Residential,,0.65,0.70,rates,
+rate cut,REIT—Specialty,,0.55,0.60,rates,
+rate cut,Banks—Diversified,,-0.40,0.55,rates,NIM compression
+rate cut,Banks—Regional,,-0.55,0.60,rates,more NIM-sensitive
+rate cut,Gold,,0.55,0.65,rates,non-yielding asset benefits
+rate hike,Banks—Diversified,,0.55,0.60,rates,NIM expansion
+rate hike,Banks—Regional,,0.65,0.65,rates,
+rate hike,REIT—Industrial,,-0.55,0.65,rates,
+rate hike,Software—Application,,-0.45,0.55,rates,growth multiple compression
+fed cuts,Software—Infrastructure,,0.55,0.60,rates,
+fed cuts,REIT—Specialty,,0.55,0.60,rates,
+fed hikes,Banks—Diversified,,0.55,0.55,rates,
+QE,Gold,,0.65,0.65,rates,inflation hedge
+QE,Software—Infrastructure,,0.55,0.55,rates,liquidity support
+QT,Gold,,-0.35,0.45,rates,
+yield curve inversion,Banks—Diversified,,-0.55,0.60,rates,recession warning
+yield curve inversion,Gold,,0.45,0.55,rates,
+
+# ─── FDA / Drug Approvals ────────────────────────────────────────────────
+FDA approves,Drug Manufacturers—General,,0.30,0.50,fda,industry-level reaction (target_stock more important)
+FDA approves,Biotechnology,,0.35,0.55,fda,competitor pressure varies
+FDA rejects,Drug Manufacturers—General,,-0.25,0.45,fda,
+FDA rejects,Biotechnology,,-0.25,0.45,fda,competitor benefit if substitute
+FDA panel,Drug Manufacturers—General,,0.20,0.35,fda,advance signal
+clinical trial,Biotechnology,,0.30,0.45,fda,depends on result
+phase 3,Biotechnology,,0.40,0.50,fda,late-stage
+breakthrough designation,Biotechnology,,0.65,0.65,fda,
+
+# ─── Court Rulings / Antitrust / M&A ─────────────────────────────────────
+antitrust,Internet Content & Information,,-0.55,0.65,court,big tech (GOOG/META)
+antitrust ruling,Internet Content & Information,,-0.65,0.70,court,
+DOJ lawsuit,Internet Content & Information,,-0.55,0.60,court,
+merger blocked,Capital Markets,,-0.20,0.35,court,deal dependent
+merger approved,Capital Markets,,0.20,0.35,court,
+FTC blocks,Internet Content & Information,,-0.55,0.60,court,
+patent invalidated,Drug Manufacturers—General,,-0.65,0.70,court,
+patent invalidated,Drug Manufacturers—Specialty & Generic,,0.45,0.55,court,generic benefit
+court ruling,Internet Content & Information,,-0.30,0.45,court,
+chevron deference,Drug Manufacturers—General,,0.25,0.40,court,easier regulatory pushback
+chevron deference,Healthcare Plans,,0.20,0.35,court,
+
+# ─── GLP-1 / Obesity Drugs ───────────────────────────────────────────────
+GLP-1,Drug Manufacturers—General,,0.55,0.65,glp1,LLY/NVO direct
+GLP-1,Packaged Foods,,-0.45,0.60,glp1,snack consumption decline
+GLP-1,Confectioners,,-0.45,0.60,glp1,
+GLP-1,Restaurants,,-0.30,0.45,glp1,fast food / casual dining
+GLP-1,Beverages—Non-Alcoholic,,-0.35,0.45,glp1,sugary drink consumption
+ozempic,Drug Manufacturers—General,,0.55,0.65,glp1,NVO
+wegovy,Drug Manufacturers—General,,0.55,0.65,glp1,NVO
+mounjaro,Drug Manufacturers—General,,0.55,0.65,glp1,LLY
+zepbound,Drug Manufacturers—General,,0.55,0.65,glp1,LLY
+weight loss,Drug Manufacturers—General,,0.50,0.60,glp1,
+weight loss,Packaged Foods,,-0.40,0.55,glp1,
+weight loss,Medical Devices,,-0.30,0.45,glp1,bariatric surgery alternative
+
+# ─── Crypto / Digital Assets ─────────────────────────────────────────────
+bitcoin,Capital Markets,,0.30,0.45,crypto,COIN/HOOD/MSTR via market cap
+bitcoin,Semiconductors,,0.40,0.50,crypto,mining demand for chips
+crypto,Capital Markets,,0.30,0.45,crypto,
+crypto rally,Capital Markets,,0.55,0.60,crypto,
+crypto crash,Capital Markets,,-0.65,0.70,crypto,
+ETF approval,Capital Markets,,0.50,0.55,crypto,
+SEC approves,Capital Markets,,0.30,0.45,crypto,
+mining,Semiconductors,,0.30,0.40,crypto,GPU mining demand
+
+# ─── Climate / Weather / Hurricanes ──────────────────────────────────────
+hurricane,Insurance—Property & Casualty,,-0.85,0.80,climate,TRV/ALL/AIG
+hurricane,Insurance—Reinsurance,,-0.85,0.80,climate,RNR/RGA
+hurricane,Home Improvement Retail,,0.65,0.65,climate,HD/LOW restocking
+hurricane,Lumber & Wood Production,,0.65,0.65,climate,WY/LPX
+hurricane,Building Products & Equipment,,0.55,0.60,climate,reconstruction
+hurricane,Oil & Gas E&P,,0.45,0.55,climate,Gulf rig disruption
+drought,Agricultural Inputs,,0.45,0.55,climate,fertilizer demand if crops affected
+drought,Farm Products,,-0.55,0.60,climate,yield decline
+heat wave,Utilities—Regulated Electric,,0.55,0.55,climate,demand peak
+wildfire,Insurance—Property & Casualty,,-0.65,0.70,climate,California-heavy
+flood,Insurance—Property & Casualty,,-0.65,0.70,climate,
+cold snap,Utilities—Regulated Gas,,0.55,0.55,climate,heating demand
+cold snap,Oil & Gas Midstream,,0.45,0.50,climate,gas transport
+COP,Solar,,0.50,0.55,climate,UN climate conference
+COP,Utilities—Renewable,,0.45,0.50,climate,
+climate policy,Solar,,0.55,0.55,climate,
+IRA,Solar,,0.65,0.65,climate,Inflation Reduction Act tailwind
+IRA,Utilities—Renewable,,0.55,0.55,climate,
+
+# ─── Mining / Commodities ────────────────────────────────────────────────
+copper,Copper,,0.85,0.80,mining,FCX/SCCO direct
+copper,Auto Manufacturers,,-0.30,0.45,mining,EV input cost
+copper supercycle,Copper,,0.85,0.80,mining,
+lithium,Other Industrial Metals & Mining,,0.65,0.70,mining,ALB/SQM
+lithium,Auto Manufacturers,,-0.30,0.45,mining,EV input cost
+gold,Gold,,0.85,0.80,mining,NEM/GOLD/AEM
+gold,Other Precious Metals & Mining,,0.55,0.60,mining,
+silver,Silver,,0.75,0.75,mining,
+uranium,Uranium,,0.85,0.80,mining,CCJ/UEC
+rare earths,Other Industrial Metals & Mining,,0.65,0.65,mining,MP
+rare earths,Aerospace & Defense,,-0.30,0.45,mining,supply concern
+
+# ─── Demographic / Migration / Aging ─────────────────────────────────────
+aging population,Healthcare Plans,,0.45,0.50,demo,
+aging population,Drug Manufacturers—General,,0.35,0.45,demo,
+aging population,Medical Devices,,0.40,0.50,demo,
+aging population,REIT—Healthcare Facilities,,0.45,0.50,demo,
+immigration,Restaurants,,0.20,0.35,demo,labor supply
+immigration,Building Products & Equipment,,0.25,0.40,demo,construction labor
+immigration policy,Discount Stores,,0.20,0.35,demo,low-cost labor
+
+# ─── Strikes / Labor ─────────────────────────────────────────────────────
+strike,Auto Manufacturers,,-0.55,0.65,strike,UAW
+port strike,Marine Shipping,,-0.65,0.70,strike,longshoremen
+port strike,Internet Retail,,-0.50,0.60,strike,supply chain
+union,Auto Manufacturers,,-0.30,0.45,strike,
+labor strike,Industrial Distribution,,-0.40,0.50,strike,
+
+# ─── Phase 4: Regulatory / FDA / Court rulings (extended) ────────────────
+# Drug-specific FDA events
+PDUFA,Drug Manufacturers—General,,0.30,0.45,fda,FDA action date approaching — binary outcome
+PDUFA,Biotechnology,,0.35,0.50,fda,
+priority review,Biotechnology,,0.55,0.60,fda,FDA fast-track positive signal
+breakthrough therapy,Biotechnology,,0.65,0.70,fda,FDA designation
+boxed warning,Drug Manufacturers—General,,-0.55,0.65,fda,FDA black-box warning hurts script volume
+drug recall,Drug Manufacturers—General,,-0.65,0.70,fda,
+drug recall,Pharmaceutical Retailers,,-0.30,0.40,fda,
+biosimilar,Drug Manufacturers—General,,-0.55,0.65,fda,branded biologic loses share
+biosimilar,Drug Manufacturers—Specialty & Generic,,0.55,0.65,fda,generic / specialty benefits
+ANDA approval,Drug Manufacturers—Specialty & Generic,,0.55,0.60,fda,generic drug approval
+patent expiration,Drug Manufacturers—General,,-0.55,0.65,fda,branded loses exclusivity
+patent expiration,Drug Manufacturers—Specialty & Generic,,0.55,0.65,fda,generic benefits
+
+# Antitrust / DOJ / FTC
+DOJ probe,Internet Content & Information,,-0.55,0.60,court,big tech antitrust scrutiny
+DOJ probe,Banks—Diversified,,-0.30,0.45,court,
+SEC investigation,Capital Markets,,-0.45,0.55,court,
+FTC second request,Capital Markets,,-0.30,0.45,court,merger deal slowdown
+consent decree,Internet Content & Information,,-0.45,0.55,court,
+class action,Drug Manufacturers—General,,-0.30,0.45,court,
+Supreme Court,Drug Manufacturers—General,,0.20,0.35,court,broad ruling
+appellate court,Internet Content & Information,,-0.20,0.35,court,
+
+# Environmental / EPA
+EPA rule,Oil & Gas E&P,,-0.55,0.60,regulatory,emissions / methane regulation
+EPA rule,Utilities—Regulated Electric,,-0.45,0.55,regulatory,coal phaseout cost
+EPA rule,Coking Coal,,-0.55,0.60,regulatory,
+EPA rule,Solar,,0.55,0.55,regulatory,renewable mandate
+methane,Oil & Gas E&P,,-0.45,0.55,regulatory,
+methane,Oil & Gas Midstream,,-0.45,0.55,regulatory,
+emissions standard,Auto Manufacturers,,-0.35,0.50,regulatory,fleet compliance cost
+emissions standard,Solar,,0.35,0.50,regulatory,
+
+# Trade / sanctions specifics
+section 232,Steel,,0.65,0.65,tariff,national security tariff
+section 232,Aluminum,,0.65,0.65,tariff,
+chip export controls,Semiconductors,,-0.65,0.70,tariff,US-China advanced node restrictions
+chip export controls,Semiconductor Equipment & Materials,,-0.55,0.65,tariff,ASML EUV to China restricted
+
+# Telecom / FCC
+FCC ruling,Telecom Services,,-0.30,0.45,regulatory,
+spectrum auction,Telecom Services,,-0.30,0.45,regulatory,capex pressure
+spectrum auction,REIT—Specialty,,0.30,0.40,regulatory,tower REITs gain leasing demand
+

@@ -118,17 +118,21 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
             strengths=[], weaknesses=["Insufficient data for full fundamental analysis"],
         )
 
-    # Geopolitical risk (uses cached Tavily data)
-    geo_data = _safe(lambda: _fetch_geopolitical_for_stock(symbol, stock))
+    # Enrichment calls run in parallel (each is independent + I/O-bound)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        f_geo = ex.submit(lambda: _safe(lambda: _fetch_geopolitical_for_stock(symbol, stock)))
+        f_analyst = ex.submit(lambda: _safe(lambda: _fetch_analyst_data(symbol)))
+        f_holders = ex.submit(lambda: _safe(lambda: _fetch_holders_data(symbol)))
+        f_buzz = ex.submit(lambda: _safe(lambda: _fetch_community_buzz(symbol)))
+        f_short = ex.submit(lambda: _safe(lambda: gw.get_short_interest(symbol)))
+        f_job = ex.submit(lambda: _safe(lambda: _fetch_job_trend(symbol)))
 
-    # Analyst ratings (from Yahoo Finance)
-    analyst_data = _safe(lambda: _fetch_analyst_data(symbol))
-
-    # Institutional holders
-    holders_data = _safe(lambda: _fetch_holders_data(symbol))
-
-    # Community buzz
-    buzz_data = _safe(lambda: _fetch_community_buzz(symbol))
+    geo_data = f_geo.result()
+    analyst_data = f_analyst.result()
+    holders_data = f_holders.result()
+    buzz_data = f_buzz.result()
+    short_interest = f_short.result()
+    job_trend = f_job.result()
 
     report = build_report(
         stock=stock,
@@ -145,8 +149,8 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
         analyst_data=analyst_data,
         holders_data=holders_data,
         community_buzz=buzz_data,
-        short_interest=_safe(lambda: gw.get_short_interest(symbol)),
-        job_trend=_safe(lambda: _fetch_job_trend(symbol)),
+        short_interest=short_interest,
+        job_trend=job_trend,
     )
 
     # ── Export ──────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import pandas as pd
 import ta
 
 from src.models.backtest_types import BacktestResult, BacktestTrade
+from src.utils.point_in_time import enforce
 
 
 # All supported signals with their detection logic
@@ -38,6 +39,7 @@ SIGNALS = {
     "vix_low": {"direction": "buy", "description": "VIX below 20 (low fear, risk-on)", "category": "macro"},
     "vix_high": {"direction": "sell", "description": "VIX above 30 (high fear, risk-off)", "category": "macro"},
     "vix_spike": {"direction": "sell", "description": "VIX jumps 20%+ in a day (panic)", "category": "macro"},
+    "sector_rotation": {"direction": "buy", "description": "Stock's sector shows new money inflow (relative strength turn)", "category": "macro"},
     # Insider (Phase 2)
     "insider_buy": {"direction": "buy", "description": "Corporate insider purchased shares", "category": "smart_money"},
     "insider_sell": {"direction": "sell", "description": "Corporate insider sold shares", "category": "smart_money"},
@@ -402,6 +404,9 @@ def _get_event_dates(symbol: str, signal_name: str, available_dates: list[str]) 
     if signal_name in ("vix_low", "vix_high", "vix_spike"):
         return _get_vix_event_dates(signal_name, available_dates)
 
+    if signal_name == "sector_rotation":
+        return _get_sector_rotation_dates(df, available_dates)
+
     if signal_name in ("insider_buy", "insider_sell"):
         return _get_insider_event_dates(symbol, signal_name)
 
@@ -441,8 +446,13 @@ def _get_earnings_event_dates(symbol: str, signal_name: str) -> list[str]:
         if ed is None or ed.empty:
             return []
 
+        ed = ed.reset_index()
+        date_col = ed.columns[0]
+        ed = enforce(ed, date_col, source="yfinance:earnings_dates")
+
         dates = []
-        for date_idx, row in ed.iterrows():
+        for _, row in ed.iterrows():
+            date_idx = row[date_col]
             eps_est = row.get("EPS Estimate")
             eps_act = row.get("Reported EPS")
             if eps_est is None or eps_act is None:
@@ -476,6 +486,7 @@ def _get_vix_event_dates(signal_name: str, available_dates: list[str]) -> list[s
             vix.columns = vix.columns.get_level_values(0)
 
         vix = vix.reset_index()
+        vix = enforce(vix, "Date", source="yfinance:^VIX")
         vix["date_str"] = vix["Date"].dt.strftime("%Y-%m-%d")
         avail_set = set(available_dates)
 
@@ -503,6 +514,32 @@ def _get_vix_event_dates(signal_name: str, available_dates: list[str]) -> list[s
         return []
 
 
+def _get_sector_rotation_dates(df: pd.DataFrame, available_dates: list[str]) -> list[str]:
+    """Detect sector rotation — stock's 20-day relative strength turns positive."""
+    try:
+        closes = df["close"].astype(float)
+        if len(closes) < 25:
+            return []
+        # Relative strength: stock's 20d return vs its 50d return
+        # When short-term outperforms long-term = fresh inflow / rotation into this name
+        ret_20 = closes.pct_change(20)
+        ret_50 = closes.pct_change(50) if len(closes) >= 55 else closes.pct_change(len(closes) - 5)
+        rs = ret_20 - ret_50  # Positive = short-term outperforming (fresh inflow)
+
+        dates = []
+        for i in range(1, len(rs)):
+            d = df["date"].iloc[i]
+            if d not in available_dates:
+                continue
+            cur = rs.iloc[i]
+            prev = rs.iloc[i - 1]
+            if not pd.isna(cur) and not pd.isna(prev) and cur > 0 and prev <= 0:
+                dates.append(d)
+        return dates
+    except Exception:
+        return []
+
+
 def _get_insider_event_dates(symbol: str, signal_name: str) -> list[str]:
     """Get dates when insiders bought or sold."""
     try:
@@ -515,6 +552,7 @@ def _get_insider_event_dates(symbol: str, signal_name: str) -> list[str]:
                 ticker = yf.Ticker(symbol)
                 insider = ticker.insider_transactions
                 if insider is not None and not insider.empty:
+                    insider = enforce(insider, "Start Date", source="yfinance:insider_transactions")
                     dates = []
                     for _, row in insider.iterrows():
                         txn = str(row.get("Transaction", "")).lower()
@@ -791,6 +829,7 @@ def _get_institutional_event_dates(symbol: str, signal_name: str) -> list[str]:
         if ih is None or ih.empty:
             return []
 
+        ih = enforce(ih, "Date Reported", source="yfinance:institutional_holders")
         dates = []
         for _, row in ih.iterrows():
             pct_change = float(row.get("pctChange", 0))

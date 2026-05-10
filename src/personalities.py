@@ -60,7 +60,7 @@ AGENT_PERSONALITIES = {
         "weaknesses": ["Often early (catching falling knives)", "Low win rate", "Emotionally difficult"],
         "prioritizes": ["High short interest (>15%)", "Bearish community sentiment", "RSI < 25 extreme oversold", "Stocks down 30%+ with intact fundamentals", "Fear & Greed index at extreme fear"],
         "avoids": ["Consensus trades", "Stocks everyone agrees on", "Following the crowd"],
-        "backtest_signals": ["rsi_oversold", "bb_lower_touch", "vix_high"],
+        "backtest_signals": ["rsi_oversold", "bb_lower_touch", "vix_high", "news_bearish_spike", "community_bearish"],
         "risk_tolerance": "aggressive",
         "ideal_market": "Bear market bottoms / panic selloffs",
         "historical_edge": "Best at market bottoms (Mar 2020, Oct 2022), worst in steady uptrends",
@@ -84,6 +84,93 @@ AGENT_PERSONALITIES = {
         "risk_tolerance": "moderate",
         "ideal_market": "Transitional / rotation periods",
         "historical_edge": "Best during regime changes (rate hikes, geopolitical shifts)",
+    },
+    "disruption": {
+        "name": "Disruption Hunter",
+        "icon": "🔗",
+        "color": "#06b6d4",
+        "tagline": "Find the picks and shovels — infrastructure wins the gold rush",
+        "philosophy": (
+            "Doesn't chase the obvious disruptors — finds the infrastructure stocks that ENABLE disruption. "
+            "When everyone buys NVDA, the Disruption Hunter buys the company making the cooling systems, "
+            "the optical fiber, or the memory chips. Maps 1-level dependency chains: AI needs compute → "
+            "compute needs memory → memory needs fabs. The picks-and-shovels plays have lower P/E, "
+            "steadier revenue, and less downside than the headline stocks."
+        ),
+        "strengths": ["Finds hidden winners", "Lower valuations than direct plays", "Infrastructure = recurring revenue"],
+        "weaknesses": ["Slower upside than direct disruptors", "Theme can fizzle", "Requires accurate chain mapping"],
+        "prioritizes": ["Infrastructure/supply chain for active disruption themes", "Revenue tied to megatrend but lower P/E", "Picks-and-shovels over direct plays", "Companies enabling multiple disruptors", "Capacity constraints (who can't build fast enough?)"],
+        "avoids": ["Obvious headline disruptors (everyone already owns them)", "Companies with no clear revenue link", "Pure speculation plays"],
+        "backtest_signals": ["disruption_tailwind", "volume_spike", "macd_bullish", "golden_cross"],
+        "risk_tolerance": "moderate",
+        "ideal_market": "Innovation cycles / theme-driven markets",
+        "historical_edge": "Best during tech booms (2023-2024 AI infra), worst when themes rotate out",
+        "data_focus": "disruption_chain",
+    },
+    "insider": {
+        "name": "Insider Shadow",
+        "icon": "🕵️",
+        "color": "#ec4899",
+        "tagline": "Follow the money — insiders know more than analysts",
+        "philosophy": (
+            "Tracks what corporate insiders (CEO, CFO, directors), congress members, and hedge funds are "
+            "actually BUYING with their own money. Talk is cheap — when a CEO puts $2M of personal wealth "
+            "into their own stock, that's the strongest signal. Congress members on relevant committees "
+            "have information advantages. Cluster buys (2+ insiders in 7 days) historically win 70%+ of the time. "
+            "Priority: Insider trades > Congressional trades > Institutional 13F filings."
+        ),
+        "strengths": ["Highest conviction signals", "70%+ win rate on cluster buys", "Information edge over public"],
+        "weaknesses": ["Low frequency (insiders don't trade daily)", "13F filings are 45 days delayed", "Insiders can be wrong"],
+        "prioritizes": ["Cluster buys (2+ insiders within 7 days)", "CEO/CFO personal purchases > $500K", "Bipartisan congressional buying", "Hedge fund accumulation (new positions)", "Convergence: insider + congress + institutional all buying"],
+        "avoids": ["Insider sells (often tax/diversification, not bearish)", "Single small purchases", "13F-only signals (too delayed)"],
+        "backtest_signals": ["insider_buy", "congress_buy", "institutions_accumulating", "earnings_beat"],
+        "risk_tolerance": "moderate",
+        "ideal_market": "Any market — insider buying works in all conditions",
+        "historical_edge": "Consistent alpha in all market regimes, strongest before earnings catalysts",
+        "data_focus": "smart_money",
+    },
+    "options": {
+        "name": "Options Whisperer",
+        "icon": "📡",
+        "color": "#f97316",
+        "tagline": "Big money talks in options — learn to listen",
+        "philosophy": (
+            "Reads the options market for directional bets that precede stock moves. When someone "
+            "spends millions on call options before an announcement, that's not a guess — that's conviction. "
+            "Tracks unusual activity (volume 3x+ open interest), extreme put/call ratios, and IV rank spikes. "
+            "The options market is where informed money positions BEFORE the stock moves."
+        ),
+        "strengths": ["Catches moves before they happen", "Quantifiable signals", "Works on any timeframe"],
+        "weaknesses": ["Can be hedging (not directional)", "Options expire worthless", "Requires Polygon API"],
+        "prioritizes": ["Unusual call volume (volume/OI >= 3x)", "Put/call ratio < 0.5 (very bullish)", "IV rank > 80th percentile (event expected)", "Large premium trades ($500K+)", "Bullish flow + technical confirmation"],
+        "avoids": ["Normal hedging activity", "Low volume options", "Put/call ratio in neutral range (0.7-1.0)"],
+        "backtest_signals": ["options_bullish", "volume_spike", "support_bounce", "macd_bullish"],
+        "risk_tolerance": "aggressive",
+        "ideal_market": "Pre-earnings / pre-event periods",
+        "historical_edge": "Best before binary events (earnings, FDA, M&A), worst in low-vol grinding markets",
+        "data_focus": "options_flow",
+    },
+    "flow": {
+        "name": "Flow Tracker",
+        "icon": "💧",
+        "color": "#14b8a6",
+        "tagline": "See what institutions do, not what they say",
+        "philosophy": (
+            "Reads Level 2 market microstructure to detect institutional accumulation before it shows up "
+            "in price or technicals. Looks for the smart accumulation pattern: buy pressure (buy/sell ratio > 1.5) "
+            "+ price near VWAP (institutions buying at fair value) + high liquidity (easy entry). "
+            "When dark pool blocks and order book imbalance both point the same direction, institutions "
+            "are building positions that will move the stock in days."
+        ),
+        "strengths": ["Sees institutional flow in real-time", "Leads technicals by hours/days", "Hard to fake"],
+        "weaknesses": ["Requires Polygon API", "Short-lived signals", "Free tier data limitations"],
+        "prioritizes": ["Buy/sell ratio > 1.5 (buy pressure)", "Price near/below VWAP (quiet accumulation)", "Large trades > 10K shares (institutional blocks)", "High liquidity score (easy entry/exit)", "Order book imbalance favoring buyers"],
+        "avoids": ["Low liquidity stocks (unreliable microstructure)", "Balanced order books (no edge)", "Stocks above VWAP with sell pressure"],
+        "backtest_signals": ["volume_spike", "support_bounce", "sma50_cross_up", "macd_bullish"],
+        "risk_tolerance": "moderate",
+        "ideal_market": "Any liquid market — works best in large/mid cap stocks",
+        "historical_edge": "Best when institutions rotate (sector shifts, rebalancing), worst in retail-driven manias",
+        "data_focus": "microstructure",
     },
 }
 

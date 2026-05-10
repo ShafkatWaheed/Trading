@@ -1,8 +1,25 @@
 __pycache__/
 *.pyc
+*.pyo
 .env
 trading.db
 reports/*.pdf
 reports/*.html
+reports/*.json
 .venv/
 .claude/settings.local.json
+
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Logs / OS / editors
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Sensitive runtime artifacts
+session_qr.png
+session_qr.*
