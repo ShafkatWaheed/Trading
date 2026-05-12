@@ -3,9 +3,11 @@ from fastapi import APIRouter, Query
 
 from api.schemas import (
     MarketPulseResponse, CalendarResponse, GeopoliticalResponse, DisruptionResponse,
+    MarketDashboardResponse, MarketTakeawayResponse, MarketNewsResponse,
 )
 from api.services import (
     market_service, calendar_service, events_service, disruption_service,
+    market_dashboard_service, market_takeaway_service, market_news_service,
 )
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -32,3 +34,18 @@ def market_geopolitical() -> dict:
 @router.get("/disruption", response_model=DisruptionResponse)
 def market_disruption() -> dict:
     return disruption_service.get_disruption_themes()
+
+
+@router.get("/dashboard", response_model=MarketDashboardResponse)
+def market_dashboard(force: bool = Query(False)) -> dict:
+    return market_dashboard_service.get_market_dashboard(force=force)
+
+
+@router.get("/takeaway", response_model=MarketTakeawayResponse)
+def market_takeaway(force: bool = Query(False)) -> dict:
+    return market_takeaway_service.get_market_takeaway(force=force)
+
+
+@router.get("/news", response_model=MarketNewsResponse)
+def market_news(force: bool = Query(False)) -> dict:
+    return market_news_service.get_market_news(force=force)

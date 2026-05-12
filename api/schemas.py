@@ -21,6 +21,9 @@ class SectorFlow(BaseModel):
     sector: str
     change_pct: float
     flow: str  # "inflow" | "outflow"
+    change_pct_prior: float | None = None
+    delta_pp: float | None = None
+    accel: str | None = None  # "accelerating" | "decelerating" | "steady" | None
 
 
 class SectorSummary(BaseModel):
@@ -73,6 +76,8 @@ class CalendarEvent(BaseModel):
 
 class CalendarResponse(BaseModel):
     events: list[CalendarEvent]
+    next_event: CalendarEvent | None = None
+    next_high_impact: CalendarEvent | None = None
     last_updated: str
 
 
@@ -558,6 +563,25 @@ class AiAnalystResponse(BaseModel):
     last_updated: str | None = None
 
 
+# ── AI Analyst — multi-stock ──────────────────────────────────────
+
+
+class AiAnalystMultiRequest(BaseModel):
+    symbols: list[str] = Field(..., min_length=1, max_length=8)
+    period: str = Field("1M", pattern="^(1D|1W|1M|3M|6M|1Y)$")
+    cycles: int = Field(default=8, ge=3, le=24)
+    mode: str = Field(default="single", pattern="^(single|multi)$")
+
+
+class AiAnalystMultiResponse(BaseModel):
+    period: str
+    mode: str
+    cycles: int
+    rows: list[AiAnalystResponse] = []
+    error: str | None = None
+    last_updated: str | None = None
+
+
 # ── Agent ─────────────────────────────────────────────────────────
 
 
@@ -839,7 +863,7 @@ class PortfolioExecuteResponse(BaseModel):
 # ── Walk-forward simulation ────────────────────────────────────────
 
 
-class PortfolioSimRequest(BaseModel):
+class WalkForwardSimRequest(BaseModel):
     start_date: str
     end_date: str
     cycle_days: int = Field(default=14, ge=5, le=60)
@@ -920,7 +944,7 @@ class PortfolioSimConfig(BaseModel):
     agents: list[str] = []
 
 
-class PortfolioSimResponse(BaseModel):
+class WalkForwardSimResponse(BaseModel):
     error: str | None = None
     config: PortfolioSimConfig | None = None
     summary: PortfolioSimSummary | None = None
@@ -1186,6 +1210,7 @@ class RiskNarrativeResponse(BaseModel):
     balance_sheet: str = ""
     macro_exposure: str = ""
     worst_case: str = ""
+    invalidates_if: str = ""
     risk_rating: int | None = None
     risk_label: str | None = None
     error: str | None = None
@@ -1209,3 +1234,384 @@ class EarningsExplainResponse(BaseModel):
     input_chars: int | None = None
     error: str | None = None
     raw: str | None = None
+
+
+class BubbleScoreComponents(BaseModel):
+    growth_gap: float
+    valuation: float
+    momentum: float
+
+
+class BubbleScoreMetrics(BaseModel):
+    price_change_1y_pct: float | None = None
+    price_change_3m_pct: float | None = None
+    revenue_growth_pct: float | None = None
+    earnings_growth_pct: float | None = None
+    growth_gap_pct: float | None = None
+    vibes_share_pct: float | None = None
+    fundamental_growth_pct: float | None = None
+    pe_ratio: float | None = None
+    ps_ratio: float | None = None
+    pb_ratio: float | None = None
+    pfcf_ratio: float | None = None
+
+
+class BubbleScoreResponse(BaseModel):
+    symbol: str
+    score: float
+    label: str
+    components: BubbleScoreComponents
+    metrics: BubbleScoreMetrics
+    verdict: str
+    reasons: list[str] = []
+    last_updated: str
+    from_cache: bool = False
+
+
+class BullNarrativeResponse(BaseModel):
+    symbol: str
+    growth_drivers: str = ""
+    competitive_moat: str = ""
+    multiple_expansion: str = ""
+    catalysts: str = ""
+    best_case: str = ""
+    invalidates_if: str = ""
+    error: str | None = None
+    raw: str | None = None
+    from_cache: bool = False
+
+
+class AnalystRatingsBreakdown(BaseModel):
+    strong_buy: int = 0
+    buy: int = 0
+    hold: int = 0
+    sell: int = 0
+    strong_sell: int = 0
+
+
+class AnalystConsensusResponse(BaseModel):
+    symbol: str
+    rating: str | None = None
+    rating_mean: float | None = None
+    analyst_count: int | None = None
+    current_price: float | None = None
+    target_mean: float | None = None
+    target_high: float | None = None
+    target_low: float | None = None
+    upside_pct: float | None = None
+    ratings_breakdown: AnalystRatingsBreakdown = AnalystRatingsBreakdown()
+    error: str | None = None
+    last_updated: str
+    from_cache: bool = False
+
+
+class PeerValuationRow(BaseModel):
+    symbol: str
+    is_self: bool = False
+    pe_ratio: float | None = None
+    ps_ratio: float | None = None
+    pfcf_ratio: float | None = None
+    price_change_1y_pct: float | None = None
+
+
+class PeerValuationMedians(BaseModel):
+    pe_ratio: float | None = None
+    ps_ratio: float | None = None
+    pfcf_ratio: float | None = None
+    price_change_1y_pct: float | None = None
+
+
+class PeerValuationResponse(BaseModel):
+    symbol: str
+    rows: list[PeerValuationRow]
+    medians: PeerValuationMedians
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Smart-money flow ──────────────────────────────────────────────
+
+
+class TopHolderRow(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    value_usd: float | None = None
+    pct_outstanding: float | None = None
+    pct_portfolio: float | None = None
+    as_of: str | None = None
+
+
+class InsiderTradeRow(BaseModel):
+    filer: str
+    title: str | None = None
+    transaction: str | None = None
+    shares: int | None = None
+    price: float | None = None
+    value_usd: float | None = None
+    transaction_date: str | None = None
+    filing_date: str | None = None
+
+
+class CongressTradeRow(BaseModel):
+    politician: str
+    party: str | None = None
+    chamber: str | None = None
+    state: str | None = None
+    transaction: str | None = None
+    amount_range: str | None = None
+    amount_low_usd: float | None = None
+    amount_high_usd: float | None = None
+    trade_date: str | None = None
+    filed_date: str | None = None
+    days_to_file: int | None = None
+    committees: list[str] = []
+
+
+class InstitutionalSection(BaseModel):
+    top_holders: list[TopHolderRow] = []
+    total_known_holders: int = 0
+    error: str | None = None
+
+
+class InsiderSection(BaseModel):
+    total_trades: int = 0
+    total_buys: int = 0
+    total_sells: int = 0
+    unique_insiders: int = 0
+    cluster_buy: bool = False
+    buy_value_usd: float | None = None
+    sell_value_usd: float | None = None
+    net_value_usd: float | None = None
+    signal: str = ""
+    recent_trades: list[InsiderTradeRow] = []
+    error: str | None = None
+
+
+class CongressSection(BaseModel):
+    total_trades: int = 0
+    total_buys: int = 0
+    total_sells: int = 0
+    unique_politicians: int = 0
+    net_sentiment: str = "neutral"
+    top_buyers: list[str] = []
+    top_sellers: list[str] = []
+    recent_trades: list[CongressTradeRow] = []
+    party_breakdown: dict[str, dict[str, int]] = {}
+    error: str | None = None
+
+
+class SmartMoneyResponse(BaseModel):
+    symbol: str
+    institutional: InstitutionalSection
+    insider: InsiderSection
+    congress: CongressSection
+    summary: str
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── News feed + catalyst calendar ─────────────────────────────────
+
+
+class NewsFeedItem(BaseModel):
+    title: str
+    snippet: str = ""
+    url: str = ""
+    source: str = ""
+    sentiment: str = "neutral"
+    sentiment_score: float = 0.0
+    published: str | None = None
+
+
+class NewsFeedResponse(BaseModel):
+    symbol: str
+    items: list[NewsFeedItem] = []
+    bull_count: int = 0
+    bear_count: int = 0
+    neutral_count: int = 0
+    net_sentiment: str = "no coverage"
+    net_score: float = 0.0
+    last_updated: str
+    from_cache: bool = False
+
+
+class CatalystEvent(BaseModel):
+    date: str
+    days_out: int
+    title: str
+    kind: str        # "earnings" | "dividend" | "macro" | "split"
+    weight: str      # "low" | "med" | "high" | "very_high"
+    detail: str | None = None
+    symbol_specific: bool = True
+
+
+class CatalystCalendarResponse(BaseModel):
+    symbol: str
+    horizon_days: int
+    events: list[CatalystEvent] = []
+    earnings_count: int = 0
+    macro_count: int = 0
+    dividend_count: int = 0
+    last_updated: str
+    from_cache: bool = False
+
+
+class BenchmarkSparkPoint(BaseModel):
+    date: str
+    close: float
+    idx: float
+
+
+class BenchmarksResponse(BaseModel):
+    symbol: str
+    period: str
+    sector: str | None = None
+    sector_etf: str | None = None
+    spy_spark: list[BenchmarkSparkPoint] = []
+    sector_spark: list[BenchmarkSparkPoint] = []
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Risk-adjusted recommendation ──────────────────────────────────
+
+
+class RecommendationComponents(BaseModel):
+    verdict: str | None = None
+    risk_rating: int | None = None
+    bubble_score: float | None = None
+    bubble_label: str | None = None
+    analyst_rating: str | None = None
+    analyst_upside: float | None = None
+    analyst_target: float | None = None
+    insider: str | None = None
+    congress: str | None = None
+    price: float | None = None
+
+
+class RecommendationResponse(BaseModel):
+    symbol: str
+    action: str          # STRONG_BUY | BUY | BUY_ON_DIP | HOLD | TRIM | SELL | STRONG_SELL
+    action_label: str
+    tone: str            # strong_bullish | bullish | cautious_bullish | neutral | cautious_bearish | bearish | strong_bearish
+    headline: str
+    reasoning: str
+    wait_until_price: float | None = None
+    wait_reason: str | None = None
+    reevaluate: str | None = None
+    components: RecommendationComponents
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Per-signal empirical evidence ─────────────────────────────────
+
+
+class SignalEvidenceItem(BaseModel):
+    signal_key: str | None = None
+    win_rate: float | None = None
+    avg_return_pct: float | None = None
+    total_trades: int | None = None
+    max_gain_pct: float | None = None
+    max_loss_pct: float | None = None
+    hold_days: int | None = None
+    grade: str | None = None
+    error: str | None = None
+
+
+class SignalEvidenceResponse(BaseModel):
+    symbol: str
+    hold_days: int
+    signals_tested: int = 0
+    signals_total: int = 0
+    evidence: dict[str, SignalEvidenceItem] = {}
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Market dashboard / takeaway / news ────────────────────────────
+
+
+class MarketStatus(BaseModel):
+    status: str          # open | pre_market | after_hours | closed
+    label: str
+    minutes_to_open: int | None = None
+    minutes_to_close: int | None = None
+
+
+class IndexSnapshot(BaseModel):
+    key: str
+    ticker: str
+    display: str
+    price: float | None = None
+    change: float | None = None
+    change_pct: float | None = None
+    spark: list[float] = []           # last 30 daily closes
+    change_30d_pct: float | None = None
+
+
+class BreadthMetrics(BaseModel):
+    spy_vs_rsp_1m_pp: float | None = None
+    iwm_vs_spy_1m_pp: float | None = None
+    vix_level: float | None = None
+    vix_regime: str | None = None
+    spy_pct_above_50d: float | None = None
+    spy_pct_above_200d: float | None = None
+    headline: str = ""
+
+
+class MoverRow(BaseModel):
+    symbol: str
+    price: float
+    change_pct: float
+    change: float
+
+
+class TopMovers(BaseModel):
+    gainers_1d: list[MoverRow] = []
+    losers_1d: list[MoverRow] = []
+    gainers_5d: list[MoverRow] = []
+    losers_5d: list[MoverRow] = []
+    error: str | None = None
+
+
+class MarketDashboardResponse(BaseModel):
+    status: MarketStatus
+    indices: list[IndexSnapshot] = []
+    breadth: BreadthMetrics
+    movers: TopMovers
+    last_updated: str
+    from_cache: bool = False
+
+
+class MarketTakeawayResponse(BaseModel):
+    regime: str
+    stance: str
+    tone: str
+    headline: str
+    bullets: list[str] = []
+    last_updated: str
+    from_cache: bool = False
+
+
+class MarketNewsItem(BaseModel):
+    title: str
+    snippet: str = ""
+    url: str = ""
+    source: str = ""
+    sentiment: str = "neutral"
+    sentiment_score: float = 0.0
+    published: str | None = None
+
+
+class MarketNewsResponse(BaseModel):
+    items: list[MarketNewsItem] = []
+    bull_count: int = 0
+    bear_count: int = 0
+    neutral_count: int = 0
+    net_sentiment: str = "no coverage"
+    net_score: float = 0.0
+    provider: str | None = None
+    source_warning: str | None = None
+    last_updated: str
+    from_cache: bool = False

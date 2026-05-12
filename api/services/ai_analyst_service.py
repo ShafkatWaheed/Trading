@@ -28,6 +28,11 @@ from api.constants import PERIOD_DAYS as _PERIOD_DAYS
 
 _MAX_PARALLEL = 4
 
+# Multi-mode runs all personalities within a single cycle simultaneously.
+# Setting this to len(_MULTI_AGENTS) avoids the 2-batch wait that doubles
+# per-cycle latency. Bumping higher than agent count has no effect.
+_PARALLEL_PERSONALITIES = 7
+
 # All 8 personality agents — same lineup as the live AI Agent.
 # For the data-driven ones we can't fully backfill, the prompt tells them
 # explicitly that their preferred data is missing.
@@ -1082,7 +1087,9 @@ def run_ai_backtest(symbol: str, period: str = "1M", cycles: int = 12,
         raw = []
         for ctx in contexts:
             jobs = [(ctx, k) for k in _MULTI_AGENTS]
-            with ThreadPoolExecutor(max_workers=_MAX_PARALLEL) as pool:
+            # Fire all personalities at once so per-cycle latency equals the
+            # SLOWEST agent (~13s) instead of two batches' slowest-of-each.
+            with ThreadPoolExecutor(max_workers=_PARALLEL_PERSONALITIES) as pool:
                 results = list(pool.map(_eval_one_agent, jobs))
             votes_map = {k: v for k, v, _, _ in results}
             agent_votes = [
@@ -1125,6 +1132,7 @@ def run_ai_backtest(symbol: str, period: str = "1M", cycles: int = 12,
         elif decision == "SELL" and open_trade:
             pnl_pct = ((snap["price"] - open_trade["entry_price"]) / open_trade["entry_price"]) * 100
             closed_trades.append({
+                "symbol": symbol,
                 "entry_date": open_trade["entry_date"],
                 "entry_price": open_trade["entry_price"],
                 "exit_date": snap["date"],
@@ -1145,6 +1153,7 @@ def run_ai_backtest(symbol: str, period: str = "1M", cycles: int = 12,
         last_price = float(close.iloc[end_idx])
         pnl_pct = ((last_price - open_trade["entry_price"]) / open_trade["entry_price"]) * 100
         closed_trades.append({
+            "symbol": symbol,
             "entry_date": open_trade["entry_date"],
             "entry_price": open_trade["entry_price"],
             "exit_date": str(df["date"].iloc[end_idx])[:10],
@@ -1173,5 +1182,49 @@ def run_ai_backtest(symbol: str, period: str = "1M", cycles: int = 12,
         "win_rate": win_rate,
         "avg_return": avg_return,
         "total_trades": len(closed_trades),
+        "last_updated": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def run_ai_backtest_multi(symbols: list[str], period: str = "1M", cycles: int = 8,
+                         mode: str = "single") -> dict:
+    """Run AI Analyst on each symbol and return per-stock comparison rows.
+
+    Each `run_ai_backtest()` call is cached for 6h on (symbol, period, cycles, mode),
+    so the second pass over the same params is near-instant. Stocks are run
+    sequentially to keep total Claude-subprocess concurrency bounded — peak load
+    on multi mode (7 personalities × M stocks) would otherwise hit plan rate
+    limits and slow each call down. With caching, the user re-running on the same
+    list returns fast.
+    """
+    clean = [s.upper().strip() for s in (symbols or []) if s and s.strip()]
+    clean = list(dict.fromkeys(clean))[:8]  # dedupe, cap at 8
+    if not clean:
+        return {
+            "period": period, "mode": mode, "cycles": cycles,
+            "rows": [], "error": "No symbols supplied.",
+            "last_updated": datetime.utcnow().isoformat() + "Z",
+        }
+
+    rows: list[dict] = []
+    for sym in clean:
+        try:
+            result = run_ai_backtest(sym, period=period, cycles=cycles, mode=mode)
+        except Exception as e:
+            result = {
+                "symbol": sym, "period": period, "mode": mode,
+                "cycles_run": 0, "decisions": [], "trades": [],
+                "win_count": 0, "loss_count": 0, "win_rate": 0.0,
+                "avg_return": 0.0, "total_trades": 0,
+                "error": f"AI backtest failed for {sym}: {e}",
+                "last_updated": datetime.utcnow().isoformat() + "Z",
+            }
+        rows.append(result)
+
+    return {
+        "period": period,
+        "mode": mode,
+        "cycles": cycles,
+        "rows": rows,
         "last_updated": datetime.utcnow().isoformat() + "Z",
     }

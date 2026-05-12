@@ -11,11 +11,18 @@ import { SectorFlows } from "@/components/market/sector-flows";
 import { SectorSummaryBar } from "@/components/market/sector-summary-bar";
 import { ImplicationsList } from "@/components/market/implications-list";
 import { EconomicCalendar } from "@/components/market/economic-calendar";
+import { NextCatalystPill } from "@/components/market/next-catalyst-pill";
 import { GeopoliticalRisks } from "@/components/market/geopolitical-risks";
 import { DisruptionThemes } from "@/components/market/disruption-themes";
+import { MarketTakeaway } from "@/components/market/market-takeaway";
+import { StickyMarketBar } from "@/components/market/sticky-market-bar";
+import { LiveIndicesStrip } from "@/components/market/live-indices-strip";
+import { BreadthCard } from "@/components/market/breadth-card";
+import { TopMovers } from "@/components/market/top-movers";
+import { MarketNews } from "@/components/market/market-news";
+import { SectionHeader } from "@/components/deep-dive/section-header";
 import { SimulationReplay } from "@/components/simulation-replay";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SectionHeading } from "@/components/ui/card";
 import { PeriodChips } from "@/components/ui/period-chips";
 import { useMarketPulse } from "@/lib/hooks/use-market-pulse";
 import {
@@ -35,6 +42,9 @@ export default function MarketPulsePage() {
 
   return (
     <div>
+      {/* Sticky live ticker — slides in below the nav after scroll */}
+      <StickyMarketBar />
+
       <PageHeader
         icon={Activity}
         title="Market Pulse"
@@ -43,8 +53,15 @@ export default function MarketPulsePage() {
         iconBg="bg-accent-blue/10"
       />
 
-      <div className="space-y-8">
+      <div className="space-y-6">
         <SimulationReplay step="market_pulse" accent="blue" />
+
+        {/* ── 01 · TODAY'S TAKEAWAY (hero) ─────────────────────────────── */}
+        <SectionHeader index={1} label="Today's takeaway" subtitle="3-second read · what does the market favor today" id="takeaway" />
+
+        <MarketTakeaway />
+
+        <LiveIndicesStrip />
 
         {isLoading && !data ? (
           <Skeleton className="h-32" />
@@ -57,8 +74,10 @@ export default function MarketPulsePage() {
           <RegimeCard regime={data.regime} explanation={data.regime_explanation} />
         ) : null}
 
+        {/* ── 02 · MACRO BACKDROP ──────────────────────────────────────── */}
+        <SectionHeader index={2} label="Macro backdrop" subtitle="Fed · rates · volatility · yield curve" id="macro" />
+
         <section>
-          <SectionHeading title="Key Economic Indicators" />
           <KpiGrid kpis={data?.kpis} loading={isLoading && !data} />
         </section>
 
@@ -68,58 +87,59 @@ export default function MarketPulsePage() {
           </section>
         )}
 
-        <section>
-          <SectionHeading
-            title="Economic Calendar"
-            trailing={<Calendar size={13} className="text-accent-blue" />}
-          />
-          <EconomicCalendar events={calendar.data?.events} loading={calendar.isLoading} />
-        </section>
+        {/* ── 03 · MARKET INTERNALS ────────────────────────────────────── */}
+        <SectionHeader index={3} label="Market internals" subtitle="breadth · top movers · what's actually moving" id="internals" />
+
+        <BreadthCard />
+        <TopMovers />
+
+        {/* ── 04 · WHAT'S HAPPENING ────────────────────────────────────── */}
+        <SectionHeader index={4} label="What's happening" subtitle="top headlines · sentiment" id="news" />
+
+        <MarketNews />
+
+        {/* ── 05 · WHERE MONEY IS GOING ────────────────────────────────── */}
+        <SectionHeader index={5} label="Where money is going" subtitle="sector flows · disruptive themes" id="flows" />
 
         <section>
-          <SectionHeading
-            title="Geopolitical & Event Risk"
-            trailing={<Globe size={13} className="text-accent-amber" />}
-          />
-          <GeopoliticalRisks events={geo.data?.events} loading={geo.isLoading} />
-        </section>
-
-        <section>
-          <SectionHeading
-            title="Disruptive Technology"
-            trailing={
-              <div className="flex items-center gap-2">
-                {disruption.data?.source === "fallback" && (
-                  <span className="text-[10px] text-text-muted">
-                    Built-in (configure TAVILY_API_KEY for live)
-                  </span>
-                )}
-                <Sparkles size={13} className="text-accent-violet" />
-              </div>
-            }
-          />
-          <DisruptionThemes themes={disruption.data?.themes} loading={disruption.isLoading} />
-        </section>
-
-        <section>
-          <SectionHeading
-            title="Sector Money Flow"
-            trailing={<PeriodChips value={period} onChange={setPeriod} accent="green" size="sm" />}
-          />
-
+          <div className="flex items-center justify-end mb-2">
+            <PeriodChips value={period} onChange={setPeriod} accent="green" size="sm" />
+          </div>
           {data && <SectorSummaryBar summary={data.sector_summary} period={period} />}
           <SectorFlows sectors={data?.sectors} loading={isLoading && !data} />
         </section>
 
+        <DisruptionThemes themes={disruption.data?.themes} loading={disruption.isLoading} />
+        {disruption.data?.source === "fallback" && (
+          <p className="text-[10px] text-text-muted -mt-2">
+            Built-in themes (configure TAVILY_API_KEY for live AI-derived themes)
+          </p>
+        )}
+
+        {/* ── 06 · UPCOMING CATALYSTS ──────────────────────────────────── */}
+        <SectionHeader index={6} label="Upcoming catalysts" subtitle="economic calendar · geopolitical risk" id="catalysts" />
+
+        <NextCatalystPill
+          nextEvent={calendar.data?.next_event}
+          nextHighImpact={calendar.data?.next_high_impact}
+        />
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <EconomicCalendar events={calendar.data?.events} loading={calendar.isLoading} />
+          <GeopoliticalRisks events={geo.data?.events} loading={geo.isLoading} />
+        </section>
+
+        {/* ── 07 · TRADING IMPLICATIONS ────────────────────────────────── */}
         {data?.implications && data.implications.length > 0 && (
-          <section>
+          <>
+            <SectionHeader index={7} label="Trading implications" subtitle="what to do with this regime" id="implications" />
             <ImplicationsList items={data.implications} />
-          </section>
+          </>
         )}
 
         <Link
           href="/discover"
-          className="card card-hover p-6 flex items-center justify-between group bg-gradient-to-r from-accent-blue/5 to-bg-card border-l-4 border-accent-blue/40"
+          className="card card-hover p-6 flex items-center justify-between group bg-gradient-to-r from-accent-blue/5 to-bg-card border-l-4 border-accent-blue/40 mt-2"
         >
           <div>
             <div className="text-xs uppercase tracking-wider text-text-muted">Step 2</div>

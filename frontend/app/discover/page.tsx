@@ -1,18 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Compass, Filter, Layers } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Compass, Layers } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { RichOpportunityCard } from "@/components/discover/rich-card";
 import { ScoreExplainer } from "@/components/discover/score-explainer";
 import { WatchlistManager } from "@/components/discover/watchlist-manager";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SimulationReplay } from "@/components/simulation-replay";
-import { SectionHeading } from "@/components/ui/card";
 import { PeriodChips } from "@/components/ui/period-chips";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
+import {
+  DiscoverFilterBar, applyFilters, EMPTY_FILTERS, type DiscoverFilters,
+} from "@/components/discover/filter-bar";
+import { SortSelector, applySort, type SortKey } from "@/components/discover/sort-selector";
+import { SelectionToolbar } from "@/components/discover/selection-toolbar";
+import { WhatChanged } from "@/components/discover/what-changed";
+import { SavedPresets, type Preset } from "@/components/discover/saved-presets";
+import { RegimeToggle, regimeAdjustedScore, useMarketTone } from "@/components/discover/regime-toggle";
 import { useDiscover } from "@/lib/hooks/use-discover";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
@@ -32,22 +39,59 @@ export default function DiscoverPage() {
   const [period, setPeriod] = useState("1M");
   const [minScore, setMinScore] = useState(0);
   const [scope, setScope] = useState<"watchlist" | "all">("watchlist");
+  const [filters, setFilters] = useState<DiscoverFilters>(EMPTY_FILTERS);
+  const [sort, setSort] = useState<SortKey>("score");
+  const [regimeAdjusted, setRegimeAdjusted] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
 
+  // Note: useDiscover currently only accepts min_score / limit / sector.
+  // period + scope filtering is applied client-side via the filter bar.
   const { data, isLoading } = useDiscover({
     min_score: minScore,
     limit: 30,
-    period,
-    only_watchlist: scope === "watchlist",
   });
 
-  const ops = data?.opportunities || [];
+  const rawOps = data?.opportunities || [];
+  const tone = useMarketTone();
+
+  // Apply client-side filters → optional regime re-score → sort
+  const processed = useMemo(() => {
+    let arr = applyFilters(rawOps, filters);
+    if (regimeAdjusted) {
+      arr = arr
+        .map((op) => ({ ...op, score: regimeAdjustedScore(op, tone) }))
+        // Re-sort by adjusted score if sorting by score; otherwise leave for sort step
+        ;
+    }
+    arr = applySort(arr, sort);
+    return arr;
+  }, [rawOps, filters, sort, regimeAdjusted, tone]);
+
+  const toggleSelect = (sym: string) => {
+    setSelected((prev) =>
+      prev.includes(sym)
+        ? prev.filter((s) => s !== sym)
+        : prev.length >= 4
+          ? prev               // cap at 4
+          : [...prev, sym]
+    );
+  };
+
+  const loadPreset = (p: Preset) => {
+    setPeriod(p.period);
+    setMinScore(p.min_score);
+    setScope(p.scope);
+    setFilters(p.filters);
+    setSort(p.sort);
+    setRegimeAdjusted(p.regime_adjusted);
+  };
 
   return (
     <div>
       <PageHeader
         icon={Compass}
         title="Discover"
-        subtitle="Rank and screen stocks worth trading. Click any card to deep-dive."
+        subtitle="Rank, filter, and screen stocks worth trading. Click any card to deep-dive."
         accent="text-accent-amber"
         iconBg="bg-accent-amber/10"
       />
@@ -57,12 +101,24 @@ export default function DiscoverPage() {
 
         <WatchlistManager />
 
-        <ScoreExplainer />
+        <details className="card p-3">
+          <summary className="text-xs text-text-muted hover:text-text-secondary cursor-pointer select-none">
+            How is the score computed? (click to learn)
+          </summary>
+          <div className="mt-3">
+            <ScoreExplainer />
+          </div>
+        </details>
 
-        {/* Filter bar */}
-        <div className="card p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+        {/* What changed since last visit */}
+        <WhatChanged ops={rawOps} />
+
+        {/* Filter bar — sectors + setup quality toggles */}
+        <DiscoverFilterBar ops={rawOps} filters={filters} onChange={setFilters} />
+
+        {/* Top row — scope + period + min score + sort + regime + presets */}
+        <div className="card p-4 flex flex-wrap items-center gap-x-5 gap-y-3">
           <div className="flex items-center gap-2">
-            <Filter size={13} className="text-text-muted" strokeWidth={2.4} />
             <span className="text-[10px] uppercase tracking-wider text-text-muted font-semibold">Scope</span>
             <SegmentedControl
               options={SCOPE_OPTS.map(o => ({ value: o.key, label: o.label }))}
@@ -86,7 +142,29 @@ export default function DiscoverPage() {
               accent="green"
             />
           </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-text-muted font-semibold">Sort</span>
+            <SortSelector value={sort} onChange={setSort} />
+          </div>
+
+          <div className="ml-auto">
+            <RegimeToggle enabled={regimeAdjusted} onToggle={setRegimeAdjusted} />
+          </div>
         </div>
+
+        <SavedPresets
+          current={{
+            period, min_score: minScore, scope, filters, sort, regime_adjusted: regimeAdjusted,
+          }}
+          onLoad={loadPreset}
+        />
+
+        <SelectionToolbar
+          selected={selected}
+          onClear={() => setSelected([])}
+          onRemove={(s) => setSelected((prev) => prev.filter((x) => x !== s))}
+        />
 
         {isLoading ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -94,14 +172,17 @@ export default function DiscoverPage() {
               <Skeleton key={i} className="h-96" />
             ))}
           </div>
-        ) : ops.length === 0 ? (
+        ) : processed.length === 0 ? (
           <EmptyState
             icon={Compass}
             title="No opportunities match this filter"
             description={
-              scope === "watchlist"
-                ? "Try lowering the score, switching to All Stocks, or adding tickers to your watchlist."
-                : "Try a lower score threshold, or wait for the scheduler to refresh scores."
+              filters.sectors.length > 0 || filters.volume_conf || filters.smart_money ||
+              filters.trend_pullback || filters.rel_strength || filters.earnings_14d
+                ? "Try clearing some filters, or switch to All Stocks."
+                : scope === "watchlist"
+                  ? "Try lowering the score, switching to All Stocks, or adding tickers to your watchlist."
+                  : "Try a lower score threshold, or wait for the scheduler to refresh scores."
             }
             tone="amber"
           />
@@ -109,19 +190,30 @@ export default function DiscoverPage() {
           <>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-[11px] uppercase tracking-wider text-text-muted font-semibold">
-                {ops.length} stock{ops.length === 1 ? "" : "s"} ranked over {period}
+                {processed.length} stock{processed.length === 1 ? "" : "s"}
+                {rawOps.length !== processed.length && (
+                  <span className="text-text-dim normal-case"> (filtered from {rawOps.length})</span>
+                )}
+                <span className="text-text-dim normal-case"> · sorted by {sort}</span>
               </div>
-              {ops.length > 1 && (
-                <Link href={`/deep-dive/${ops[0].symbol}`}>
+              {processed.length > 1 && (
+                <Link href={`/deep-dive/${processed[0].symbol}`}>
                   <Button tone="violet" variant="solid" size="sm" leftIcon={<Layers size={12} />}>
-                    Deep Dive Top Pick · {ops[0].symbol}
+                    Deep Dive Top Pick · {processed[0].symbol}
                   </Button>
                 </Link>
               )}
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {ops.map((op, rank) => (
-                <RichOpportunityCard key={op.symbol} op={op} rank={rank} />
+              {processed.map((op, rank) => (
+                <RichOpportunityCard
+                  key={op.symbol}
+                  op={op}
+                  rank={rank}
+                  selected={selected.includes(op.symbol)}
+                  onToggleSelect={toggleSelect}
+                  adjustedScore={regimeAdjusted ? op.score : null}
+                />
               ))}
             </div>
           </>

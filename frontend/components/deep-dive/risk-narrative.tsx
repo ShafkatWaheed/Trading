@@ -93,6 +93,14 @@ export function RiskNarrative({ symbol }: Props) {
               </div>
             );
           })}
+          {data.invalidates_if && (
+            <div className="bg-bg-base rounded-md p-3 border border-bg-border">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-accent-greenSoft mb-1">
+                Bear thesis invalidates if
+              </div>
+              <p className="text-text-secondary text-sm leading-relaxed">{data.invalidates_if}</p>
+            </div>
+          )}
           <p className="text-[10px] text-text-muted pt-2 border-t border-bg-border">
             AI-generated downside framing — not a forecast. Cross-check against your own due diligence.
           </p>

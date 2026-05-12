@@ -1,9 +1,16 @@
 "use client";
 
 import type { SectorFlow } from "@/lib/api/types";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronsUp, ChevronsDown, Minus } from "lucide-react";
 import { cn, formatPercent } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+
+function accelBadge(accel?: string | null) {
+  if (accel === "accelerating") return { Icon: ChevronsUp,   color: "text-accent-greenSoft", label: "accelerating" };
+  if (accel === "decelerating") return { Icon: ChevronsDown, color: "text-accent-redSoft",   label: "decelerating" };
+  if (accel === "steady")       return { Icon: Minus,        color: "text-text-muted",       label: "steady" };
+  return null;
+}
 
 export function SectorFlows({ sectors, loading }: { sectors?: SectorFlow[]; loading?: boolean }) {
   if (loading) {
@@ -53,10 +60,40 @@ export function SectorFlows({ sectors, loading }: { sectors?: SectorFlow[]; load
               >
                 {formatPercent(s.change_pct)}
               </div>
+              {(() => {
+                const badge = accelBadge(s.accel);
+                if (!badge) return <div className="w-32 shrink-0" />;
+                const Icon = badge.Icon;
+                return (
+                  <div
+                    className="w-32 shrink-0 flex items-center gap-1 text-[10px]"
+                    title={
+                      s.change_pct_prior != null
+                        ? `Prior period: ${s.change_pct_prior >= 0 ? "+" : ""}${s.change_pct_prior.toFixed(2)}% · Delta ${(s.delta_pp ?? 0) >= 0 ? "+" : ""}${(s.delta_pp ?? 0).toFixed(2)} pp`
+                        : ""
+                    }
+                  >
+                    <Icon size={11} className={badge.color} strokeWidth={2.4} />
+                    <span className={cn("uppercase tracking-wider font-semibold", badge.color)}>
+                      {badge.label}
+                    </span>
+                    {s.delta_pp != null && (
+                      <span className="text-text-muted tabular-nums">
+                        ({s.delta_pp >= 0 ? "+" : ""}{s.delta_pp.toFixed(1)}pp)
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
       </div>
+      <p className="text-[10px] text-text-muted mt-4 pt-3 border-t border-bg-border">
+        Right column compares this period vs the prior same-length window.
+        Accelerating = current period is &gt;1pp stronger than prior.
+        Decelerating = current period is &gt;1pp weaker than prior.
+      </p>
     </div>
   );
 }

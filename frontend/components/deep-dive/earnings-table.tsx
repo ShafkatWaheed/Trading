@@ -12,7 +12,7 @@ export function EarningsTable({ rows }: { rows: EarningsRow[] }) {
   const past = rows.filter((r) => r.date && r.date < today);
 
   return (
-    <div className="card p-5">
+    <div className="card-muted p-5">
       <div className="flex items-center gap-2 mb-3">
         <Calendar size={14} className="text-accent-amber" />
         <h3 className="text-sm font-semibold">Earnings History &amp; Upcoming</h3>

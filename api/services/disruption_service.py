@@ -96,21 +96,43 @@ def _search_exa(query: str) -> list[dict]:
 
 
 def _gather_articles() -> list[dict]:
+    # Spread queries across intensity tiers so Claude doesn't see an all-AI diet.
+    # Without these probes, trending coverage drowns out under-reported emerging
+    # tech like quantum, fusion, robotics, and gene editing.
     queries = [
-        "technology disruption stocks industry impact",
-        "AI biotech energy innovation disrupt market winners losers",
-        "emerging technology reshaping industries stocks",
+        # Mature / high-intensity (already dominating headlines)
+        "AI infrastructure semiconductor stocks impact",
+        "GLP-1 obesity drugs pharma disruption",
+        # Medium-intensity
+        "electric vehicle battery technology stocks competition",
+        "cybersecurity zero trust enterprise stocks",
+        # Emerging — explicit probes so search engines surface them
+        "quantum computing stocks IONQ RGTI commercial milestones",
+        "nuclear fusion energy startups stocks investment 2026",
+        "humanoid robotics warehouse automation stocks Tesla Figure",
+        "CRISPR gene editing therapy approval stocks",
+        "autonomous vehicles robotaxi commercialization stocks Waymo Tesla",
+        "space economy SpaceX satellite stocks investment",
     ]
     articles: list[dict] = []
+    seen_titles: set[str] = set()
     for q in queries:
-        articles.extend(_search_tavily(q))
-        if not articles:
-            articles.extend(_search_exa(q))
-        if len(articles) >= 12:
+        # Per-query fallback: if Tavily returns nothing for THIS query (rate-limited
+        # or no match), try Exa for the same query. Without this, one successful
+        # Tavily call blocked Exa for every subsequent query.
+        results = _search_tavily(q)
+        if not results:
+            results = _search_exa(q)
+        for r in results[:3]:
+            title = (r.get("title") or "").strip()
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                articles.append(r)
+        if len(articles) >= 24:
             break
     return [
         {"title": (a.get("title") or "")[:100], "content": (a.get("content") or "")[:150]}
-        for a in articles[:12]
+        for a in articles[:24]
     ]
 
 
@@ -119,8 +141,14 @@ def _ask_claude_for_themes(articles: list[dict]) -> list[dict] | None:
         return None
     articles_text = "\n".join(f"- {a['title']}: {a['content'][:80]}" for a in articles)
     prompt = (
-        "Identify the top 6 technology disruption themes impacting US stocks based on these articles:\n\n"
+        "Identify the top 6 technology disruption themes impacting US stocks based on these articles.\n\n"
         f"{articles_text}\n\n"
+        "REQUIRED MIX — your 6 themes MUST span maturity tiers:\n"
+        "  - 2-3 HIGH intensity (already moving stocks now — e.g. AI infra, GLP-1)\n"
+        "  - 1-2 MEDIUM intensity (mid-adoption — e.g. EVs, cybersecurity, cloud transitions)\n"
+        "  - 2 EMERGING intensity (early-stage but accelerating — e.g. quantum computing, "
+        "fusion energy, humanoid robotics, gene editing, autonomous vehicles, space economy)\n"
+        "Do NOT return 6 AI variants. Spread across distinct technology domains.\n\n"
         "Respond with ONLY a JSON array of 6 items. Each item must have: "
         "name (string), icon (single emoji), intensity (HIGH/MEDIUM/EMERGING), "
         "tickers_benefit (array of 3-5 tickers), sectors_benefit (array of 1-3), "
@@ -131,7 +159,7 @@ def _ask_claude_for_themes(articles: list[dict]) -> list[dict] | None:
         env.pop("CLAUDECODE", None)
         proc = subprocess.run(
             ["claude", "-p", prompt, "--model", "haiku", "--allowedTools", ""],
-            capture_output=True, text=True, timeout=45, env=env,
+            capture_output=True, text=True, timeout=90, env=env,
         )
         if proc.returncode != 0:
             return None
@@ -153,7 +181,9 @@ def get_disruption_themes() -> dict:
         return cached
 
     articles = _gather_articles()
-    themes = _ask_claude_for_themes(articles) or FALLBACK_THEMES
+    claude_themes = _ask_claude_for_themes(articles)
+    themes = claude_themes or FALLBACK_THEMES
+    source = "claude" if claude_themes else "fallback"
 
     # Sanity: enforce shape
     cleaned = []
@@ -173,7 +203,8 @@ def get_disruption_themes() -> dict:
 
     payload = {
         "themes": cleaned,
-        "source": "claude" if cleaned and cleaned != FALLBACK_THEMES else "fallback",
+        "source": source,
+        "articles_used": len(articles),
         "last_updated": datetime.utcnow().isoformat() + "Z",
     }
     try:

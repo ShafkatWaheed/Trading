@@ -8,6 +8,7 @@ from api.schemas import (
     MultiStockResponse,
     PortfolioSimRequest, PortfolioSimResponse,
     AiAnalystRequest, AiAnalystResponse,
+    AiAnalystMultiRequest, AiAnalystMultiResponse,
 )
 from api.services import backtest_service, portfolio_sim_service, ai_analyst_service
 
@@ -85,3 +86,13 @@ def ai_analyst(req: AiAnalystRequest) -> dict:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI backtest failed: {e}")
+
+
+@router.post("/ai-analyst-multi", response_model=AiAnalystMultiResponse)
+def ai_analyst_multi(req: AiAnalystMultiRequest) -> dict:
+    try:
+        return ai_analyst_service.run_ai_backtest_multi(
+            req.symbols, period=req.period, cycles=req.cycles, mode=req.mode,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI multi backtest failed: {e}")

@@ -12,6 +12,9 @@ import { AiStrategyReference } from "@/components/prove-it/ai-strategy-reference
 import { Skeleton } from "@/components/ui/skeleton";
 import { SimulationReplay } from "@/components/simulation-replay";
 import { TickerSearchInput } from "@/components/ui/ticker-search-input";
+import { StockAnchor } from "@/components/prove-it/stock-anchor";
+import { AiProgressEstimator } from "@/components/prove-it/ai-progress-estimator";
+import { AiMultiStockTable } from "@/components/prove-it/ai-multi-stock-table";
 import { backtestApi, watchlistApi } from "@/lib/api/endpoints";
 import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 
@@ -59,6 +62,10 @@ export default function ProveItPage() {
 
   // AI Analyst state
   const [aiCycles, setAiCycles] = useState(8);
+  // Multi-stock AI Analyst — anchor + additional symbols
+  const [aiMultiEnabled, setAiMultiEnabled] = useState(false);
+  const [aiExtraSymbols, setAiExtraSymbols] = useState<string[]>([]);
+  const [aiExtraInput, setAiExtraInput] = useState("");
   const [aiMode, setAiMode] = useState<"single" | "multi">("single");
 
   const { data: catalog } = useQuery({
@@ -102,6 +109,11 @@ export default function ProveItPage() {
     mutationFn: (vars: { sym: string; per: string; cycles: number; mode: "single" | "multi" }) =>
       backtestApi.aiAnalyst(vars.sym, vars.per, vars.cycles, vars.mode),
   });
+  // Tab 5b: AI analyst on multiple stocks
+  const aiMultiMutation = useMutation({
+    mutationFn: (vars: { syms: string[]; per: string; cycles: number; mode: "single" | "multi" }) =>
+      backtestApi.aiAnalystMulti(vars.syms, vars.per, vars.cycles, vars.mode),
+  });
 
   // Default category list when catalog loads
   const categories = catalog?.categories || ["All Signals"];
@@ -132,6 +144,11 @@ export default function ProveItPage() {
         <SimulationReplay step="trades" accent="cyan" />
       </div>
 
+      {/* Page-level stock anchor — every backtest below operates on this */}
+      <div className="mb-6">
+        <StockAnchor symbol={symbol} onChange={setSymbol} />
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-0.5 mb-6 p-1 rounded-lg bg-bg-card border border-bg-border overflow-x-auto">
         {TABS.map((t) => (
@@ -154,19 +171,6 @@ export default function ProveItPage() {
       {tab === "Signal Accuracy" && (
         <div>
           <div className="card p-4 mb-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="flex items-center gap-2 min-w-[220px] flex-1 sm:flex-none">
-              <span className="text-xs uppercase tracking-wider text-text-muted">Stock</span>
-              <div className="flex-1 sm:w-56">
-                <TickerSearchInput
-                  onPick={setSymbol}
-                  placeholder={`Search… (${symbol})`}
-                  tone="cyan"
-                  compact
-                  clearOnPick
-                />
-              </div>
-            </div>
-
             <div className="flex items-center gap-2">
               <span className="text-xs uppercase tracking-wider text-text-muted">Hold</span>
               <div className="flex gap-1">
@@ -283,19 +287,6 @@ export default function ProveItPage() {
       {tab === "Signal Explorer" && (
         <div>
           <div className="card p-4 mb-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="flex items-center gap-2 min-w-[220px]">
-              <span className="text-xs uppercase tracking-wider text-text-muted">Stock</span>
-              <div className="w-56">
-                <TickerSearchInput
-                  onPick={setSymbol}
-                  placeholder={`Search… (${symbol})`}
-                  tone="cyan"
-                  compact
-                  clearOnPick
-                />
-              </div>
-            </div>
-
             <div className="flex items-center gap-2 flex-1 min-w-[280px]">
               <span className="text-xs uppercase tracking-wider text-text-muted">Signal</span>
               <select
@@ -571,8 +562,12 @@ export default function ProveItPage() {
             </div>
 
             <button
-              onClick={() => multiMutation.mutate({ syms: multiSymbols, sig: signal, per: period })}
-              disabled={multiSymbols.length === 0 || multiMutation.isPending}
+              onClick={() => {
+                // Always include the page-level anchor stock; de-dupe in case user re-added it
+                const syms = [symbol, ...multiSymbols.filter((s) => s !== symbol)];
+                multiMutation.mutate({ syms, sig: signal, per: period });
+              }}
+              disabled={multiSymbols.filter((s) => s !== symbol).length === 0 || multiMutation.isPending}
               className="w-full bg-accent-cyan/10 border border-accent-cyan/40 hover:bg-accent-cyan/20 text-accent-cyan px-4 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {multiMutation.isPending ? (
@@ -580,7 +575,13 @@ export default function ProveItPage() {
               ) : (
                 <Layers size={14} />
               )}
-              {multiMutation.isPending ? "Running…" : `Run on ${multiSymbols.length} Stock${multiSymbols.length === 1 ? "" : "s"}`}
+              {(() => {
+                const extra = multiSymbols.filter((s) => s !== symbol).length;
+                const total = extra + 1; // anchor always included
+                if (multiMutation.isPending) return "Running…";
+                if (extra === 0) return `Add at least 1 more stock to compare with ${symbol}`;
+                return `Compare ${symbol} + ${extra} other${extra === 1 ? "" : "s"} (${total} total)`;
+              })()}
             </button>
           </div>
 
@@ -778,12 +779,20 @@ export default function ProveItPage() {
             </div>
 
             <button
-              onClick={() => pfMutation.mutate({ syms: pfSymbols, strat: signal, cap: pfCapital, size: pfPosSize })}
-              disabled={pfSymbols.length === 0 || pfMutation.isPending}
+              onClick={() => {
+                const syms = [symbol, ...pfSymbols.filter((s) => s !== symbol)];
+                pfMutation.mutate({ syms, strat: signal, cap: pfCapital, size: pfPosSize });
+              }}
+              disabled={pfMutation.isPending}
               className="w-full bg-accent-cyan/10 border border-accent-cyan/40 hover:bg-accent-cyan/20 text-accent-cyan px-4 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {pfMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <PieChart size={14} />}
-              {pfMutation.isPending ? "Simulating…" : `Simulate Portfolio (${pfSymbols.length})`}
+              {(() => {
+                const extra = pfSymbols.filter((s) => s !== symbol).length;
+                const total = extra + 1;
+                if (pfMutation.isPending) return "Simulating…";
+                return `Simulate Portfolio: ${symbol}${extra > 0 ? ` + ${extra} other${extra === 1 ? "" : "s"}` : ""} (${total} stock${total === 1 ? "" : "s"})`;
+              })()}
             </button>
           </div>
 
@@ -971,17 +980,7 @@ export default function ProveItPage() {
               <AiStrategyReference />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-              <div>
-                <TickerSearchInput
-                  onPick={setSymbol}
-                  placeholder={`Search… (${symbol})`}
-                  tone="pink"
-                  label="Stock"
-                  compact
-                  clearOnPick
-                />
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="text-[10px] uppercase tracking-wider text-text-muted font-semibold">Cycle Length</label>
                 <select
@@ -1005,9 +1004,84 @@ export default function ProveItPage() {
               </div>
             </div>
 
+            {/* Multi-stock toggle + add-symbol UI */}
+            <div className="mb-3 bg-bg-base rounded-md border border-bg-border p-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={aiMultiEnabled}
+                  onChange={(e) => setAiMultiEnabled(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-accent-pink"
+                />
+                <span className="text-[12px] font-medium text-text-primary">
+                  Run on multiple stocks
+                </span>
+                <span className="text-[10px] text-text-muted">
+                  ({symbol} is always the anchor; add up to 7 more)
+                </span>
+              </label>
+
+              {aiMultiEnabled && (
+                <>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const v = aiExtraInput.trim().toUpperCase();
+                      if (v && v !== symbol && !aiExtraSymbols.includes(v) && aiExtraSymbols.length < 7) {
+                        setAiExtraSymbols([...aiExtraSymbols, v]);
+                        setAiExtraInput("");
+                      }
+                    }}
+                    className="flex items-center gap-2 mt-3"
+                  >
+                    <input
+                      value={aiExtraInput}
+                      onChange={(e) => setAiExtraInput(e.target.value.toUpperCase())}
+                      placeholder="Add ticker (e.g. NVDA)"
+                      maxLength={10}
+                      disabled={aiExtraSymbols.length >= 7}
+                      className="flex-1 bg-bg-card border border-bg-border rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent-pink/60 disabled:opacity-50"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!aiExtraInput.trim() || aiExtraSymbols.length >= 7}
+                      className="bg-accent-pink/10 border border-accent-pink/40 hover:bg-accent-pink/20 text-accent-pink px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
+                    >
+                      <Plus size={11} /> Add
+                    </button>
+                  </form>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="badge bg-accent-pink/15 text-accent-pink border-accent-pink/50 font-mono">
+                      {symbol} <span className="ml-1 text-[9px] uppercase tracking-wider opacity-80">anchor</span>
+                    </span>
+                    {aiExtraSymbols.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setAiExtraSymbols(aiExtraSymbols.filter((x) => x !== s))}
+                        className="badge bg-accent-pink/10 text-accent-pink border-accent-pink/40 hover:bg-accent-pink/20 font-mono"
+                      >
+                        {s} <X size={11} className="ml-1 opacity-60" />
+                      </button>
+                    ))}
+                    <span className="text-[10px] text-text-muted ml-1">
+                      {1 + aiExtraSymbols.length}/8
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
             <button
-              onClick={() => aiMutation.mutate({ sym: symbol, per: period, cycles: aiCycles, mode: aiMode })}
-              disabled={!symbol || aiMutation.isPending}
+              onClick={() => {
+                if (aiMultiEnabled) {
+                  const syms = [symbol, ...aiExtraSymbols.filter((s) => s !== symbol)];
+                  aiMultiMutation.mutate({ syms, per: period, cycles: aiCycles, mode: aiMode });
+                } else {
+                  aiMutation.mutate({ sym: symbol, per: period, cycles: aiCycles, mode: aiMode });
+                }
+              }}
+              disabled={!symbol || aiMutation.isPending || aiMultiMutation.isPending}
               className={cn(
                 "w-full px-4 py-2.5 rounded-md text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 border",
                 aiMode === "multi"
@@ -1015,16 +1089,54 @@ export default function ProveItPage() {
                   : "bg-accent-pink/10 border-accent-pink/40 hover:bg-accent-pink/20 text-accent-pink",
               )}
             >
-              {aiMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
-              {aiMutation.isPending
-                ? `Running ${aiCycles} cycles${aiMode === "multi" ? " × 7 agents" : ""}…`
-                : `Run ${aiMode === "multi" ? "Multi-Agent" : "Single-Agent"} Backtest`}
+              {(aiMutation.isPending || aiMultiMutation.isPending)
+                ? <Loader2 size={14} className="animate-spin" />
+                : <Bot size={14} />}
+              {(() => {
+                if (aiMultiMutation.isPending) {
+                  const n = 1 + aiExtraSymbols.length;
+                  return `Running on ${n} stocks${aiMode === "multi" ? " × 7 agents" : ""}…`;
+                }
+                if (aiMutation.isPending) {
+                  return `Running ${aiCycles} cycles${aiMode === "multi" ? " × 7 agents" : ""}…`;
+                }
+                if (aiMultiEnabled) {
+                  const n = 1 + aiExtraSymbols.length;
+                  return `Run ${aiMode === "multi" ? "Multi-Agent" : "Single-Agent"} on ${n} stocks`;
+                }
+                return `Run ${aiMode === "multi" ? "Multi-Agent" : "Single-Agent"} Backtest`;
+              })()}
             </button>
             <p className="text-[10px] text-text-muted mt-2">
               {aiMode === "multi"
-                ? `${aiCycles} cycles × 7 personality agents = ${aiCycles * 7} Claude calls (parallel-batched 4 at a time). Every agent sees the same rich context — Market Pulse, Discover-equivalent score, Deep Dive signals, fundamentals, news, real historical insider trades, FINRA short volume — and replies with DECISION + REASON.`
+                ? `${aiCycles} cycles × 7 personality agents = ${aiCycles * 7} Claude calls (7 personalities fire in parallel per cycle). Every agent sees the same rich context — Market Pulse, Discover-equivalent score, Deep Dive signals, fundamentals, news, real historical insider trades, FINRA short volume — and replies with DECISION + REASON.`
                 : `One Claude call per cycle with full context (Market Pulse macro, Discover score, Deep Dive signals, fundamentals, news, trade plan).`}
             </p>
+
+            {/* Upfront expectation-setting before user clicks Run */}
+            {aiMode === "multi" && !aiMutation.isPending && !aiMutation.data && (
+              <div className="mt-3 p-3 rounded-md bg-accent-amber/5 border border-accent-amber/30 text-[11px] text-text-secondary leading-relaxed">
+                <div className="font-semibold text-accent-amber mb-1">
+                  Heads up — multi-agent runs are slow.
+                </div>
+                <p>
+                  Expect roughly <span className="font-semibold text-text-primary">~{aiCycles} × 60 = {aiCycles * 60}s</span>
+                  {" "}({Math.round(aiCycles * 60 / 60)}m {aiCycles * 60 % 60}s) for {aiCycles} cycles. The 7 personality agents
+                  fire concurrently but each Claude subprocess takes ~10-15s and they slow each other down under contention.
+                </p>
+                <p className="mt-1">
+                  The result caches for 6h on (<span className="font-mono">{symbol}</span>, {period}, {aiCycles}, multi) so a
+                  rerun returns instantly. For exploratory runs, start with{" "}
+                  <span className="font-semibold text-text-primary">cycles = 4</span> or use single-agent mode.
+                </p>
+              </div>
+            )}
+
+            <AiProgressEstimator
+              active={aiMutation.isPending}
+              cycles={aiCycles}
+              mode={aiMode}
+            />
           </div>
 
           {aiMutation.data?.error && (
@@ -1033,7 +1145,47 @@ export default function ProveItPage() {
             </div>
           )}
 
-          {aiMutation.data && !aiMutation.data.error && (
+          {aiMutation.isError && (
+            <div className="card p-4 border-l-4 border-accent-red/40 mb-4">
+              <p className="text-accent-redSoft text-sm font-medium">AI backtest request failed.</p>
+              <p className="text-text-muted text-xs mt-1">
+                {(aiMutation.error as Error)?.message || "Unknown error"}
+              </p>
+              <p className="text-text-muted text-[11px] mt-2 leading-relaxed">
+                Multi-agent runs can take 2-4 minutes (7 personality agents × {aiCycles} cycles).
+                If the connection dropped, the work may still be completing server-side — try clicking{" "}
+                <span className="font-semibold">Run</span> again with the same settings; the cached result
+                should appear quickly. If it keeps failing, drop cycles to 4-5 or switch to single-agent.
+              </p>
+            </div>
+          )}
+
+          {aiMultiMutation.isError && (
+            <div className="card p-4 border-l-4 border-accent-red/40 mb-4">
+              <p className="text-accent-redSoft text-sm font-medium">Multi-stock AI backtest request failed.</p>
+              <p className="text-text-muted text-xs mt-1">
+                {(aiMultiMutation.error as Error)?.message || "Unknown error"}
+              </p>
+              <p className="text-text-muted text-[11px] mt-2 leading-relaxed">
+                Each stock runs sequentially. With {1 + aiExtraSymbols.length} stocks × {aiCycles} cycles{aiMode === "multi" ? " × 7 agents" : ""} this can take a while. Each stock's result caches independently for 6h — try Run again on the same list to pull cached rows.
+              </p>
+            </div>
+          )}
+
+          {aiMultiMutation.data?.error && (
+            <div className="card p-4 border-l-4 border-accent-red/40 mb-4">
+              <p className="text-accent-redSoft text-sm">{aiMultiMutation.data.error}</p>
+            </div>
+          )}
+
+          {aiMultiEnabled && aiMultiMutation.data && !aiMultiMutation.data.error && (aiMultiMutation.data.rows?.length ?? 0) > 0 && (
+            <AiMultiStockTable
+              rows={aiMultiMutation.data.rows}
+              mode={(aiMultiMutation.data.mode as "single" | "multi") || "single"}
+            />
+          )}
+
+          {aiMutation.data && !aiMutation.data.error && !aiMultiEnabled && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="card p-4 text-center">

@@ -16,7 +16,19 @@ import { PriceChart } from "@/components/deep-dive/price-chart";
 import { VolumeProfileChart } from "@/components/deep-dive/volume-profile";
 import { EarningsTable } from "@/components/deep-dive/earnings-table";
 import { RiskNarrative } from "@/components/deep-dive/risk-narrative";
+import { BullNarrative } from "@/components/deep-dive/bull-narrative";
+import { BubbleScoreCard } from "@/components/deep-dive/bubble-score";
 import { EarningsExplainer } from "@/components/deep-dive/earnings-explainer";
+import { TldrBanner } from "@/components/deep-dive/tldr-banner";
+import { AnalystConsensus } from "@/components/deep-dive/analyst-consensus";
+import { PeerValuationStrip } from "@/components/deep-dive/peer-valuation-strip";
+import { SmartMoneyCard } from "@/components/deep-dive/smart-money";
+import { NewsFeed } from "@/components/deep-dive/news-feed";
+import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
+import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
+import { StickyVerdictBar } from "@/components/deep-dive/sticky-verdict-bar";
+import { PositionSizing } from "@/components/deep-dive/position-sizing";
+import { SectionHeader } from "@/components/deep-dive/section-header";
 import { SimulationReplay } from "@/components/simulation-replay";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeepDive } from "@/lib/hooks/use-deep-dive";
@@ -194,7 +206,14 @@ export default function DeepDiveTickerPage() {
         </div>
       ) : data ? (
         <div className="space-y-6">
+          {/* Sticky condensed bar — slides in once user scrolls past hero */}
+          <StickyVerdictBar data={data} />
+
           <SimulationReplay step="deep_dive" accent="violet" />
+
+          {/* ── 01 · SNAPSHOT ──────────────────────────────────────────── */}
+          <SectionHeader index={1} label="Snapshot" subtitle="who is this stock · 5-second read" id="snapshot" />
+
           <VerdictBanner
             symbol={data.symbol}
             name={data.name}
@@ -206,7 +225,72 @@ export default function DeepDiveTickerPage() {
 
           <KpiGridDeepDive data={data} />
 
-          <div className="card p-4 flex items-center gap-4 flex-wrap text-xs">
+          <TldrBanner symbol={data.symbol} />
+
+          {/* ── 02 · ACTION ────────────────────────────────────────────── */}
+          <SectionHeader index={2} label="Action" subtitle="recommended next move · chart · summary" id="action" />
+
+          <RecommendationCard symbol={data.symbol} />
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2">
+              {data.period_change && (
+                <PriceChart
+                  data={data.period_change}
+                  symbol={data.symbol}
+                  tradePlan={data.trade_plan}
+                />
+              )}
+            </div>
+            <div>
+              {data.volume_profile && <VolumeProfileChart data={data.volume_profile} />}
+            </div>
+          </div>
+
+          {data.summary && (
+            <div className="card-subtle p-6">
+              <h3 className="text-base font-semibold mb-2">Summary</h3>
+              <p className="text-text-secondary text-sm leading-relaxed whitespace-pre-line">
+                {data.summary}
+              </p>
+            </div>
+          )}
+
+          {/* ── 03 · WHAT'S HAPPENING ──────────────────────────────────── */}
+          <SectionHeader index={3} label="What's happening" subtitle="news + upcoming catalysts" id="news" />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <NewsFeed symbol={data.symbol} />
+            <CatalystCalendar symbol={data.symbol} />
+          </div>
+
+          {/* ── 04 · WHAT PROS ARE DOING ───────────────────────────────── */}
+          <SectionHeader index={4} label="What pros are doing" subtitle="smart money + Wall Street consensus" id="pros" />
+
+          <SmartMoneyCard symbol={data.symbol} />
+          <AnalystConsensus symbol={data.symbol} />
+
+          {/* ── 05 · IS THE PRICE RIGHT ────────────────────────────────── */}
+          <SectionHeader index={5} label="Is the price right" subtitle="bubble score · vibes premium · peers" id="valuation" />
+
+          <BubbleScoreCard symbol={data.symbol} />
+          <PeerValuationStrip symbol={data.symbol} />
+
+          {/* ── 06 · BULL vs BEAR ──────────────────────────────────────── */}
+          <SectionHeader index={6} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <BullNarrative symbol={data.symbol} />
+            <RiskNarrative symbol={data.symbol} />
+          </div>
+
+          {/* ── 07 · HOW TO EXECUTE ────────────────────────────────────── */}
+          <SectionHeader index={7} label="How to execute" subtitle="trade plan · sizing · signals" id="setup" />
+
+          {data.trade_plan && <TradePlanRich plan={data.trade_plan} />}
+          {data.trade_plan && <PositionSizing plan={data.trade_plan} />}
+
+          <div className="card-subtle p-4 flex items-center gap-4 flex-wrap text-xs">
             <span className="text-text-muted uppercase tracking-wider">Signal Tally</span>
             <span className="text-accent-greenSoft font-semibold">
               ↑ {data.signal_counts.bullish} bullish
@@ -220,39 +304,15 @@ export default function DeepDiveTickerPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2">
-              {data.period_change && <PriceChart data={data.period_change} />}
-            </div>
-            <div>
-              {data.volume_profile && <VolumeProfileChart data={data.volume_profile} />}
-            </div>
-          </div>
+          <SignalGroups groups={data.signal_groups} symbol={data.symbol} />
 
-          {data.summary && (
-            <div className="card p-6">
-              <h3 className="text-base font-semibold mb-2">Summary</h3>
-              <p className="text-text-secondary text-sm leading-relaxed whitespace-pre-line">
-                {data.summary}
-              </p>
-            </div>
-          )}
-
-          {data.trade_plan && <TradePlanRich plan={data.trade_plan} />}
-
-          <section>
-            <h2 className="text-sm font-medium text-text-secondary uppercase tracking-wider mb-3">
-              Signal Breakdown
-            </h2>
-            <SignalGroups groups={data.signal_groups} />
-          </section>
+          {/* ── 08 · REFERENCE ─────────────────────────────────────────── */}
+          <SectionHeader index={8} label="Reference" subtitle="earnings history · transcript explainer" id="reference" />
 
           {data.earnings.length > 0 && <EarningsTable rows={data.earnings} />}
-
-          <RiskNarrative symbol={data.symbol} />
           <EarningsExplainer symbol={data.symbol} />
 
-          <p className="text-xs text-text-muted text-right">
+          <p className="text-xs text-text-muted text-right pt-2">
             Analyzed {formatRelativeTime(data.last_updated)}
           </p>
         </div>

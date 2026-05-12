@@ -72,10 +72,16 @@ def get_risk_narrative(symbol: str, force: bool = False) -> dict:
     bearish_count = (dd.get("signal_counts") or {}).get("bearish", 0)
     bullish_count = (dd.get("signal_counts") or {}).get("bullish", 0)
     bearish_signals = [
-        s.get("title") for s in (dd.get("signals") or [])
+        str(s.get("title") or s.get("name") or s.get("category") or "").strip()
+        for s in (dd.get("signals") or [])
         if s.get("direction") == "bearish"
-    ][:8]
-    plan_risks = (dd.get("trade_plan") or {}).get("risks") or []
+    ]
+    bearish_signals = [b for b in bearish_signals if b][:8]
+    plan_risks = [
+        str(r).strip()
+        for r in ((dd.get("trade_plan") or {}).get("risks") or [])
+        if r
+    ]
     summary = dd.get("summary") or ""
 
     bearish_block = "\n  - " + "\n  - ".join(bearish_signals) if bearish_signals else "  (none flagged)"
@@ -100,6 +106,8 @@ def get_risk_narrative(symbol: str, force: bool = False) -> dict:
         f"  balance_sheet        : leverage, liquidity, dilution risk concerns (n/a if obviously not relevant)\n"
         f"  macro_exposure       : how rates / FX / commodities / cycle could hurt this name\n"
         f"  worst_case           : a realistic worst-case scenario over 6-12 months and rough downside %\n"
+        f"  invalidates_if       : ONE concrete condition that would BREAK the bear thesis\n"
+        f"                         (i.e. that would force a more constructive view — be specific)\n"
         f"\n"
         f"Reply with JSON ONLY — no markdown fences, no commentary.\n"
     )
@@ -121,6 +129,7 @@ def get_risk_narrative(symbol: str, force: bool = False) -> dict:
         "balance_sheet": str(parsed.get("balance_sheet") or "").strip(),
         "macro_exposure": str(parsed.get("macro_exposure") or "").strip(),
         "worst_case": str(parsed.get("worst_case") or "").strip(),
+        "invalidates_if": str(parsed.get("invalidates_if") or "").strip(),
         "risk_rating": risk_rating,
         "risk_label": risk_label,
         "from_cache": False,

@@ -255,6 +255,95 @@ def _yield_curve(snapshot) -> dict | None:
 # ── Sector summary ───────────────────────────────────────────────
 
 
+_SECTOR_ETFS = {
+    "Technology": "XLK", "Healthcare": "XLV", "Financials": "XLF",
+    "Consumer Discretionary": "XLY", "Consumer Staples": "XLP",
+    "Energy": "XLE", "Industrials": "XLI", "Real Estate": "XLRE",
+    "Utilities": "XLU", "Materials": "XLB", "Communication Services": "XLC",
+}
+
+# Period → (sessions for current window, sessions for prior window)
+_PERIOD_TO_SESSIONS = {
+    "1D": (1, 1),   # too short for meaningful delta
+    "1W": (5, 5),
+    "1M": (21, 21),
+    "3M": (63, 63),
+    "6M": (126, 126),
+    "1Y": (252, 252),
+}
+
+
+def _attach_sector_deltas(flows: list[dict], period_key: str) -> None:
+    """Mutate `flows` in place, adding `change_pct_prior`, `delta_pp`, and
+    `accel` ('accelerating' | 'decelerating' | 'steady') per sector."""
+    if not flows:
+        return
+    cur_sessions, prior_sessions = _PERIOD_TO_SESSIONS.get(period_key, (21, 21))
+    if cur_sessions <= 1:
+        return  # 1D too short
+
+    try:
+        import yfinance as yf
+        tickers = list(_SECTOR_ETFS.values())
+        # We need 2× the window for prior-period math, plus headroom.
+        lookback_days = (cur_sessions + prior_sessions + 5) * 1.6  # buffer for weekends
+        period = "6mo"  # safe coverage for up to 1Y windows? no — bump if needed
+        if cur_sessions + prior_sessions > 100:
+            period = "1y"
+        if cur_sessions + prior_sessions > 200:
+            period = "2y"
+
+        df = yf.download(
+            tickers, period=period, interval="1d",
+            progress=False, auto_adjust=True, group_by="ticker", threads=False,
+        )
+
+        def _series(tkr: str):
+            try:
+                if df.columns.nlevels > 1 and tkr in df.columns.get_level_values(0):
+                    return df[tkr]["Close"].dropna().astype(float).tolist()
+            except Exception:
+                pass
+            return []
+
+        # Build sector→prior_pct map
+        prior_map: dict[str, float | None] = {}
+        for sector, ticker in _SECTOR_ETFS.items():
+            closes = _series(ticker)
+            n = len(closes)
+            needed = cur_sessions + prior_sessions + 1
+            if n < needed:
+                prior_map[sector] = None
+                continue
+            # last index of prior window = n - cur_sessions
+            prior_end   = closes[n - cur_sessions - 1]
+            prior_start = closes[n - cur_sessions - prior_sessions - 1]
+            if prior_start <= 0:
+                prior_map[sector] = None
+                continue
+            prior_map[sector] = round(((prior_end - prior_start) / prior_start) * 100.0, 2)
+
+        for s in flows:
+            sector = s.get("sector")
+            prior = prior_map.get(sector)
+            s["change_pct_prior"] = prior
+            if prior is None:
+                s["delta_pp"] = None
+                s["accel"] = None
+                continue
+            current = float(s.get("change_pct", 0))
+            delta = round(current - prior, 2)
+            s["delta_pp"] = delta
+            if delta > 1.0:
+                s["accel"] = "accelerating"
+            elif delta < -1.0:
+                s["accel"] = "decelerating"
+            else:
+                s["accel"] = "steady"
+    except Exception:
+        return
+
+
 def _sector_summary(flows: list[dict]) -> dict:
     if not flows:
         return {"net": 0.0, "inflow": 0.0, "outflow": 0.0, "gaining": 0, "losing": 0, "total": 0}
@@ -330,6 +419,13 @@ def get_pulse(period: str = "1M") -> dict:
             })
         except Exception:
             continue
+
+    # ── Sector rotation deltas — compare current period vs prior period of
+    #    same length to detect accelerating / decelerating sectors.
+    try:
+        _attach_sector_deltas(sector_flows, period_key)
+    except Exception:
+        pass
 
     return {
         "regime": regime,

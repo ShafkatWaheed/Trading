@@ -3,6 +3,9 @@ __pycache__/
 *.pyo
 .env
 trading.db
+trading.db-shm
+trading.db-wal
+trading.db-journal
 reports/*.pdf
 reports/*.html
 reports/*.json

@@ -28,7 +28,7 @@ export function EarningsExplainer({ symbol }: Props) {
   const ToneIcon = tone.icon;
 
   return (
-    <section className="card p-6">
+    <section className="card-muted p-6">
       <button
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between text-left"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Radio, CheckCircle2, AlertTriangle, XCircle, Circle } from "lucide-react";
+import { Radio, CheckCircle2, AlertTriangle, XCircle, Infinity as InfinityIcon, Info } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataSourcesApi } from "@/lib/api/endpoints";
@@ -41,11 +41,19 @@ const TONE: Record<
   },
   untracked: {
     badge: "badge-zinc",
-    label: "Untracked",
-    icon: Circle,
-    iconColor: "text-text-muted",
+    label: "No Quota",
+    icon: InfinityIcon,
+    iconColor: "text-text-secondary",
     border: "border-l-bg-borderHi",
   },
+};
+
+// Per-source explanation of *why* it shows "No Quota"
+const NO_QUOTA_REASON: Record<string, string> = {
+  yahoo:    "Scraped — no published rate limit.",
+  tavily:   "Plan-dependent — your tier determines the limit.",
+  exa:      "Plan-dependent — your tier determines the limit.",
+  congress: "Free MCP — no rate limit applies.",
 };
 
 function usageText(s: DataSourceStatus): string {
@@ -56,6 +64,7 @@ function usageText(s: DataSourceStatus): string {
 function SourceRow({ s }: { s: DataSourceStatus }) {
   const tone = TONE[s.status];
   const Icon = tone.icon;
+  const noQuotaReason = s.status === "untracked" ? NO_QUOTA_REASON[s.key] : undefined;
   return (
     <div className={cn("card p-4 border-l-[3px]", tone.border)}>
       <div className="flex items-center gap-4 flex-wrap">
@@ -71,6 +80,9 @@ function SourceRow({ s }: { s: DataSourceStatus }) {
           </div>
           <div className="text-[11px] text-text-muted mt-0.5">
             window: last {s.window_seconds}s
+            {noQuotaReason && (
+              <span className="ml-2 text-text-dim">· {noQuotaReason}</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -80,7 +92,10 @@ function SourceRow({ s }: { s: DataSourceStatus }) {
             </div>
             <div className="text-[10px] text-text-muted">calls in window</div>
           </div>
-          <span className={cn("badge text-[10px] whitespace-nowrap", tone.badge)}>
+          <span
+            className={cn("badge text-[10px] whitespace-nowrap", tone.badge)}
+            title={noQuotaReason || undefined}
+          >
             {tone.label}
           </span>
         </div>
@@ -153,15 +168,18 @@ export default function DataSourcesPage() {
             ))}
           </div>
 
-          <p className="text-[11px] text-text-muted mt-4 leading-relaxed">
-            Counts come from the persistent <code className="font-mono">api_log</code> table, so
-            they reflect every process that talks to the data layer (api, dashboard,
-            scripts).{" "}
-            <span className="text-text-dim">
-              “Untracked” means the provider has no documented free-tier limit we count
-              against — the call count is shown for visibility only. Auto-refreshes every 5s.
-            </span>
-          </p>
+          <div className="card p-4 mt-4 flex items-start gap-3">
+            <Info size={14} className="text-text-muted mt-0.5 shrink-0" strokeWidth={2} />
+            <div className="text-[11px] text-text-secondary leading-relaxed">
+              <div className="font-medium text-text-primary mb-1">All providers are tracked.</div>
+              Calls are logged to the persistent <code className="font-mono text-text-muted">api_log</code> table by
+              every process that talks to the data layer (api, dashboard, scripts).
+              The <span className="font-medium text-text-secondary">“No Quota”</span> badge
+              just means there's no published rate-limit number we can gauge against —
+              the call count is still counted and shown for visibility.
+              <div className="text-text-dim mt-1.5">Auto-refreshes every 5s.</div>
+            </div>
+          </div>
         </>
       )}
     </div>

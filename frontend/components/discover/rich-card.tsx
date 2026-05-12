@@ -136,7 +136,16 @@ function Week52Bar({ op }: { op: Op }) {
   );
 }
 
-export function RichOpportunityCard({ op, rank }: { op: Op; rank: number }) {
+export function RichOpportunityCard({
+  op, rank, selected = false, onToggleSelect, adjustedScore,
+}: {
+  op: Op;
+  rank: number;
+  selected?: boolean;
+  onToggleSelect?: (symbol: string) => void;
+  /** When set, shows the regime-adjusted score alongside the original. */
+  adjustedScore?: number | null;
+}) {
   const change = op.change_pct ?? 0;
   const positive = change > 0;
   const negative = change < 0;
@@ -145,16 +154,45 @@ export function RichOpportunityCard({ op, rank }: { op: Op; rank: number }) {
     <div className={cn(
       "card p-5 transition-all hover:border-bg-borderHi",
       rank === 0 && "card-glow-amber",
+      selected && "ring-1 ring-accent-violet/60",
     )}>
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
+            {onToggleSelect && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleSelect(op.symbol); }}
+                className={cn(
+                  "w-4 h-4 rounded border-[1.5px] grid place-items-center transition-colors shrink-0",
+                  selected
+                    ? "bg-accent-violet border-accent-violet text-white"
+                    : "bg-bg-base border-bg-borderHi hover:border-accent-violet/60"
+                )}
+                aria-label={selected ? `Unselect ${op.symbol}` : `Select ${op.symbol}`}
+                title={selected ? "Unselect" : "Select for compare"}
+              >
+                {selected && (
+                  <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6.5l2.5 2.5L10 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </button>
+            )}
             <span className="text-text-dim text-[11px] font-bold tabular-nums">#{rank + 1}</span>
             <span className="text-xl font-semibold tracking-tight">{op.symbol}</span>
             <span className={labelTone(op.label)}>
               <span className="tabular-nums font-bold mr-1">{op.score.toFixed(0)}</span>
               {op.label}
             </span>
+            {adjustedScore != null && adjustedScore !== Math.round(op.score) && (
+              <span
+                className="badge bg-accent-violet/10 text-accent-violet border-accent-violet/40"
+                title="Score re-weighted for current market regime"
+              >
+                <span className="tabular-nums font-bold mr-1">{adjustedScore}</span>
+                regime-adj
+              </span>
+            )}
           </div>
           {op.sector_label && (
             <p className="text-[11px] text-text-muted mt-1 truncate flex items-center gap-1.5">

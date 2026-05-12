@@ -2,13 +2,13 @@
 from fastapi import APIRouter, Query, HTTPException
 
 from api.services import simulation_service, portfolio_sim_agent_service
-from api.schemas import PortfolioSimRequest, PortfolioSimResponse
+from api.schemas import WalkForwardSimRequest, WalkForwardSimResponse
 
 router = APIRouter(prefix="/simulation", tags=["simulation"])
 
 
-@router.post("/portfolio-agent", response_model=PortfolioSimResponse)
-def portfolio_agent(req: PortfolioSimRequest) -> dict:
+@router.post("/portfolio-agent", response_model=WalkForwardSimResponse)
+def portfolio_agent(req: WalkForwardSimRequest) -> dict:
     return portfolio_sim_agent_service.run_walk_forward(
         start_date=req.start_date,
         end_date=req.end_date,

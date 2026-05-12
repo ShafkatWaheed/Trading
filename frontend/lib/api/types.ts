@@ -15,6 +15,9 @@ export type SectorFlow = {
   sector: string;
   change_pct: number;
   flow: "inflow" | "outflow";
+  change_pct_prior?: number | null;
+  delta_pp?: number | null;
+  accel?: "accelerating" | "decelerating" | "steady" | null;
 };
 
 export type SectorSummary = {
@@ -64,6 +67,8 @@ export type CalendarEvent = {
 
 export type CalendarPayload = {
   events: CalendarEvent[];
+  next_event?: CalendarEvent | null;
+  next_high_impact?: CalendarEvent | null;
   last_updated: string;
 };
 
@@ -827,6 +832,15 @@ export type AiAnalystResponse = {
   error?: string | null;
 };
 
+export type AiAnalystMultiResponse = {
+  period: string;
+  mode: "single" | "multi" | string;
+  cycles: number;
+  rows: AiAnalystResponse[];
+  error?: string | null;
+  last_updated?: string | null;
+};
+
 
 // ── Data Sources / Rate Limits ────────────────────────────────────
 
@@ -1037,10 +1051,349 @@ export type RiskNarrative = {
   balance_sheet?: string;
   macro_exposure?: string;
   worst_case?: string;
+  invalidates_if?: string;
   risk_rating?: number | null;
   risk_label?: string | null;
   error?: string | null;
   raw?: string | null;
+  from_cache?: boolean;
+};
+
+export type BubbleScore = {
+  symbol: string;
+  score: number;
+  label: string;
+  components: {
+    growth_gap: number;
+    valuation: number;
+    momentum: number;
+  };
+  metrics: {
+    price_change_1y_pct?: number | null;
+    price_change_3m_pct?: number | null;
+    revenue_growth_pct?: number | null;
+    earnings_growth_pct?: number | null;
+    growth_gap_pct?: number | null;
+    vibes_share_pct?: number | null;
+    fundamental_growth_pct?: number | null;
+    pe_ratio?: number | null;
+    ps_ratio?: number | null;
+    pb_ratio?: number | null;
+    pfcf_ratio?: number | null;
+  };
+  verdict: string;
+  reasons?: string[];
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type BullNarrative = {
+  symbol: string;
+  growth_drivers?: string;
+  competitive_moat?: string;
+  multiple_expansion?: string;
+  catalysts?: string;
+  best_case?: string;
+  invalidates_if?: string;
+  error?: string | null;
+  raw?: string | null;
+  from_cache?: boolean;
+};
+
+export type AnalystConsensus = {
+  symbol: string;
+  rating?: string | null;
+  rating_mean?: number | null;
+  analyst_count?: number | null;
+  current_price?: number | null;
+  target_mean?: number | null;
+  target_high?: number | null;
+  target_low?: number | null;
+  upside_pct?: number | null;
+  ratings_breakdown: {
+    strong_buy: number; buy: number; hold: number; sell: number; strong_sell: number;
+  };
+  error?: string | null;
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type PeerValuationRow = {
+  symbol: string;
+  is_self: boolean;
+  pe_ratio?: number | null;
+  ps_ratio?: number | null;
+  pfcf_ratio?: number | null;
+  price_change_1y_pct?: number | null;
+};
+
+export type PeerValuation = {
+  symbol: string;
+  rows: PeerValuationRow[];
+  medians: {
+    pe_ratio?: number | null;
+    ps_ratio?: number | null;
+    pfcf_ratio?: number | null;
+    price_change_1y_pct?: number | null;
+  };
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type NewsFeedItem = {
+  title: string;
+  snippet?: string;
+  url?: string;
+  source?: string;
+  sentiment: "bullish" | "bearish" | "neutral" | string;
+  sentiment_score: number;
+  published?: string | null;
+};
+
+export type NewsFeed = {
+  symbol: string;
+  items: NewsFeedItem[];
+  bull_count: number;
+  bear_count: number;
+  neutral_count: number;
+  net_sentiment: "bullish" | "bearish" | "mixed" | "no coverage" | string;
+  net_score: number;
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type CatalystEvent = {
+  date: string;
+  days_out: number;
+  title: string;
+  kind: "earnings" | "dividend" | "macro" | "split" | string;
+  weight: "low" | "med" | "high" | "very_high" | string;
+  detail?: string | null;
+  symbol_specific: boolean;
+};
+
+export type Recommendation = {
+  symbol: string;
+  action: "STRONG_BUY" | "BUY" | "BUY_ON_DIP" | "HOLD" | "TRIM" | "SELL" | "STRONG_SELL" | string;
+  action_label: string;
+  tone: "strong_bullish" | "bullish" | "cautious_bullish" | "neutral" | "cautious_bearish" | "bearish" | "strong_bearish" | string;
+  headline: string;
+  reasoning: string;
+  wait_until_price?: number | null;
+  wait_reason?: string | null;
+  reevaluate?: string | null;
+  components: {
+    verdict?: string | null;
+    risk_rating?: number | null;
+    bubble_score?: number | null;
+    bubble_label?: string | null;
+    analyst_rating?: string | null;
+    analyst_upside?: number | null;
+    analyst_target?: number | null;
+    insider?: string | null;
+    congress?: string | null;
+    price?: number | null;
+  };
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type SignalEvidenceItem = {
+  signal_key?: string | null;
+  win_rate?: number | null;
+  avg_return_pct?: number | null;
+  total_trades?: number | null;
+  max_gain_pct?: number | null;
+  max_loss_pct?: number | null;
+  hold_days?: number | null;
+  grade?: string | null;
+  error?: string | null;
+};
+
+export type SignalEvidence = {
+  symbol: string;
+  hold_days: number;
+  signals_tested: number;
+  signals_total: number;
+  evidence: Record<string, SignalEvidenceItem>;
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type MarketStatus = {
+  status: "open" | "pre_market" | "after_hours" | "closed" | string;
+  label: string;
+  minutes_to_open?: number | null;
+  minutes_to_close?: number | null;
+};
+
+export type IndexSnapshot = {
+  key: string;
+  ticker: string;
+  display: string;
+  price?: number | null;
+  change?: number | null;
+  change_pct?: number | null;
+  spark?: number[];
+  change_30d_pct?: number | null;
+};
+
+export type BreadthMetrics = {
+  spy_vs_rsp_1m_pp?: number | null;
+  iwm_vs_spy_1m_pp?: number | null;
+  vix_level?: number | null;
+  vix_regime?: string | null;
+  spy_pct_above_50d?: number | null;
+  spy_pct_above_200d?: number | null;
+  headline: string;
+};
+
+export type MoverRow = {
+  symbol: string;
+  price: number;
+  change_pct: number;
+  change: number;
+};
+
+export type MarketDashboard = {
+  status: MarketStatus;
+  indices: IndexSnapshot[];
+  breadth: BreadthMetrics;
+  movers: {
+    gainers_1d: MoverRow[];
+    losers_1d: MoverRow[];
+    gainers_5d: MoverRow[];
+    losers_5d: MoverRow[];
+    error?: string | null;
+  };
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type MarketTakeaway = {
+  regime: string;
+  stance: string;
+  tone: "bullish" | "cautious_bullish" | "cautious" | "neutral" | "defensive" | string;
+  headline: string;
+  bullets: string[];
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type MarketNewsItem = {
+  title: string;
+  snippet?: string;
+  url?: string;
+  source?: string;
+  sentiment: string;
+  sentiment_score: number;
+  published?: string | null;
+};
+
+export type MarketNews = {
+  items: MarketNewsItem[];
+  bull_count: number;
+  bear_count: number;
+  neutral_count: number;
+  net_sentiment: string;
+  net_score: number;
+  provider?: string | null;
+  source_warning?: string | null;
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type BenchmarkSparkPoint = {
+  date: string;
+  close: number;
+  idx: number;
+};
+
+export type Benchmarks = {
+  symbol: string;
+  period: string;
+  sector?: string | null;
+  sector_etf?: string | null;
+  spy_spark: BenchmarkSparkPoint[];
+  sector_spark: BenchmarkSparkPoint[];
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type CatalystCalendar = {
+  symbol: string;
+  horizon_days: number;
+  events: CatalystEvent[];
+  earnings_count: number;
+  macro_count: number;
+  dividend_count: number;
+  last_updated: string;
+  from_cache?: boolean;
+};
+
+export type SmartMoney = {
+  symbol: string;
+  institutional: {
+    top_holders: Array<{
+      name?: string | null;
+      type?: string | null;
+      value_usd?: number | null;
+      pct_outstanding?: number | null;
+      pct_portfolio?: number | null;
+      as_of?: string | null;
+    }>;
+    total_known_holders: number;
+    error?: string | null;
+  };
+  insider: {
+    total_trades: number;
+    total_buys: number;
+    total_sells: number;
+    unique_insiders: number;
+    cluster_buy: boolean;
+    buy_value_usd?: number | null;
+    sell_value_usd?: number | null;
+    net_value_usd?: number | null;
+    signal: string;
+    recent_trades: Array<{
+      filer: string;
+      title?: string | null;
+      transaction?: string | null;
+      shares?: number | null;
+      price?: number | null;
+      value_usd?: number | null;
+      transaction_date?: string | null;
+      filing_date?: string | null;
+    }>;
+    error?: string | null;
+  };
+  congress: {
+    total_trades: number;
+    total_buys: number;
+    total_sells: number;
+    unique_politicians: number;
+    net_sentiment: string;
+    top_buyers: string[];
+    top_sellers: string[];
+    recent_trades: Array<{
+      politician: string;
+      party?: string | null;
+      chamber?: string | null;
+      state?: string | null;
+      transaction?: string | null;
+      amount_range?: string | null;
+      amount_low_usd?: number | null;
+      amount_high_usd?: number | null;
+      trade_date?: string | null;
+      filed_date?: string | null;
+      days_to_file?: number | null;
+      committees: string[];
+    }>;
+    party_breakdown: Record<string, Record<string, number>>;
+    error?: string | null;
+  };
+  summary: string;
+  last_updated: string;
   from_cache?: boolean;
 };
 

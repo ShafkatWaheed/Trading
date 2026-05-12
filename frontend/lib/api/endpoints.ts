@@ -25,6 +25,7 @@ import type {
   MultiStockResponse,
   PortfolioSimResponse,
   AiAnalystResponse,
+  AiAnalystMultiResponse,
   AlertItem,
   AlertSummary,
   DataSourcesResponse,
@@ -40,11 +41,27 @@ import type {
   FreshnessQueueResponse,
   RiskNarrative,
   EarningsExplanation,
+  BubbleScore,
+  BullNarrative,
+  AnalystConsensus,
+  PeerValuation,
+  SmartMoney,
+  NewsFeed,
+  CatalystCalendar,
+  Benchmarks,
+  Recommendation,
+  SignalEvidence,
+  MarketDashboard,
+  MarketTakeaway,
+  MarketNews,
 } from "./types";
 
 export const marketApi = {
   pulse: (period: string = "1M") =>
     api.get<MarketPulse>(`/market/pulse?period=${encodeURIComponent(period)}`),
+  dashboard: () => api.get<MarketDashboard>("/market/dashboard"),
+  takeaway:  () => api.get<MarketTakeaway>("/market/takeaway"),
+  news:      () => api.get<MarketNews>("/market/news"),
   calendar: (days = 60, limit = 12) =>
     api.get<CalendarPayload>(`/market/calendar?days=${days}&limit=${limit}`),
   geopolitical: () => api.get<GeopoliticalPayload>("/market/geopolitical"),
@@ -98,8 +115,48 @@ export const backtestApi = {
     api.post<PortfolioSimResponse>("/backtest/portfolio", {
       symbols, strategy, initial_capital, position_size_pct,
     }),
-  aiAnalyst: (symbol: string, period: string, cycles = 12, mode: "single" | "multi" = "single") =>
-    api.post<AiAnalystResponse>("/backtest/ai-analyst", { symbol, period, cycles, mode }),
+  // Bypass the Next.js dev proxy for this long-running call. The dev rewrite
+  // drops connections after ~60-90s, but the backend takes several minutes for
+  // multi-mode. Direct fetch to :8000 + CORS (allowed in api/main.py) works.
+  // In production, replace with the deployed API origin (or move behind a
+  // proxy whose timeout you control).
+  aiAnalyst: async (symbol: string, period: string, cycles = 12, mode: "single" | "multi" = "single") => {
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev
+      ? "http://localhost:8000/backtest/ai-analyst"
+      : "/api/backtest/ai-analyst";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, period, cycles, mode }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as AiAnalystResponse;
+  },
+  aiAnalystMulti: async (
+    symbols: string[], period: string, cycles = 8, mode: "single" | "multi" = "single",
+  ) => {
+    // Same dev-proxy bypass as single; multi-stock can take minutes for N stocks.
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev
+      ? "http://localhost:8000/backtest/ai-analyst-multi"
+      : "/api/backtest/ai-analyst-multi";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols, period, cycles, mode }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as AiAnalystMultiResponse;
+  },
 };
 
 export const alertsApi = {
@@ -145,6 +202,46 @@ export const stocksApi = {
   riskNarrative: (ticker: string, force = false) =>
     api.get<RiskNarrative>(
       `/stocks/${encodeURIComponent(ticker)}/risk-narrative${force ? "?force=true" : ""}`
+    ),
+  bubbleScore: (ticker: string, force = false) =>
+    api.get<BubbleScore>(
+      `/stocks/${encodeURIComponent(ticker)}/bubble-score${force ? "?force=true" : ""}`
+    ),
+  bullNarrative: (ticker: string, force = false) =>
+    api.get<BullNarrative>(
+      `/stocks/${encodeURIComponent(ticker)}/bull-narrative${force ? "?force=true" : ""}`
+    ),
+  analystConsensus: (ticker: string, force = false) =>
+    api.get<AnalystConsensus>(
+      `/stocks/${encodeURIComponent(ticker)}/analyst-consensus${force ? "?force=true" : ""}`
+    ),
+  peerValuation: (ticker: string, force = false) =>
+    api.get<PeerValuation>(
+      `/stocks/${encodeURIComponent(ticker)}/peer-valuation${force ? "?force=true" : ""}`
+    ),
+  smartMoney: (ticker: string, force = false) =>
+    api.get<SmartMoney>(
+      `/stocks/${encodeURIComponent(ticker)}/smart-money${force ? "?force=true" : ""}`
+    ),
+  newsFeed: (ticker: string, force = false) =>
+    api.get<NewsFeed>(
+      `/stocks/${encodeURIComponent(ticker)}/news-feed${force ? "?force=true" : ""}`
+    ),
+  catalystCalendar: (ticker: string, force = false) =>
+    api.get<CatalystCalendar>(
+      `/stocks/${encodeURIComponent(ticker)}/catalyst-calendar${force ? "?force=true" : ""}`
+    ),
+  benchmarks: (ticker: string, period: string = "3M") =>
+    api.get<Benchmarks>(
+      `/stocks/${encodeURIComponent(ticker)}/benchmarks?period=${encodeURIComponent(period)}`
+    ),
+  recommendation: (ticker: string, force = false) =>
+    api.get<Recommendation>(
+      `/stocks/${encodeURIComponent(ticker)}/recommendation${force ? "?force=true" : ""}`
+    ),
+  signalEvidence: (ticker: string, force = false) =>
+    api.get<SignalEvidence>(
+      `/stocks/${encodeURIComponent(ticker)}/signal-evidence${force ? "?force=true" : ""}`
     ),
 };
 

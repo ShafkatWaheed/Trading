@@ -178,7 +178,18 @@ def get_economic_calendar(days_window: int = 60, limit: int = 12) -> dict:
     events.extend(_watchlist_earnings(now, days_window))
 
     events.sort(key=lambda x: x["days_away"])
+
+    # Most-imminent high-impact event for the "Next 24h" pill
+    high_impact = [e for e in events if e.get("impact") == "high" and e.get("days_away", 999) >= 0]
+    next_high_impact = high_impact[0] if high_impact else None
+
+    # The most-imminent ANY event (for the broader "next" callout)
+    upcoming = [e for e in events if e.get("days_away", 999) >= 0]
+    next_event = upcoming[0] if upcoming else None
+
     return {
         "events": events[:limit],
+        "next_event": next_event,
+        "next_high_impact": next_high_impact,
         "last_updated": now.isoformat() + "Z",
     }
