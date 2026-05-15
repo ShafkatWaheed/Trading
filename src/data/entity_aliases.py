@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 
+from src.data.sec_10k_extractor import parse_exhibit_21_subsidiaries
 from src.data.sec_edgar import SEC_USER_AGENT
 from src.utils.db import get_connection, init_db, log_api_call
 
@@ -361,3 +362,36 @@ def load_sec_mapping_from_provider() -> dict[str, tuple[str, str]]:
         cik_padded = str(cik_int).zfill(10)
         mapping[ticker.upper()] = (cik_padded, title)
     return mapping
+
+
+def seed_subsidiaries_from_text(
+    *,
+    parent_ticker: str,
+    exhibit_21_text: str,
+    alias_source: str = "exhibit21",
+) -> int:
+    """Parse Exhibit 21 text and insert subsidiary aliases pointing at the parent ticker.
+
+    Uses src.data.sec_10k_extractor.parse_exhibit_21_subsidiaries to do
+    the parsing — this seeder only handles DB insertion.
+
+    Returns count of inserted alias rows.
+    """
+    subs = parse_exhibit_21_subsidiaries(exhibit_21_text)
+    if not subs:
+        return 0
+
+    now = _now_iso()
+    inserted = 0
+    for sub in subs:
+        insert_alias(
+            ticker=parent_ticker,    # insert_alias uppercases internally
+            cik=None, uei=None,
+            alias_type="subsidiary",
+            alias_name=sub,
+            alias_source=alias_source,
+            confidence=1.0,
+            created_at=now,
+        )
+        inserted += 1
+    return inserted
