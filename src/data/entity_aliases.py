@@ -228,3 +228,65 @@ def resolve_ticker(
         )
     finally:
         conn.close()
+
+
+# ── Seeders ──────────────────────────────────────────────────────────
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+_DEFAULT_OVERRIDES_PATH = Path(__file__).resolve().parent / "entity_overrides.yaml"
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def seed_from_overrides(yaml_path: Path | None = None) -> int:
+    """Load manual overrides from YAML and insert into entity_aliases.
+
+    Returns the count of inserted alias rows. Missing file → 0 (silent).
+    """
+    import yaml
+
+    path = yaml_path if yaml_path is not None else _DEFAULT_OVERRIDES_PATH
+    if not path.exists():
+        return 0
+
+    with path.open("r") as f:
+        data = yaml.safe_load(f) or {}
+
+    overrides = data.get("overrides", []) or []
+    now = _now_iso()
+    inserted = 0
+
+    for entry in overrides:
+        ticker = entry.get("ticker")
+        if not ticker:
+            continue
+        cik = entry.get("cik")
+        uei = entry.get("uei")
+
+        for alias in entry.get("aliases", []) or []:
+            insert_alias(
+                ticker=ticker, cik=cik, uei=uei,
+                alias_type="override", alias_name=alias,
+                alias_source="override", confidence=1.0, created_at=now,
+            )
+            inserted += 1
+        for sub in entry.get("subsidiaries", []) or []:
+            insert_alias(
+                ticker=ticker, cik=None, uei=None,
+                alias_type="subsidiary", alias_name=sub,
+                alias_source="override", confidence=1.0, created_at=now,
+            )
+            inserted += 1
+        for brand in entry.get("brands", []) or []:
+            insert_alias(
+                ticker=ticker, cik=None, uei=None,
+                alias_type="brand", alias_name=brand,
+                alias_source="override", confidence=1.0, created_at=now,
+            )
+            inserted += 1
+
+    return inserted

@@ -1,0 +1,58 @@
+# Entity-alias manual overrides.
+# Used by src/data/entity_aliases.py::seed_from_overrides().
+#
+# Each override maps a ticker to a list of aliases that fuzzy matching
+# may miss (dual-class shares, well-known subsidiaries, common nicknames).
+#
+# Schema:
+#   overrides:
+#     - ticker: STR (uppercase)
+#       cik: STR (optional, 10-digit zero-padded)
+#       uei: STR (optional, 12-char SAM.gov UEI)
+#       aliases: [STR, ...]         # alias_type='override'
+#       subsidiaries: [STR, ...]    # alias_type='subsidiary'
+#       brands: [STR, ...]          # alias_type='brand'
+
+overrides:
+  # Dual-class share structures
+  - ticker: BRK.B
+    aliases:
+      - "Berkshire Hathaway Class B"
+      - "Berkshire B"
+  - ticker: BRK.A
+    aliases:
+      - "Berkshire Hathaway Class A"
+      - "Berkshire A"
+  - ticker: GOOGL
+    aliases:
+      - "Alphabet Class A"
+      - "Google Class A"
+  - ticker: GOOG
+    aliases:
+      - "Alphabet Class C"
+      - "Google Class C"
+
+  # Well-known subsidiaries (seeded explicitly; 10-K Exhibit 21 will add more)
+  - ticker: AAPL
+    subsidiaries:
+      - "Beats Electronics LLC"
+      - "Apple Operations International"
+  - ticker: GOOGL
+    subsidiaries:
+      - "YouTube LLC"
+      - "DeepMind Technologies Limited"
+      - "Waymo LLC"
+  - ticker: META
+    subsidiaries:
+      - "Instagram LLC"
+      - "WhatsApp LLC"
+      - "Oculus VR LLC"
+
+  # Brand-name aliases (consumer-facing names that differ from ticker)
+  - ticker: MO
+    brands:
+      - "Philip Morris USA"
+      - "Marlboro"
+  - ticker: PG
+    brands:
+      - "Procter and Gamble"
