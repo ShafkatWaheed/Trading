@@ -64,9 +64,9 @@ def test_fuzzy_information_threshold_is_looser():
 def test_fuzzy_match_returns_actual_confidence_score():
     _seed("AAPL", "apple")
     r = resolve_ticker("aple", use_fuzzy=True, min_confidence=0.8)
-    if r is not None:
-        # Confidence is the rapidfuzz score / 100, in (0, 1).
-        assert 0.0 < r.confidence < 1.0
+    assert r is not None, "fuzzy match for 'aple' → 'apple' should succeed at 0.8 threshold"
+    # Confidence is the rapidfuzz score / 100, in (0, 1) exclusive.
+    assert 0.0 < r.confidence < 1.0
 
 
 def test_ambiguous_match_picks_highest_score():
