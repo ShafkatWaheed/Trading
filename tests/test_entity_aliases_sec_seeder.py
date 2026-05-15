@@ -53,3 +53,34 @@ def test_seed_from_sec_mapping_skips_blank_entries():
     }
     n = seed_from_sec_mapping(mapping, alias_source="sec_test")
     assert n == 1
+
+
+def test_load_sec_mapping_zero_pads_cik(monkeypatch):
+    """The SEC company_tickers.json shape uses int cik_str; the loader must
+    zero-pad to the canonical 10-digit string CIK."""
+    from src.data import entity_aliases
+
+    class _FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+            }
+
+    monkeypatch.setattr("httpx.get", lambda *a, **k: _FakeResp())
+    mapping = entity_aliases.load_sec_mapping_from_provider()
+    assert mapping == {"AAPL": ("0000320193", "Apple Inc.")}
+
+
+def test_load_sec_mapping_returns_empty_on_exception(monkeypatch):
+    """Network/parse failures must be swallowed and return {} so seeders
+    don't crash mid-pipeline. Failure is logged via log_api_call."""
+    from src.data import entity_aliases
+
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("httpx.get", _boom)
+    assert entity_aliases.load_sec_mapping_from_provider() == {}

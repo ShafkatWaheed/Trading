@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.utils.db import get_connection, init_db
+import httpx
+
+from src.data.sec_edgar import SEC_USER_AGENT
+from src.utils.db import get_connection, init_db, log_api_call
 
 # NOTE: `yaml` (in seed_from_overrides) and `rapidfuzz` (in resolve_ticker)
 # are intentionally lazy-imported at their call sites to avoid making them
@@ -329,17 +332,22 @@ def load_sec_mapping_from_provider() -> dict[str, tuple[str, str]]:
     Returns {} on failure (so seeders don't crash mid-pipeline).
     """
     try:
-        import httpx
         # SEC publishes the full ticker→CIK list as a single JSON file.
         # This is the standard source SECEdgarProvider uses for CIK lookup.
         resp = httpx.get(
             "https://www.sec.gov/files/company_tickers.json",
-            headers={"User-Agent": "Trading-Research-App research@example.com"},
+            headers={"User-Agent": SEC_USER_AGENT},
             timeout=30.0,
         )
         resp.raise_for_status()
         data = resp.json()
-    except Exception:
+    except Exception as exc:
+        log_api_call(
+            source="sec_edgar",
+            endpoint="company_tickers.json",
+            status="error",
+            error=str(exc),
+        )
         return {}
 
     mapping: dict[str, tuple[str, str]] = {}
