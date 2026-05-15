@@ -415,6 +415,20 @@ def init_db() -> None:
             rate_limit_remaining    INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_source_freshness_next_due ON source_freshness(next_due_at);
+
+        -- ── Sector-influence Wave 1: forward-looking catalysts ───────────
+        CREATE TABLE IF NOT EXISTS known_future_events (
+            event_id        TEXT PRIMARY KEY,
+            ticker          TEXT,
+            event_type      TEXT NOT NULL,
+            event_date      TEXT NOT NULL,
+            source          TEXT NOT NULL,
+            source_url      TEXT,
+            details_json    TEXT,
+            added_at        TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_known_future_events_date ON known_future_events(event_date);
+        CREATE INDEX IF NOT EXISTS idx_known_future_events_ticker ON known_future_events(ticker);
     """)
     conn.commit()
     conn.close()
