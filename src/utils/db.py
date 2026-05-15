@@ -380,6 +380,26 @@ def init_db() -> None:
             flagged_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_freshness_status ON edge_freshness(status);
+
+        -- ── Sector-influence Wave 1: entity alias table ───────────────────
+        CREATE TABLE IF NOT EXISTS entity_aliases (
+            ticker          TEXT NOT NULL,
+            cik             TEXT,
+            uei             TEXT,
+            alias_type      TEXT NOT NULL CHECK (alias_type IN (
+                                'legal', 'common', 'subsidiary',
+                                'uspto_canonical', 'sam_business_name',
+                                'brand', 'override'
+                            )),
+            alias_name      TEXT NOT NULL,
+            alias_source    TEXT NOT NULL,
+            confidence      REAL NOT NULL,
+            created_at      TEXT NOT NULL,
+            PRIMARY KEY (ticker, alias_type, alias_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_name ON entity_aliases(alias_name);
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_cik ON entity_aliases(cik);
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_uei ON entity_aliases(uei);
     """)
     conn.commit()
     conn.close()
