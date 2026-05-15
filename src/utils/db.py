@@ -400,6 +400,20 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_entity_aliases_name ON entity_aliases(alias_name);
         CREATE INDEX IF NOT EXISTS idx_entity_aliases_cik ON entity_aliases(cik);
         CREATE INDEX IF NOT EXISTS idx_entity_aliases_uei ON entity_aliases(uei);
+
+        -- ── Sector-influence Wave 1: per-source freshness registry ───────
+        CREATE TABLE IF NOT EXISTS source_freshness (
+            source                  TEXT PRIMARY KEY,
+            cadence                 TEXT NOT NULL,      -- 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly'
+            ttl_seconds             INTEGER NOT NULL,
+            last_fetched_at         TEXT,
+            next_due_at             TEXT,
+            last_status             TEXT,               -- 'ok' | 'error' | 'rate_limited' | 'empty'
+            last_error              TEXT,
+            last_payload_count      INTEGER,
+            rate_limit_budget       INTEGER,
+            rate_limit_remaining    INTEGER
+        );
     """)
     conn.commit()
     conn.close()
