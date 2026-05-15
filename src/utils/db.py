@@ -414,6 +414,7 @@ def init_db() -> None:
             rate_limit_budget       INTEGER,
             rate_limit_remaining    INTEGER
         );
+        CREATE INDEX IF NOT EXISTS idx_source_freshness_next_due ON source_freshness(next_due_at);
     """)
     conn.commit()
     conn.close()

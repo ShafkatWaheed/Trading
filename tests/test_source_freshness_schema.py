@@ -26,3 +26,13 @@ def test_source_freshness_columns():
         "rate_limit_budget", "rate_limit_remaining",
     }
     assert expected.issubset(cols), f"missing columns: {expected - cols}"
+
+
+def test_source_freshness_next_due_index():
+    init_db()
+    conn = get_connection()
+    idxs = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='source_freshness'"
+    ).fetchall()}
+    conn.close()
+    assert "idx_source_freshness_next_due" in idxs
