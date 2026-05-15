@@ -13,6 +13,7 @@ import ta
 
 from src.models.backtest_types import BacktestResult, BacktestTrade
 from src.utils.point_in_time import enforce
+from src.analysis.edge_validator import LookaheadViolation, assert_no_lookahead
 
 
 # All supported signals with their detection logic
@@ -1099,3 +1100,21 @@ def _build_result(symbol: str, signal_name: str, hold_days: int,
         sharpe_ratio=round(sharpe, 4),
         trades=trades,
     )
+
+
+# ── Point-in-time gate for sector-influence SignalReading inputs ──
+#
+# Called by per-step backtest code that consumes the new SignalReading
+# stream (Wave 2+). Fail-loud, not warn-soft: a lookahead bug must
+# crash the backtest. See:
+#   src/analysis/edge_validator.py::assert_no_lookahead
+#   docs/superpowers/specs/2026-05-15-sector-influence-signals-design.md  §8
+
+
+def check_readings_point_in_time(readings, *, decision_timestamp: str) -> None:
+    """Thin wrapper used by backtest decision steps.
+
+    Re-exports assert_no_lookahead in the backtester namespace so the
+    backtest loop can `from src.analysis.backtester import check_readings_point_in_time`.
+    """
+    assert_no_lookahead(readings, decision_timestamp=decision_timestamp)
