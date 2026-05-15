@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, timezone
 
 import httpx
+from bs4 import BeautifulSoup
 
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import get_connection, init_db
@@ -410,16 +411,9 @@ def _main() -> int:
     return 0 if out["failed"] == 0 else 1
 
 
-if __name__ == "__main__":
-    sys.exit(_main())
-
-
 # ── Exhibit 21 (Subsidiaries of the Registrant) ──────────────────────
 # Used by sector-influence Wave 1 to seed parent→subsidiary aliases
 # in `entity_aliases`. See Plan: 2026-05-15-sector-influence-wave-1.
-
-from bs4 import BeautifulSoup
-
 
 _EXHIBIT_HEADER_RE = re.compile(
     r"(?:exhibit\s*21|list\s+of\s+subsidiaries|subsidiaries\s+of\s+the\s+registrant)",
@@ -519,3 +513,7 @@ def parse_exhibit_21_subsidiaries(text: str) -> list[str]:
         seen.add(key)
         out.append(n)
     return out
+
+
+if __name__ == "__main__":
+    sys.exit(_main())
