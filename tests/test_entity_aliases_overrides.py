@@ -57,7 +57,6 @@ def test_seed_from_overrides_missing_file_returns_zero(tmp_path: Path):
 
 
 def test_seed_from_overrides_default_path_works():
-    """Default path points to src/data/entity_overrides.yaml (the real file)."""
-    # Should not raise even if file empty/minimal.
+    """Default path should load the real entity_overrides.yaml and seed >0 rows."""
     n = seed_from_overrides()
-    assert n >= 0
+    assert n > 0, "expected at least one entry seeded from default entity_overrides.yaml"

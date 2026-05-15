@@ -14,6 +14,15 @@ NOT import from `src/analysis/` or `src/reports/`.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from src.utils.db import get_connection, init_db
+
+# NOTE: `yaml` (in seed_from_overrides) and `rapidfuzz` (in resolve_ticker)
+# are intentionally lazy-imported at their call sites to avoid making them
+# mandatory dependencies at module-load time.
 
 # Words stripped during normalization (lowercased, after punctuation removal).
 # Order matters: longer phrases first to avoid leaving "holdings" when
@@ -52,11 +61,6 @@ def normalize_name(raw: str) -> str:
     s = _LONE_AMP_RE.sub(" ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
-
-
-from dataclasses import dataclass
-
-from src.utils.db import get_connection, init_db
 
 
 # Single source of truth — must match the CHECK constraint on
@@ -232,9 +236,6 @@ def resolve_ticker(
 
 # ── Seeders ──────────────────────────────────────────────────────────
 
-from datetime import datetime, timezone
-from pathlib import Path
-
 _DEFAULT_OVERRIDES_PATH = Path(__file__).resolve().parent / "entity_overrides.yaml"
 
 
@@ -247,6 +248,7 @@ def seed_from_overrides(yaml_path: Path | None = None) -> int:
 
     Returns the count of inserted alias rows. Missing file → 0 (silent).
     """
+    # Lazy import: yaml is not a mandatory module-load-time dep (see top of file).
     import yaml
 
     path = yaml_path if yaml_path is not None else _DEFAULT_OVERRIDES_PATH
