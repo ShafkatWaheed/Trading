@@ -16,7 +16,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from src.analysis.commodity_validator import (
     ValidationResult,
@@ -24,6 +24,9 @@ from src.analysis.commodity_validator import (
     validate_exposure,
 )
 from src.utils.db import get_connection, init_db
+
+if TYPE_CHECKING:
+    from src.analysis.sector_signals._shared import SignalReading
 
 
 @dataclass
@@ -215,7 +218,7 @@ class LookaheadViolation(Exception):
 
 
 def assert_no_lookahead(
-    readings: "list",
+    readings: list["SignalReading"],
     *,
     decision_timestamp: str,
     strict: bool = False,
@@ -227,6 +230,11 @@ def assert_no_lookahead(
       decision_timestamp: ISO 8601 UTC. A reading must have
                           available_at <= decision_timestamp (or < if strict).
       strict: when True, treat available_at == decision_timestamp as a violation.
+
+    Timestamp format contract: ALL timestamps (each reading's `available_at`
+    AND `decision_timestamp`) MUST be UTC ISO 8601 with the SAME suffix
+    convention — either all ending in 'Z' or all in '+00:00'. The function
+    compares strings lexicographically; mixed formats may compare incorrectly.
 
     No-op on empty input. Aggregates all violations into a single
     exception message (do not stop at first).
