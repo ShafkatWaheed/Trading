@@ -292,3 +292,64 @@ def seed_from_overrides(yaml_path: Path | None = None) -> int:
             inserted += 1
 
     return inserted
+
+
+def seed_from_sec_mapping(
+    mapping: dict[str, tuple[str, str]],
+    *,
+    alias_source: str = "sec",
+) -> int:
+    """Seed entity_aliases from a {ticker: (cik, legal_name)} mapping.
+
+    Caller is responsible for producing the mapping — typically from
+    SECEdgarProvider's existing CIK lookup (a one-time fetch of the
+    SEC company_tickers.json file).
+
+    Returns count of inserted rows. CIK is stored as the authoritative
+    ID (confidence=1.0). Skips entries with blank ticker or blank CIK.
+    """
+    now = _now_iso()
+    inserted = 0
+    for ticker, (cik, legal_name) in mapping.items():
+        if not ticker or not cik or not legal_name:
+            continue
+        insert_alias(
+            ticker=ticker, cik=cik, uei=None,
+            alias_type="legal", alias_name=legal_name,
+            alias_source=alias_source, confidence=1.0, created_at=now,
+        )
+        inserted += 1
+    return inserted
+
+
+def load_sec_mapping_from_provider() -> dict[str, tuple[str, str]]:
+    """Convenience: build the {ticker: (cik, name)} mapping from the
+    existing SECEdgarProvider. Network call.
+
+    Returns {} on failure (so seeders don't crash mid-pipeline).
+    """
+    try:
+        import httpx
+        # SEC publishes the full ticker→CIK list as a single JSON file.
+        # This is the standard source SECEdgarProvider uses for CIK lookup.
+        resp = httpx.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers={"User-Agent": "Trading-Research-App research@example.com"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return {}
+
+    mapping: dict[str, tuple[str, str]] = {}
+    # company_tickers.json shape: {"0": {"cik_str": int, "ticker": "AAPL", "title": "Apple Inc."}, ...}
+    for entry in data.values():
+        ticker = entry.get("ticker", "")
+        cik_int = entry.get("cik_str")
+        title = entry.get("title", "")
+        if not ticker or cik_int is None or not title:
+            continue
+        cik_padded = str(cik_int).zfill(10)
+        mapping[ticker.upper()] = (cik_padded, title)
+    return mapping
