@@ -1,4 +1,4 @@
-"""All 15 sector-influence sources must pre-register on import."""
+"""All 18 sector-influence endpoints must pre-register on import."""
 from __future__ import annotations
 
 from src.data.source_freshness import get_all_sources
