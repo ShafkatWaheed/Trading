@@ -167,9 +167,13 @@ def resolve_ticker(
 
     Lookup order:
       1. Exact match on normalized alias_name (confidence=1.0)
-      2. Fuzzy match — but ONLY when use_fuzzy=True (see Task C3)
+      2. Fuzzy match via rapidfuzz.token_set_ratio when use_fuzzy=True
 
     Returns None when no match passes `min_confidence`.
+
+    Threshold convention:
+      - Scored signals: min_confidence=0.9 (default)
+      - Information sources: min_confidence=0.8
     """
     if not name or not name.strip():
         return None
@@ -179,18 +183,48 @@ def resolve_ticker(
 
     init_db()
     conn = get_connection()
-    row = conn.execute(
-        "SELECT ticker, alias_name, alias_type FROM entity_aliases WHERE alias_name = ? LIMIT 1",
-        (normalized,),
-    ).fetchone()
-    conn.close()
-    if row is not None:
-        return ResolvedEntity(
-            ticker=row["ticker"],
-            matched_alias=row["alias_name"],
-            confidence=1.0,
-            alias_type=row["alias_type"],
-        )
+    try:
+        # 1. Exact match (confidence=1.0)
+        row = conn.execute(
+            "SELECT ticker, alias_name, alias_type FROM entity_aliases WHERE alias_name = ? LIMIT 1",
+            (normalized,),
+        ).fetchone()
+        if row is not None:
+            return ResolvedEntity(
+                ticker=row["ticker"],
+                matched_alias=row["alias_name"],
+                confidence=1.0,
+                alias_type=row["alias_type"],
+            )
 
-    # Fuzzy path is implemented in Task C3.
-    return None
+        if not use_fuzzy:
+            return None
+
+        # 2. Fuzzy match: score the candidate against EVERY alias
+        from rapidfuzz import fuzz
+
+        candidates = conn.execute(
+            "SELECT ticker, alias_name, alias_type FROM entity_aliases"
+        ).fetchall()
+        if not candidates:
+            return None
+
+        best: tuple[float, str, str, str] | None = None  # (score, ticker, alias, alias_type)
+        for c in candidates:
+            score = fuzz.token_set_ratio(normalized, c["alias_name"]) / 100.0
+            if score < min_confidence:
+                continue
+            # Highest score wins; ties broken by alpha ticker order
+            if best is None or score > best[0] or (score == best[0] and c["ticker"] < best[1]):
+                best = (score, c["ticker"], c["alias_name"], c["alias_type"])
+
+        if best is None:
+            return None
+        return ResolvedEntity(
+            ticker=best[1],
+            matched_alias=best[2],
+            confidence=best[0],
+            alias_type=best[3],
+        )
+    finally:
+        conn.close()
