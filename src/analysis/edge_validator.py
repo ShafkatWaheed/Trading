@@ -205,3 +205,49 @@ def run_validation(
     finally:
         if own_conn:
             conn.close()
+
+
+# ── Point-in-time backtest validator (Wave 1) ──────────────────────
+
+
+class LookaheadViolation(Exception):
+    """Raised when a SignalReading's available_at is after the decision timestamp."""
+
+
+def assert_no_lookahead(
+    readings: "list",
+    *,
+    decision_timestamp: str,
+    strict: bool = False,
+) -> None:
+    """Raise LookaheadViolation if any reading is not available at decision time.
+
+    Args:
+      readings: list of SignalReading
+      decision_timestamp: ISO 8601 UTC. A reading must have
+                          available_at <= decision_timestamp (or < if strict).
+      strict: when True, treat available_at == decision_timestamp as a violation.
+
+    No-op on empty input. Aggregates all violations into a single
+    exception message (do not stop at first).
+    """
+    if not readings:
+        return
+
+    violations = []
+    for r in readings:
+        available = r.available_at
+        if strict:
+            bad = available >= decision_timestamp
+        else:
+            bad = available > decision_timestamp
+        if bad:
+            violations.append(
+                f"signal={r.signal_name} ticker={r.ticker} sector={r.sector} "
+                f"available_at={available} > decision={decision_timestamp}"
+            )
+
+    if violations:
+        n = len(violations)
+        msg = f"{n} violation(s) found ({n} readings not yet available at decision time):\n  " + "\n  ".join(violations)
+        raise LookaheadViolation(msg)
