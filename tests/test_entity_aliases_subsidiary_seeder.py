@@ -62,3 +62,21 @@ def test_seed_subsidiaries_requires_uppercase_ticker():
     assert n == 2
     r = resolve_ticker("Beats Electronics LLC")
     assert r is not None and r.ticker == "AAPL"  # stored uppercase
+
+
+def test_seed_subsidiaries_rejects_empty_parent_ticker():
+    with pytest.raises(ValueError):
+        seed_subsidiaries_from_text(
+            parent_ticker="",
+            exhibit_21_text=EXHIBIT_21,
+            alias_source="exhibit21_test",
+        )
+
+
+def test_seed_subsidiaries_rejects_whitespace_parent_ticker():
+    with pytest.raises(ValueError):
+        seed_subsidiaries_from_text(
+            parent_ticker="   ",
+            exhibit_21_text=EXHIBIT_21,
+            alias_source="exhibit21_test",
+        )

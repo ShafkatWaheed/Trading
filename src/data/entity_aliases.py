@@ -377,6 +377,9 @@ def seed_subsidiaries_from_text(
 
     Returns count of inserted alias rows.
     """
+    if not parent_ticker or not parent_ticker.strip():
+        raise ValueError("parent_ticker must be a non-empty string")
+
     subs = parse_exhibit_21_subsidiaries(exhibit_21_text)
     if not subs:
         return 0
