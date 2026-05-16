@@ -1752,3 +1752,24 @@ class StockInformationResponse(BaseModel):
     as_of: str
     sources_used: list[str]
     severity: str
+
+
+class EntityMatchRejectedCandidate(BaseModel):
+    ticker: str
+    alias_name: str
+    score: float
+
+
+class EntityMatchDecisionResponse(BaseModel):
+    source: str
+    input_name: str
+    matched_alias: str | None
+    method: str
+    confidence: float
+    rejected: list[EntityMatchRejectedCandidate]
+    decided_at: str
+
+
+class EntityMatchesResponse(BaseModel):
+    ticker: str
+    matches: list[EntityMatchDecisionResponse]

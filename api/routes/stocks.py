@@ -7,9 +7,10 @@ from fastapi import APIRouter, HTTPException, Query
 from api.schemas import (
     AnalystConsensusResponse, BenchmarksResponse, BubbleScoreResponse,
     BullNarrativeResponse, CatalystCalendarResponse, DeepDiveBundleResponse,
-    DeepDiveResponse, NewsFeedResponse, PeerValuationResponse,
-    RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
-    SmartMoneyResponse, StockInformationResponse, StockSearchResult,
+    DeepDiveResponse, EntityMatchesResponse, NewsFeedResponse,
+    PeerValuationResponse, RecommendationResponse, RiskNarrativeResponse,
+    SignalEvidenceResponse, SmartMoneyResponse, StockInformationResponse,
+    StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
@@ -272,3 +273,10 @@ def get_innovation(ticker: str) -> dict:
     """Wave 2: Innovation card — USPTO patents over last 365 days."""
     from api.services.innovation_service import get_innovation_for_ticker
     return get_innovation_for_ticker(ticker.upper())
+
+
+@router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
+def get_entity_matches(ticker: str) -> dict:
+    """Wave 2 debug card: show how each data source resolved its names to this ticker."""
+    from api.services.entity_matches_service import get_matches_for_ticker
+    return get_matches_for_ticker(ticker.upper())
