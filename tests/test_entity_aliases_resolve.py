@@ -104,3 +104,17 @@ def test_insert_alias_rejects_invalid_alias_type_python_side():
             alias_source="test_fixture", confidence=1.0, created_at=_now(),
         )
     assert "not_a_real_type" in str(exc_info.value)
+
+
+def test_insert_alias_rejects_empty_normalized_name():
+    """Names that normalize to empty (e.g. only-suffix-words) must be rejected."""
+    from datetime import datetime, timezone
+
+    with pytest.raises(ValueError) as exc_info:
+        insert_alias(
+            ticker="X", cik=None, uei=None,
+            alias_type="legal", alias_name="Holdings group",
+            alias_source="test_fixture", confidence=1.0,
+            created_at=datetime.now(tz=timezone.utc).isoformat(),
+        )
+    assert "empty" in str(exc_info.value).lower() or "normalize" in str(exc_info.value).lower()

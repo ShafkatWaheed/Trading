@@ -41,11 +41,12 @@ _SUFFIX_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _PUNCT_RE = re.compile(r"[.,/]")
-# Standalone "&" left dangling after a suffix word is stripped
-# (e.g. "JPMorgan Chase & Co." → "jpmorgan chase &" before cleanup).
-# Only matches when surrounded by whitespace, so embedded "&" in
-# "at&t" is preserved.
-_LONE_AMP_RE = re.compile(r"\s+&(?:\s+|$)")
+# Only strip a trailing dangling '&' left behind by suffix removal
+# (e.g. "JPMorgan Chase & Co." → "jpmorgan chase  &" → cleanup).
+# A mid-string '& word' is meaningful (e.g., "procter & gamble") and
+# must be preserved. Embedded "&" in "at&t" is preserved as well
+# (no surrounding whitespace).
+_LONE_AMP_RE = re.compile(r"\s+&\s*$")
 
 
 def normalize_name(raw: str) -> str:
@@ -104,6 +105,12 @@ def insert_alias(
             f"alias_type {alias_type!r} not in VALID_ALIAS_TYPES "
             f"(allowed: {sorted(VALID_ALIAS_TYPES)})"
         )
+    normalized = normalize_name(alias_name)
+    if not normalized:
+        raise ValueError(
+            f"alias_name {alias_name!r} normalizes to empty string — "
+            f"refusing to insert (would poison exact-match resolver)"
+        )
     init_db()
     conn = get_connection()
     conn.execute(
@@ -117,7 +124,7 @@ def insert_alias(
             cik,
             uei,
             alias_type,
-            normalize_name(alias_name),
+            normalized,
             alias_source,
             float(confidence),
             created_at,

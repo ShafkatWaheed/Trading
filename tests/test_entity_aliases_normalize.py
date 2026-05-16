@@ -39,3 +39,10 @@ def test_normalize_handles_only_suffix():
 
 def test_normalize_is_idempotent():
     assert normalize_name(normalize_name("Apple Inc.")) == "apple"
+
+
+def test_normalize_preserves_internal_ampersand_between_words():
+    """Mid-string '& word' must NOT be eaten by suffix-stripping cleanup."""
+    assert normalize_name("Procter & Gamble Co") == "procter & gamble"
+    assert normalize_name("Johnson & Johnson") == "johnson & johnson"
+    assert normalize_name("AT&T Inc.") == "at&t"   # regression: embedded must still pass
