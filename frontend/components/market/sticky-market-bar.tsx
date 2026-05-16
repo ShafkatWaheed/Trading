@@ -39,8 +39,8 @@ export function StickyMarketBar({ showAfterPx = 320 }: Props) {
   const { data } = useQuery({
     queryKey: ["market-dashboard"],
     queryFn: () => marketApi.dashboard(),
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
   });
 
   useEffect(() => {

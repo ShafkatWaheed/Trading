@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from src.utils.db import cache_get, cache_set
+from src.utils.db import cache_get, cache_set, log_ai_decision
 from api.services import (
     deep_dive_service, bubble_score_service, analyst_consensus_service,
     smart_money_service,
@@ -223,4 +223,23 @@ def get_recommendation(symbol: str, force: bool = False) -> dict:
         cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
     except Exception:
         pass
+
+    # Track for accuracy grading. Only log fresh computations (cache hits return
+    # earlier above), and only when we have a price to anchor the call to.
+    if price is not None:
+        log_ai_decision(
+            symbol, "recommendation", action, float(price),
+            score=bubble_score,
+            context={
+                "verdict": verdict,
+                "bubble_score": bubble_score,
+                "bubble_label": bubble_label,
+                "analyst_rating": rating or None,
+                "analyst_upside": upside,
+                "insider": insider,
+                "congress": congress,
+            },
+            prediction_window_days=30,
+        )
+
     return payload

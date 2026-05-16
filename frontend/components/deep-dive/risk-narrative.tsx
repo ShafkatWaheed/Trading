@@ -28,7 +28,7 @@ export function RiskNarrative({ symbol }: Props) {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["risk-narrative", symbol],
     queryFn: () => stocksApi.riskNarrative(symbol),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 2 * 60 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 

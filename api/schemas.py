@@ -113,11 +113,20 @@ class DisruptionTheme(BaseModel):
     tickers_risk: list[str] = []
     sectors_risk: list[str] = []
     headline: str = ""
+    sources: list[int] = []   # 1-indexed indices into DisruptionResponse.articles
+
+
+class DisruptionArticle(BaseModel):
+    idx: int
+    title: str
+    url: str = ""
+    source: str = ""   # short domain like "reuters.com"
 
 
 class DisruptionResponse(BaseModel):
     themes: list[DisruptionTheme]
     source: str    # "claude" | "fallback"
+    articles: list[DisruptionArticle] = []
     last_updated: str
 
 
@@ -1615,3 +1624,106 @@ class MarketNewsResponse(BaseModel):
     source_warning: str | None = None
     last_updated: str
     from_cache: bool = False
+
+
+# ── AI Track Record (Phase 2) ─────────────────────────────────────
+
+
+class TrackRecordFilter(BaseModel):
+    source: str | None = None
+    symbol: str | None = None
+    days: int | None = None
+
+
+class TrackRecordOverall(BaseModel):
+    total: int
+    correct: int
+    accuracy_pct: float
+    avg_return_pct: float
+    avg_win_return_pct: float
+    avg_loss_return_pct: float
+
+
+class TrackRecordBySource(BaseModel):
+    source: str
+    total: int
+    correct: int
+    accuracy_pct: float
+    avg_return_pct: float
+
+
+class TrackRecordResponse(BaseModel):
+    filter: TrackRecordFilter
+    overall: TrackRecordOverall
+    by_source: list[TrackRecordBySource] = []
+    pending_count: int = 0
+    last_updated: str
+
+
+class DecisionLogItem(BaseModel):
+    id: int
+    created_at: str
+    symbol: str
+    source: str
+    decision: str
+    score: float | None = None
+    price_at_call: float
+    prediction_window_days: int
+    context: dict | None = None
+    metadata: dict | None = None
+    status: str
+    evaluated_at: str | None = None
+    price_now: float | None = None
+    return_pct: float | None = None
+
+
+class DecisionsRecentResponse(BaseModel):
+    filter: dict
+    items: list[DecisionLogItem] = []
+    last_updated: str
+
+
+class EvaluatorRunResponse(BaseModel):
+    ran_at: str
+    candidates: int
+    evaluated: int
+    correct: int
+    incorrect: int
+    skipped_pending: int
+    skipped_no_price: int
+
+
+class TopWinLossRow(BaseModel):
+    id: int
+    created_at: str
+    symbol: str
+    source: str
+    decision: str
+    price_at_call: float
+    return_pct: float
+    was_correct: int
+
+
+class TopWinsLossesResponse(BaseModel):
+    wins: list[TopWinLossRow] = []
+    losses: list[TopWinLossRow] = []
+    last_updated: str
+
+
+# ── Deep Dive Bundle (Phase 4) ────────────────────────────────────
+
+
+class DeepDiveBundleResponse(BaseModel):
+    """All five core Deep Dive payloads in one round-trip.
+
+    Frontend uses this to prime the React Query cache for each child query
+    instead of firing 5 parallel requests on page load.
+    """
+    deep_dive: DeepDiveResponse
+    bubble_score: BubbleScoreResponse | None = None
+    peer_valuation: PeerValuationResponse | None = None
+    analyst_consensus: AnalystConsensusResponse | None = None
+    benchmarks: BenchmarksResponse | None = None
+    period: str
+    last_updated: str
+    errors: dict[str, str] = {}    # partial-failure map: service_name -> error message

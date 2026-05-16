@@ -429,6 +429,52 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_known_future_events_date ON known_future_events(event_date);
         CREATE INDEX IF NOT EXISTS idx_known_future_events_ticker ON known_future_events(ticker);
+
+        -- ── Refresh jobs (manual button-triggered refreshes) ────────────
+        CREATE TABLE IF NOT EXISTS refresh_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | failed
+            progress REAL DEFAULT 0,                -- 0..1
+            processed INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            message TEXT,
+            error TEXT,
+            result_json TEXT,
+            started_at TEXT,
+            finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_refresh_jobs_kind ON refresh_jobs(kind);
+        CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status ON refresh_jobs(status);
+
+        -- ── AI Track Record: log every AI verdict at generation time ────
+        -- Used to grade the AI's accuracy after the prediction window passes.
+        CREATE TABLE IF NOT EXISTS ai_decisions (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at              TEXT NOT NULL,           -- ISO 8601 UTC
+            symbol                  TEXT NOT NULL,
+            source                  TEXT NOT NULL,           -- 'recommendation' | 'ai_analyst' | 'bubble_score' | 'bull_narrative' | 'risk_narrative'
+            decision                TEXT NOT NULL,           -- label or normalized verdict
+            score                   REAL,                    -- numeric value when applicable (e.g. bubble score)
+            price_at_call           REAL NOT NULL,
+            context_json            TEXT,                    -- inputs used (verdict, bubble, analyst rating, …)
+            prediction_window_days  INTEGER NOT NULL DEFAULT 30,
+            metadata_json           TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_decisions_symbol ON ai_decisions(symbol);
+        CREATE INDEX IF NOT EXISTS idx_ai_decisions_source ON ai_decisions(source);
+        CREATE INDEX IF NOT EXISTS idx_ai_decisions_created ON ai_decisions(created_at);
+
+        CREATE TABLE IF NOT EXISTS ai_decision_outcomes (
+            decision_id     INTEGER PRIMARY KEY,
+            evaluated_at    TEXT NOT NULL,
+            price_now       REAL NOT NULL,
+            return_pct      REAL NOT NULL,
+            was_correct     INTEGER NOT NULL,                -- 0/1
+            notes_json      TEXT,
+            FOREIGN KEY (decision_id) REFERENCES ai_decisions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_outcomes_was_correct ON ai_decision_outcomes(was_correct);
     """)
     conn.commit()
     conn.close()
@@ -465,6 +511,53 @@ def cache_delete(key: str) -> None:
     conn.execute("DELETE FROM cache WHERE key = ?", (key,))
     conn.commit()
     conn.close()
+
+
+def log_ai_decision(
+    symbol: str,
+    source: str,
+    decision: str,
+    price_at_call: float,
+    *,
+    score: float | None = None,
+    context: dict | None = None,
+    prediction_window_days: int = 30,
+    metadata: dict | None = None,
+) -> int | None:
+    """Append a row to ai_decisions and return the new id.
+
+    Swallows errors and returns None — logging must NEVER break the live AI path.
+    Callers should gate this on `not from_cache` so we only record FRESH decisions.
+    """
+    try:
+        if not symbol or not source or decision is None or price_at_call is None:
+            return None
+        conn = get_connection()
+        cur = conn.execute(
+            """
+            INSERT INTO ai_decisions
+              (created_at, symbol, source, decision, score, price_at_call,
+               context_json, prediction_window_days, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.utcnow().isoformat() + "Z",
+                str(symbol).upper(),
+                str(source),
+                str(decision),
+                float(score) if score is not None else None,
+                float(price_at_call),
+                json.dumps(context, default=str) if context else None,
+                int(prediction_window_days),
+                json.dumps(metadata, default=str) if metadata else None,
+            ),
+        )
+        decision_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return decision_id
+    except Exception:
+        return None
 
 
 def save_precomputed_score(symbol: str, score_data: dict) -> None:

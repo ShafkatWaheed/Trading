@@ -95,22 +95,27 @@ def _strip_html(html: str) -> str:
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"&nbsp;", " ", text)
     text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&#\d+;", " ", text)
     text = re.sub(r"&[a-z]+;", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 def extract_item_1a(filing_text: str) -> str | None:
-    """Slice Item 1A out of a 10-K filing's plain-text content."""
+    """Slice Item 1A out of a 10-K filing's plain-text content.
+
+    Filings typically reference Item 1A twice — once in the table of contents
+    and again at the actual section header. We take the LAST occurrence as the
+    section start so the TOC entry doesn't yield an empty slice.
+    """
     text = filing_text.replace("\xa0", " ")
-    start_match = None
+    last_match = None
     for pat in ITEM_1A_PATTERNS:
-        start_match = pat.search(text)
-        if start_match:
-            break
-    if start_match is None:
+        for m in pat.finditer(text):
+            last_match = m
+    if last_match is None:
         return None
-    start = start_match.end()
+    start = last_match.end()
 
     # Find the next section header (Item 1B or Item 2)
     end_match = None
@@ -334,6 +339,32 @@ def process_symbol(
 # ── batch runner ────────────────────────────────────────────────
 
 
+def detect_drift_and_reset(conn) -> int:
+    """Reset 'done' tenk_jobs rows whose claimed 10-K-mined relations have
+    disappeared from stock_relations (e.g. wiped by an over-scoped cleanup).
+    """
+    rows = conn.execute(
+        "SELECT symbol, edges_written FROM tenk_jobs "
+        "WHERE status='done' AND edges_written > 0"
+    ).fetchall()
+    reset = 0
+    for r in rows:
+        actual = conn.execute(
+            "SELECT COUNT(*) FROM stock_relations "
+            "WHERE from_symbol=? AND evidence LIKE '10k_mined:%'",
+            (r["symbol"],),
+        ).fetchone()[0]
+        if actual == 0:
+            conn.execute(
+                "UPDATE tenk_jobs SET status='pending', last_attempt=? WHERE symbol=?",
+                (_now(), r["symbol"]),
+            )
+            reset += 1
+    if reset:
+        conn.commit()
+    return reset
+
+
 def run_for_tier(
     tier: str = "A",
     *,
@@ -345,6 +376,11 @@ def run_for_tier(
     init_db()
     conn = get_connection()
     try:
+        # Heal ledger drift first.
+        drift_reset = detect_drift_and_reset(conn)
+        if log and drift_reset:
+            print(f"  [10k_extract] drift detected — reset {drift_reset} stale 'done' rows")
+
         symbols = [
             r["symbol"] for r in conn.execute(
                 "SELECT symbol FROM stocks_universe WHERE tier = ? ORDER BY symbol",
@@ -381,6 +417,7 @@ def run_for_tier(
         "succeeded": succeeded,
         "failed": failed,
         "edges_written": edges,
+        "drift_reset": drift_reset,
     }
 
 

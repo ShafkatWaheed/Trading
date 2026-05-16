@@ -14,7 +14,7 @@ Stock research and analysis tool that generates reports to help decide which sto
 ## Tech Stack
 - **Language:** Python
 - **Database:** SQLite (via MCP server at trading.db)
-- **Data Sources:** Yahoo Finance MCP, Alpha Vantage MCP (+ macro data), Capitol Trades MCP, SEC EDGAR, Polygon.io, Tavily, Exa
+- **Data Sources:** Yahoo Finance MCP, Alpha Vantage MCP (+ macro data), Capitol Trades MCP, SEC EDGAR, Polygon.io, Tavily, Exa, Finnhub (analyst revisions + calendars), Tiingo (clean prices + news), FRED (St. Louis Fed macro)
 - **Report Output:** PDF / HTML / JSON
 
 ## Architecture (STRICTLY ENFORCED)
@@ -171,6 +171,38 @@ Trading/
 - Indicators that use future windows (e.g. centered moving averages, look-ahead-shifted features) are FORBIDDEN in any signal or backtest path
 - Every backtest function must document its point-in-time guarantee in its docstring
 
+## Test Database Isolation (STRICTLY ENFORCED)
+
+**The production `trading.db` is sacred. Tests MUST NEVER read from or write to it.**
+
+The graph (`stocks_universe`, `stock_industry`, `stock_peers`, `stock_relations`, `stock_commodity_exposure`, `institution_holdings`, `industries`, `entity_aliases`) is the canonical source of truth for sector-influence analysis. Much of it is hand-curated or expensively mined from 10-Ks and SEC EDGAR. A single test wiping a production source has previously deleted thousands of stocks and required offline restoration. This must not happen again.
+
+### Rules
+
+1. **All tests run against a temp DB.** `tests/conftest.py` provides a session-scoped autouse fixture `_isolated_test_db` that redirects `src.utils.db.DB_PATH` to a per-session temp file BEFORE any test runs. Tests automatically operate on the temp DB. **Do not bypass, remove, or work around this fixture.**
+
+2. **Never reference the production DB path from a test.** Forbidden in any file under `tests/`:
+   - `sqlite3.connect("trading.db")` or `sqlite3.connect(DB_PATH)` outside the fixture
+   - `from src.utils.db import DB_PATH` followed by direct use
+   - Hardcoded paths like `"./trading.db"`, `Path("trading.db")`, or any project-relative resolution that bypasses `get_connection()`
+
+3. **Never DELETE / TRUNCATE / DROP production-sourced rows by `source` in test code.** Even though the temp-DB fixture neutralizes these, writing them encourages reflexes that break the rule once the fixture is touched. Forbidden patterns include:
+   - `DELETE FROM stocks_universe WHERE source='index_loader'`
+   - `DELETE FROM stocks_universe WHERE source='tier_a_seed'`
+   - `DELETE FROM stock_peers WHERE source='claude_batch'`
+   - `DELETE FROM stock_industry WHERE source IN ('yfinance','hand_conglomerate')`
+   - `DELETE FROM stock_commodity_exposure WHERE source='hand'`
+   - `DELETE FROM stock_relations WHERE evidence LIKE 'seed:hand%'`
+
+4. **Test inserts must use synthetic symbols** (e.g. `SYN_X`, `FAKE_C1`, `TEST_FOO`) and tag `source='test'`. Synthetic symbols are scoped-cleanable and impossible to confuse with real tickers.
+
+5. **Test fixtures may call production seed loaders** (`load_tier_a`, `load_spine`, `load_all_hand_peers`, `load_industries`, etc.) — they populate the temp DB, not production.
+
+6. **If a one-off mutation against the real DB is genuinely needed** (debugging a production data issue, manual backfill, schema migration), do it from a script under `scripts/`, not from a test. Commit the script so the operation is auditable.
+
+### Why this matters
+On 2026-05-15, a routine `pytest tests/` run silently deleted 2,781 stocks — every Tier B and Tier C row from `stocks_universe` — via `tests/test_index_loader.py`'s `DELETE FROM stocks_universe WHERE source='index_loader'`. The graph survived in edge form but pointed at non-existent nodes. Recovery required offline restoration from cached ETF holdings. The temp-DB fixture and this rule exist so this cannot recur.
+
 ## What NOT To Do
 - Do NOT build order execution or broker integration
 - Do NOT store real trading credentials
@@ -179,3 +211,4 @@ Trading/
 - Do NOT generate reports without a risk disclaimer
 - Do NOT use fake, mock, or synthetic data in `src/` — see Data Integrity above
 - Do NOT use future data to compute past signals — see Data Integrity above
+- Do NOT let tests touch the production `trading.db` — see Test Database Isolation above

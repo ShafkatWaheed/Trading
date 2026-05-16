@@ -159,10 +159,11 @@ def test_run_validation_skips_hand_rows():
     """Default behaviour: hand-curated rows are NOT re-validated."""
     out = run_validation(
         skip_hand=True,
-        # Returns fetcher would never get called for hand rows
         returns_fetcher=lambda t, d: [0.01, 0.02, -0.01, 0.03] * 30,
         log=False,
-        max_rows=10,
+        # Sample large enough to guarantee hand rows are reached even after
+        # the universe-expansion injection of ~2k Claude-sourced exposures.
+        max_rows=200,
     )
     assert out["skipped_hand"] >= 1
 

@@ -312,6 +312,54 @@ def discover_industries_to_rank(
     return out
 
 
+def detect_drift_and_reset(conn: sqlite3.Connection) -> int:
+    """Reset 'done' peer_jobs rows whose claimed edges have disappeared.
+
+    Industries are marked 'done' with an `edges_written` count, but those
+    edges live in `stock_peers` and can be deleted by other operations
+    (e.g. an over-scoped test cleanup wiped 5,285 edges historically).
+    When the ledger says >0 edges but the actual count is 0, the ledger
+    has drifted from reality — reset to 'pending' so the next run rebuilds
+    those edges.
+
+    Returns the number of rows reset.
+    """
+    rows = conn.execute(
+        """
+        SELECT industry_code, tier, edges_written
+        FROM peer_jobs
+        WHERE status = 'done' AND edges_written > 0
+        """
+    ).fetchall()
+
+    reset = 0
+    for r in rows:
+        # Count actual claude_batch edges where the `from_symbol` is tagged
+        # with this industry and at this tier — these are the edges this job
+        # would have written.
+        actual = conn.execute(
+            """
+            SELECT COUNT(*) FROM stock_peers sp
+            JOIN stock_industry si ON si.symbol = sp.from_symbol
+            JOIN stocks_universe u ON u.symbol = sp.from_symbol
+            WHERE sp.source = 'claude_batch'
+              AND si.industry_code = ?
+              AND u.tier = ?
+            """,
+            (r["industry_code"], r["tier"]),
+        ).fetchone()[0]
+        if actual == 0:
+            conn.execute(
+                "UPDATE peer_jobs SET status='pending', last_attempt=? "
+                "WHERE industry_code=? AND tier=?",
+                (_now(), r["industry_code"], r["tier"]),
+            )
+            reset += 1
+    if reset:
+        conn.commit()
+    return reset
+
+
 def run_pending_jobs(
     *,
     tiers: list[str] | None = None,
@@ -327,7 +375,7 @@ def run_pending_jobs(
         industry: optional single industry to focus on
         limit: max jobs to process this run
 
-    Returns counts: {processed, succeeded, failed, edges_written}.
+    Returns counts: {processed, succeeded, failed, edges_written, drift_reset}.
     """
     init_db()
     if tiers is None:
@@ -337,6 +385,12 @@ def run_pending_jobs(
 
     conn = get_connection()
     try:
+        # Heal ledger drift before discovering pending work — keeps the
+        # Refresh button able to rescue stocks whose edges got wiped.
+        drift_reset = detect_drift_and_reset(conn)
+        if log and drift_reset:
+            print(f"  [peer_jobs] drift detected — reset {drift_reset} stale 'done' rows to pending")
+
         if industry:
             jobs = [(industry, t) for t in tiers]
         else:
@@ -372,6 +426,7 @@ def run_pending_jobs(
         "succeeded": succeeded,
         "failed": failed,
         "edges_written": edges_total,
+        "drift_reset": drift_reset,
     }
 
 

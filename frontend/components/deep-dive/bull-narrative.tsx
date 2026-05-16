@@ -29,7 +29,7 @@ export function BullNarrative({ symbol }: Props) {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["bull-narrative", symbol],
     queryFn: () => stocksApi.bullNarrative(symbol),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 2 * 60 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 

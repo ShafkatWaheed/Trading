@@ -7,7 +7,8 @@ Sources:
 """
 
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from math import isnan, isinf
 from xml.etree import ElementTree
 
 import httpx
@@ -20,6 +21,37 @@ from src.utils.config import CACHE_TTL_FUNDAMENTALS
 from src.utils.rate_limit import SEC_LIMITER
 
 SEC_USER_AGENT = "TradingAnalysis/1.0 admin@tradinganalysis.local"
+
+
+def _safe_decimal(value) -> Decimal:
+    """Coerce a possibly-NaN/None/string value to Decimal, falling back to 0.
+
+    yfinance returns float NaN for missing fields; `Decimal("nan")` raises
+    `decimal.InvalidOperation`. We treat NaN / inf / None / unparseable as 0.
+    """
+    if value is None:
+        return Decimal("0")
+    try:
+        if isinstance(value, float) and (isnan(value) or isinf(value)):
+            return Decimal("0")
+        d = Decimal(str(value))
+        if d.is_nan() or d.is_infinite():
+            return Decimal("0")
+        return d
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+
+
+def _safe_int(value) -> int:
+    """Coerce a possibly-NaN/None value to int, falling back to 0."""
+    if value is None:
+        return 0
+    try:
+        if isinstance(value, float) and (isnan(value) or isinf(value)):
+            return 0
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
 SEC_BASE = "https://efts.sec.gov/LATEST"
 SEC_DATA = "https://data.sec.gov"
 
@@ -71,14 +103,16 @@ class SECEdgarProvider:
         return resp
 
     def _get_cik(self, symbol: str) -> str:
-        resp = self._sec_get(f"{SEC_DATA}/submissions/CIK{symbol}.json")
-        if resp.status_code == 200:
-            return resp.json().get("cik", "")
-        # Fallback: search company tickers
-        resp = self._sec_get("https://www.sec.gov/files/company_tickers.json")
+        # SEC submissions endpoint takes a numeric padded CIK, not a ticker —
+        # use company_tickers.json to map ticker → CIK first.
+        try:
+            resp = self._sec_get("https://www.sec.gov/files/company_tickers.json")
+        except httpx.HTTPStatusError:
+            return ""
         tickers = resp.json()
+        target = symbol.upper()
         for entry in tickers.values():
-            if entry.get("ticker", "").upper() == symbol.upper():
+            if entry.get("ticker", "").upper() == target:
                 return str(entry["cik_str"]).zfill(10)
         return ""
 
@@ -159,9 +193,12 @@ class SECEdgarProvider:
                 if trade_dt.replace(tzinfo=None) < cutoff:
                     continue
 
-                shares = int(row.get("Shares", 0) or 0)
-                value = Decimal(str(abs(row.get("Value", 0) or 0)))
-                price = Decimal(str(abs(value / shares))) if shares != 0 else Decimal("0")
+                shares = abs(_safe_int(row.get("Shares")))
+                value = abs(_safe_decimal(row.get("Value")))
+                try:
+                    price = abs(value / shares) if shares else Decimal("0")
+                except (InvalidOperation, ZeroDivisionError):
+                    price = Decimal("0")
 
                 txn_text = str(row.get("Text", "") or row.get("Transaction", "")).lower()
                 if "purchase" in txn_text or "buy" in txn_text or "acquisition" in txn_text:
@@ -201,9 +238,9 @@ class SECEdgarProvider:
 
             result: list[InstitutionalHolding] = []
             for _, row in holders.iterrows():
-                shares = int(row.get("Shares", 0) or 0)
-                value = Decimal(str(row.get("Value", 0) or 0))
-                pct = Decimal(str(row.get("% Out", 0) or row.get("pctHeld", 0) or 0))
+                shares = _safe_int(row.get("Shares"))
+                value = _safe_decimal(row.get("Value"))
+                pct = _safe_decimal(row.get("% Out")) or _safe_decimal(row.get("pctHeld"))
 
                 date_reported = row.get("Date Reported", "")
                 if hasattr(date_reported, 'strftime'):

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Newspaper, ExternalLink, Info } from "lucide-react";
 import { marketApi } from "@/lib/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RefreshButton } from "@/components/ui/refresh-button";
 import { cn } from "@/lib/utils";
 
 function dotClass(s: string): string {
@@ -31,10 +32,10 @@ function shortDate(iso?: string | null): string {
 }
 
 export function MarketNews() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["market-news"],
     queryFn: () => marketApi.news(),
-    staleTime: 30 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
   });
 
   if (isLoading) {
@@ -60,6 +61,7 @@ export function MarketNews() {
           {data.from_cache && (
             <span className="text-[10px] uppercase tracking-wider text-text-muted">cached</span>
           )}
+          <RefreshButton onClick={() => refetch()} isFetching={isFetching} title="Refresh market news" />
         </div>
         <div className="flex items-center gap-3 text-[11px]">
           <span className="text-text-muted uppercase tracking-wider">net sentiment</span>

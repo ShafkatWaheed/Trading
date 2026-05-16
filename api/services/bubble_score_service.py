@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.data.gateway import DataGateway
-from src.utils.db import cache_get, cache_set
+from src.utils.db import cache_get, cache_set, log_ai_decision
 
 _CACHE_TTL_MINUTES = 6 * 60  # 6h — refresh sub-daily so fundamentals updates land
 
@@ -276,4 +276,25 @@ def get_bubble_score(symbol: str, force: bool = False) -> dict:
         cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
     except Exception:
         pass
+
+    # Track for accuracy grading. We only reach this point on fresh computation
+    # (cache hits returned earlier). Snapshot the latest close as the price anchor.
+    try:
+        hist = DataGateway().get_historical(symbol, period_days=10)
+        price_now = float(hist["close"].iloc[-1]) if hist is not None and not hist.empty else None
+    except Exception:
+        price_now = None
+    if price_now is not None:
+        log_ai_decision(
+            symbol, "bubble_score", _label(score), price_now,
+            score=score,
+            context={
+                "pe_ratio": payload["metrics"]["pe_ratio"],
+                "ps_ratio": payload["metrics"]["ps_ratio"],
+                "growth_gap_pct": payload["metrics"]["growth_gap_pct"],
+                "price_change_1y_pct": payload["metrics"]["price_change_1y_pct"],
+            },
+            prediction_window_days=90,
+        )
+
     return payload

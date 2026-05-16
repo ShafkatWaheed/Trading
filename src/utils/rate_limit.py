@@ -44,6 +44,12 @@ class RateLimiter:
 AV_LIMITER = RateLimiter(max_calls=1, period_seconds=15)
 POLYGON_LIMITER = RateLimiter(max_calls=5, period_seconds=60)
 SEC_LIMITER = RateLimiter(max_calls=10, period_seconds=1)
+# Finnhub free tier: 60 calls/min — leave headroom at 50.
+FINNHUB_LIMITER = RateLimiter(max_calls=50, period_seconds=60)
+# Tiingo free tier: 1,000 calls/day — pace at ~40/min to spread the budget.
+TIINGO_LIMITER = RateLimiter(max_calls=40, period_seconds=60)
+# FRED has no published rate limit on the free tier, but be a good citizen.
+FRED_LIMITER = RateLimiter(max_calls=120, period_seconds=60)
 
 
 # --- Rate-limit status (read from api_log) -----------------------------------
@@ -64,13 +70,16 @@ class _ApiSpec:
 
 
 _API_SPECS: tuple[_ApiSpec, ...] = (
-    _ApiSpec("alphavantage", "Alpha Vantage",  60, 5),    # free tier: 5/min
-    _ApiSpec("polygon",      "Polygon.io",     60, 5),    # free tier: 5/min
-    _ApiSpec("sec_edgar",    "SEC EDGAR",       1, 10),   # 10/sec hard limit
-    _ApiSpec("yahoo",        "Yahoo Finance",  60, None), # no published limit
-    _ApiSpec("tavily",       "Tavily",         60, None), # plan-dependent
-    _ApiSpec("exa",          "Exa",            60, None), # plan-dependent
-    _ApiSpec("congress",     "Capitol Trades", 60, None), # free MCP, no limit
+    _ApiSpec("alphavantage", "Alpha Vantage",  60, 5),     # free tier: 5/min
+    _ApiSpec("polygon",      "Polygon.io",     60, 5),     # free tier: 5/min
+    _ApiSpec("sec_edgar",    "SEC EDGAR",       1, 10),    # 10/sec hard limit
+    _ApiSpec("yahoo",        "Yahoo Finance",  60, None),  # no published limit
+    _ApiSpec("tavily",       "Tavily",         60, None),  # plan-dependent
+    _ApiSpec("exa",          "Exa",            60, None),  # plan-dependent
+    _ApiSpec("congress",     "Capitol Trades", 60, None),  # scraper, no published limit
+    _ApiSpec("finnhub",      "Finnhub",        60, 60),    # free tier: 60/min
+    _ApiSpec("tiingo",       "Tiingo",      86_400, 1000), # free tier: 1k/day
+    _ApiSpec("fred",         "FRED",           60, None),  # no published limit
 )
 
 

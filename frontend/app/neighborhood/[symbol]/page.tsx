@@ -1,6 +1,5 @@
 "use client";
 
-import { use } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -14,6 +13,7 @@ import {
   Loader2,
   Info,
   ExternalLink,
+  BarChart3,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,15 +50,28 @@ function tierBadge(t: Tier | null) {
 function NeighborChip({ edge, role }: { edge: NeighborEdge; role: string }) {
   const isNegative = edge.polarity < 0;
   return (
-    <Link
-      href={`/neighborhood/${encodeURIComponent(edge.symbol)}`}
+    <div
       className={cn(
-        "block card p-3 hover:bg-bg-card2 transition-colors group",
+        "relative card p-3 hover:bg-bg-card2 transition-colors group",
         isNegative ? "border-l-[3px] border-l-accent-red/50" : ""
       )}
       title={edge.evidence ?? edge.edge_type}
     >
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Top-right Deep Dive shortcut — outside the main Link so it doesn't nest <a>s */}
+      <Link
+        href={`/deep-dive/${encodeURIComponent(edge.symbol)}`}
+        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border border-accent-violet/30 bg-accent-violet/10 text-accent-violet hover:bg-accent-violet/20"
+        onClick={(e) => e.stopPropagation()}
+        title="Open Deep Dive analysis"
+      >
+        <BarChart3 size={9} /> Deep Dive
+      </Link>
+
+      <Link
+        href={`/neighborhood/${encodeURIComponent(edge.symbol)}`}
+        className="block"
+      >
+      <div className="flex items-center gap-2 flex-wrap pr-20">
         {tierBadge(edge.tier)}
         <span className="font-mono text-[13px] font-semibold tabular-nums group-hover:text-accent-violet">
           {edge.symbol}
@@ -68,7 +81,6 @@ function NeighborChip({ edge, role }: { edge: NeighborEdge; role: string }) {
             {edge.name}
           </span>
         )}
-        <ExternalLink size={10} className="text-text-muted ml-auto opacity-0 group-hover:opacity-100" />
       </div>
       <div className="flex items-center gap-2 mt-1.5">
         <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -101,7 +113,8 @@ function NeighborChip({ edge, role }: { edge: NeighborEdge; role: string }) {
           {edge.evidence.replace(/^seed:hand\s*\|?\s*/, "").replace(/^10k_mined:\s*/, "")}
         </div>
       )}
-    </Link>
+      </Link>
+    </div>
   );
 }
 
@@ -147,10 +160,9 @@ function Panel({
 export default function NeighborhoodPage({
   params,
 }: {
-  params: Promise<{ symbol: string }>;
+  params: { symbol: string };
 }) {
-  const resolved = use(params);
-  const symbol = (resolved.symbol || "").toUpperCase();
+  const symbol = (params.symbol || "").toUpperCase();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["graph", "neighborhood", symbol],
@@ -172,13 +184,22 @@ export default function NeighborhoodPage({
         accent="text-accent-violet"
         iconBg="bg-accent-violet/10"
         trailing={
-          <Link
-            href="/news-impact"
-            className="text-[11px] text-text-secondary hover:text-text-primary inline-flex items-center gap-1"
-          >
-            <ArrowLeft size={12} />
-            News Impact
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href={`/deep-dive/${encodeURIComponent(symbol)}`}
+              className="text-[11px] text-accent-violet hover:text-text-primary inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-accent-violet/30 bg-accent-violet/10 hover:bg-accent-violet/20 transition-colors"
+            >
+              <BarChart3 size={12} />
+              Deep Dive {symbol}
+            </Link>
+            <Link
+              href="/news-impact"
+              className="text-[11px] text-text-secondary hover:text-text-primary inline-flex items-center gap-1"
+            >
+              <ArrowLeft size={12} />
+              News Impact
+            </Link>
+          </div>
         }
       />
 

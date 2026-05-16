@@ -7,6 +7,7 @@ Sources:
 - Senate EFD portal (efdsearch.senate.gov)
 """
 
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -106,9 +107,14 @@ class CongressDataProvider:
         elif "Senate" in pol_cell_text:
             chamber = "Senate"
 
-        # Try to find the ticker/company
-        ticker = symbol_hint
-        company = text[1] if len(text) > 1 else ""
+        # Extract the ACTUAL ticker from the "Traded Issuer" cell.
+        # Cell text looks like "Hologic IncHOLX:US" or "NVIDIA CorporationNVDA:US".
+        # If the cell doesn't yield a ticker, fall back to the hint so single-
+        # politician scrapes still work.
+        issuer_cell = text[1] if len(text) > 1 else ""
+        ticker_match = re.search(r"([A-Z][A-Z0-9.\-]{0,9}):US\b", issuer_cell)
+        ticker = ticker_match.group(1) if ticker_match else (symbol_hint or "")
+        company = re.sub(r"[A-Z][A-Z0-9.\-]{0,9}:US.*$", "", issuer_cell).strip()
 
         # Transaction type
         txn_type = "buy"
@@ -178,13 +184,147 @@ class CongressDataProvider:
             days_to_file=days_to_file,
         )
 
+    def _resolve_issuer_id(self, symbol: str) -> str | None:
+        """Resolve a ticker (e.g. 'NVDA') to Capitol Trades' issuer ID (e.g.
+        '433770'). Capitol Trades' /trades filter requires the issuer ID,
+        not the raw ticker — `?txTickers=NVDA` does NOT actually filter,
+        but `?issuer=433770&txDate=180d` does.
+        """
+        try:
+            soup = self._ct_get(f"/issuers?search={symbol.upper()}")
+            for a in soup.select("a[href*='issuers/']"):
+                href = a.get("href") or ""
+                # href is like "/issuers/433770" or "/issuers/433770?..."
+                m = re.search(r"issuers/([^/?#]+)", href)
+                if m and m.group(1) and m.group(1) != "":
+                    return m.group(1).strip()
+        except Exception as e:
+            log_api_call("congress", f"issuer_lookup/{symbol}", "error", str(e))
+        return None
+
+    def _parse_filtered_row(self, row, default_symbol: str) -> CongressTrade | None:
+        """Parse a single row using Capitol Trades' rendered cell classes.
+
+        These selectors come from the upstream MCP scraper and are stable
+        on the SSR'd filtered pages (/trades?issuer=ID).
+        """
+        def t(sel: str) -> str:
+            el = row.select_one(sel)
+            return el.get_text(strip=True) if el else ""
+
+        politician = t(".politician-name a, .politician a")
+        party = t(".party") or "Unknown"
+        chamber = t(".chamber") or "Unknown"
+        state = t(".us-state-compact")
+        ticker_raw = t(".issuer-ticker")  # e.g. "NVDA:US"
+        ticker = ticker_raw.split(":")[0].strip() if ticker_raw else default_symbol
+        txn_type_raw = t(".tx-type").lower()
+        if "sell" in txn_type_raw or "sale" in txn_type_raw:
+            txn_type = "sell"
+        elif "exchange" in txn_type_raw:
+            txn_type = "exchange"
+        elif "receive" in txn_type_raw:
+            txn_type = "receive"
+        else:
+            txn_type = "buy"
+        size_text = t(".trade-size")
+
+        # Dates — Capitol Trades renders trade date as "15 Apr2026" (no space
+        # before year). Walk every cell looking for that pattern; first match
+        # is trade date, second is filed/disclosure date.
+        trade_date = ""
+        filed_date = ""
+        for cell in row.select("td"):
+            cell_text = cell.get_text(" ", strip=True)
+            for m in re.finditer(r"(\d{1,2})\s+([A-Za-z]{3})\s*(\d{4})", cell_text):
+                try:
+                    dt = datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%d %b %Y")
+                    iso = dt.strftime("%Y-%m-%d")
+                    if not trade_date:
+                        trade_date = iso
+                    elif not filed_date and iso != trade_date:
+                        filed_date = iso
+                    break
+                except ValueError:
+                    continue
+            if trade_date and filed_date:
+                break
+        if not trade_date:
+            return None
+        if not filed_date:
+            filed_date = trade_date
+
+        try:
+            days_to_file = (datetime.fromisoformat(filed_date) - datetime.fromisoformat(trade_date)).days
+        except Exception:
+            days_to_file = 0
+
+        # Amount range — parse "1K–15K" / "100K–250K" / "1M–5M" etc.
+        amount_low = Decimal("0")
+        amount_high = Decimal("0")
+        if size_text:
+            mult = lambda s: 1_000_000 if "M" in s.upper() else (1_000 if "K" in s.upper() else 1)
+            parts = re.split(r"[–\-—]", size_text)
+            try:
+                if len(parts) >= 2:
+                    amount_low = Decimal(str(re.sub(r"[^\d.]", "", parts[0]) or 0)) * mult(parts[0])
+                    amount_high = Decimal(str(re.sub(r"[^\d.]", "", parts[1]) or 0)) * mult(parts[1])
+            except Exception:
+                pass
+
+        return CongressTrade(
+            politician=politician or "Unknown",
+            party=party,
+            chamber=chamber,
+            state=state,
+            symbol=ticker.upper(),
+            company="",
+            transaction_type=txn_type,
+            amount_range=size_text,
+            amount_low=amount_low,
+            amount_high=amount_high,
+            trade_date=trade_date,
+            filed_date=filed_date,
+            days_to_file=days_to_file,
+        )
+
     def _fetch_trades_by_symbol(self, symbol: str, days: int) -> list[CongressTrade]:
         try:
-            soup = self._ct_get(f"/trades?ticker={symbol.upper()}")
-            trades = self._parse_trade_rows(soup, symbol.upper())
-            # Filter by date
+            target = symbol.upper()
+            # Capitol Trades' /trades?txTickers=... param does NOT filter the
+            # SSR'd table. The filter that *does* work is ?issuer={id} where
+            # `id` is their internal issuer ID (resolved from /issuers?search=).
+            issuer_id = self._resolve_issuer_id(target)
+            if not issuer_id:
+                log_api_call("congress", f"trades/{target}", "error", "issuer not found")
+                return []
+
+            # Capitol Trades only supports a few txDate buckets — pick the
+            # smallest that covers the requested window.
+            tx_bucket = "30d" if days <= 30 else "90d" if days <= 90 else "180d" if days <= 180 else "365d"
             cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-            return [t for t in trades if t.trade_date >= cutoff]
+
+            trades: list[CongressTrade] = []
+            for page in range(1, 8):  # safety cap: 8 pages × 12 rows ≈ 96 trades
+                soup = self._ct_get(
+                    f"/trades?issuer={issuer_id}&txDate={tx_bucket}&page={page}"
+                )
+                rows = soup.select("tbody tr")
+                if not rows:
+                    break
+                page_trades = []
+                for row in rows:
+                    parsed = self._parse_filtered_row(row, target)
+                    if parsed and parsed.symbol == target and parsed.trade_date >= cutoff:
+                        page_trades.append(parsed)
+                if not page_trades:
+                    break
+                trades.extend(page_trades)
+                # If page wasn't full, we've reached the end
+                if len(rows) < 12:
+                    break
+
+            return trades
         except Exception as e:
             log_api_call("congress", f"trades/{symbol}", "error", str(e))
             return []
@@ -242,8 +382,11 @@ class CongressDataProvider:
         for t in sells:
             seller_counts[t.politician] = seller_counts.get(t.politician, 0) + 1
 
-        top_buyers = sorted(buyer_counts, key=buyer_counts.get, reverse=True)[:5]
-        top_sellers = sorted(seller_counts, key=seller_counts.get, reverse=True)[:5]
+        # Capped at 25 each — enough to render the full picture for any one
+        # stock without truncating activist politicians like Ro Khanna or
+        # Nancy Pelosi who can appear in both lists.
+        top_buyers = sorted(buyer_counts, key=buyer_counts.get, reverse=True)[:25]
+        top_sellers = sorted(seller_counts, key=seller_counts.get, reverse=True)[:25]
 
         return CongressTradesSummary(
             symbol=symbol,
@@ -254,7 +397,7 @@ class CongressDataProvider:
             net_sentiment=net_sentiment,
             top_buyers=top_buyers,
             top_sellers=top_sellers,
-            recent_trades=sorted(trades, key=lambda t: t.trade_date, reverse=True)[:10],
+            recent_trades=sorted(trades, key=lambda t: t.trade_date, reverse=True)[:50],
             party_breakdown=party_breakdown,
         )
 

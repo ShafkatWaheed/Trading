@@ -417,6 +417,20 @@ def cleanup_old_cache() -> None:
         conn.close()
 
 
+def evaluate_ai_decisions() -> None:
+    """Grade pending AI decisions against current prices. Runs daily after market close."""
+    try:
+        from api.services import decisions_outcome_service
+        result = decisions_outcome_service.evaluate_pending_decisions()
+        print(
+            f"  [ai-evaluator] candidates={result['candidates']} "
+            f"evaluated={result['evaluated']} correct={result['correct']} "
+            f"pending={result['skipped_pending']} no_price={result['skipped_no_price']}"
+        )
+    except Exception as e:
+        print(f"  [ai-evaluator] ERROR: {e}")
+
+
 def start_prefetch_scheduler() -> None:
     """Boot a BlockingScheduler with all pre-fetch jobs. Run as separate process.
 
@@ -478,6 +492,14 @@ def start_prefetch_scheduler() -> None:
         cleanup_old_cache,
         trigger=CronTrigger(day_of_week="sun", hour=3, minute=0),
         id="cleanup_cache", name="Cleanup Expired Cache (Sunday 3 AM)",
+    )
+
+    # Grade pending AI decisions whose prediction window has passed.
+    # Runs after market close so price_at_call → price_now uses post-session settle.
+    scheduler.add_job(
+        evaluate_ai_decisions,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=17, minute=15),
+        id="evaluate_ai_decisions", name="AI Decisions Outcome Evaluator (daily 5:15 PM ET)",
     )
 
     print("\n  Pre-fetch scheduler started — 8 jobs registered:")

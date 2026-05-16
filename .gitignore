@@ -26,3 +26,7 @@ node_modules/
 # Sensitive runtime artifacts
 session_qr.png
 session_qr.*
+
+# Database backups (large binaries, never commit)
+*.backup
+trading.db.backup-*

@@ -48,7 +48,7 @@ export function PeerValuationStrip({ symbol }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["peer-valuation", symbol],
     queryFn: () => stocksApi.peerValuation(symbol),
-    staleTime: 6 * 60 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 

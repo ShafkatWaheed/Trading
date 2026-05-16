@@ -289,6 +289,98 @@ export function SmartMoneyCard({ symbol }: Props) {
                   </div>
                 </div>
               </div>
+
+              {/* Buyers vs sellers — derived from recent_trades */}
+              {(() => {
+                const tally: Record<string, { name: string; party: string; chamber: string; state: string; buys: number; sells: number; lastBuy: string; lastSell: string }> = {};
+                for (const t of con.recent_trades) {
+                  const key = t.politician || "Unknown";
+                  if (!tally[key]) {
+                    tally[key] = {
+                      name: key, party: t.party || "?", chamber: t.chamber || "?", state: t.state || "",
+                      buys: 0, sells: 0, lastBuy: "", lastSell: "",
+                    };
+                  }
+                  const td = t.trade_date ?? "";
+                  if (t.transaction === "buy") {
+                    tally[key].buys += 1;
+                    if (!tally[key].lastBuy || td > tally[key].lastBuy) tally[key].lastBuy = td;
+                  } else if (t.transaction === "sell") {
+                    tally[key].sells += 1;
+                    if (!tally[key].lastSell || td > tally[key].lastSell) tally[key].lastSell = td;
+                  }
+                }
+                const all = Object.values(tally);
+                const buyers = all.filter((p) => p.buys > p.sells).sort((a, b) => (b.buys - b.sells) - (a.buys - a.sells));
+                const sellers = all.filter((p) => p.sells > p.buys).sort((a, b) => (b.sells - b.buys) - (a.sells - a.buys));
+                const mixed = all.filter((p) => p.buys === p.sells && p.buys > 0);
+
+                if (all.length === 0) return null;
+
+                const Row = ({ p, kind }: { p: typeof all[0]; kind: "buy" | "sell" | "mixed" }) => (
+                  <li className="flex items-center gap-2 py-1 text-[12px]">
+                    <span className={cn("badge text-[9px] py-0 shrink-0", partyChip(p.party))}>
+                      {(p.party || "?").charAt(0).toUpperCase()}
+                    </span>
+                    <span className="font-medium truncate">{p.name}</span>
+                    {p.state && <span className="text-[10px] text-text-muted">{p.state}</span>}
+                    <span className="text-[10px] text-text-muted">· {p.chamber}</span>
+                    <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono shrink-0">
+                      {p.buys > 0 && <span className="text-accent-greenSoft">+{p.buys}</span>}
+                      {p.sells > 0 && <span className="text-accent-redSoft">-{p.sells}</span>}
+                      <span className="text-text-muted">
+                        {kind === "buy" ? p.lastBuy : kind === "sell" ? p.lastSell : (p.lastBuy > p.lastSell ? p.lastBuy : p.lastSell)}
+                      </span>
+                    </span>
+                  </li>
+                );
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <div className="card p-3 border-l-[3px] border-l-accent-green/60">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-greenSoft mb-1.5 flex items-center gap-2">
+                        <span>Buyers · still in</span>
+                        <span className="text-text-muted font-mono">({buyers.length})</span>
+                      </div>
+                      {buyers.length === 0 ? (
+                        <div className="text-[11px] text-text-muted">No net buyers.</div>
+                      ) : (
+                        <ul className="divide-y divide-bg-divider">
+                          {buyers.map((p) => <Row key={p.name} p={p} kind="buy" />)}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="card p-3 border-l-[3px] border-l-accent-red/60">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-redSoft mb-1.5 flex items-center gap-2">
+                        <span>Sellers · sold off</span>
+                        <span className="text-text-muted font-mono">({sellers.length})</span>
+                      </div>
+                      {sellers.length === 0 ? (
+                        <div className="text-[11px] text-text-muted">No net sellers.</div>
+                      ) : (
+                        <ul className="divide-y divide-bg-divider">
+                          {sellers.map((p) => <Row key={p.name} p={p} kind="sell" />)}
+                        </ul>
+                      )}
+                    </div>
+                    {mixed.length > 0 && (
+                      <div className="md:col-span-2 card p-3 border-l-[3px] border-l-accent-amber/60">
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-amber mb-1.5 flex items-center gap-2">
+                          <span>Mixed · rotated</span>
+                          <span className="text-text-muted font-mono">({mixed.length})</span>
+                        </div>
+                        <ul className="divide-y divide-bg-divider">
+                          {mixed.map((p) => <Row key={p.name} p={p} kind="mixed" />)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="text-[10px] uppercase tracking-wider text-text-muted font-semibold mb-2">
+                Recent trades (chronological)
+              </div>
               <div className="overflow-x-auto -mx-2">
                 <table className="w-full text-xs">
                   <thead>
@@ -302,7 +394,7 @@ export function SmartMoneyCard({ symbol }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {con.recent_trades.slice(0, 8).map((t, i) => {
+                    {con.recent_trades.slice(0, 25).map((t, i) => {
                       const tone = txnTone(t.transaction);
                       const Icon = tone.Icon;
                       const lateFile = (t.days_to_file ?? 0) > 45;

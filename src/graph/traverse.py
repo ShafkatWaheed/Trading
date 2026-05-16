@@ -87,42 +87,105 @@ def _peers_of(conn: sqlite3.Connection, symbol: str) -> list[Edge]:
     ]
 
 
+# Flip table for asymmetric edge types. When a row (A→B, type=X) is read from
+# B's perspective, the edge type becomes `_FLIP[X]`. Substitute and complement
+# are symmetric and pass through unchanged.
+_FLIP: dict[str, str] = {"supplier": "customer", "customer": "supplier"}
+
+
+def _flip(edge_type: str) -> str:
+    """Return the edge type from the opposite endpoint's perspective."""
+    return _FLIP.get(edge_type, edge_type)
+
+
 def _relations_of(
     conn: sqlite3.Connection,
     symbol: str,
     *,
     relation_types: Iterable[str] | None = None,
 ) -> list[Edge]:
-    """All stock_relations edges from `symbol`, filtered by type."""
+    """All stock_relations edges touching `symbol`, filtered by type.
+
+    Edges are returned from `symbol`'s perspective:
+      * `from_symbol` is always `symbol`
+      * `to_symbol` is the neighbor
+      * `edge_type` is flipped for inverse-direction rows (supplier↔customer);
+        substitute/complement are symmetric and pass through unchanged
+
+    This makes traversal symmetric over a one-row-per-relationship storage:
+    we don't need to write mirror rows, the reader sees both directions.
+    """
+    # When the caller filters by edge_type, we must also pull rows whose stored
+    # type flips to the requested one. e.g. "give me suppliers of X" requires
+    # both (from_symbol=X, type=supplier) AND (to_symbol=X, type=customer).
     if relation_types:
-        types = list(relation_types)
-        ph = ",".join("?" * len(types))
+        forward_types = {t for t in relation_types}
+        inverse_types = {_flip(t) for t in relation_types}
+        types_to_match = forward_types | inverse_types
+        ph = ",".join("?" * len(types_to_match))
         sql = f"""
-            SELECT to_symbol, relation_type, strength, polarity, evidence
+            SELECT from_symbol, to_symbol, relation_type, strength, polarity, evidence
             FROM stock_relations
-            WHERE from_symbol = ? AND relation_type IN ({ph})
+            WHERE (from_symbol = ? OR to_symbol = ?)
+              AND relation_type IN ({ph})
         """
-        params = [symbol, *types]
+        params = [symbol, symbol, *types_to_match]
     else:
-        sql = (
-            "SELECT to_symbol, relation_type, strength, polarity, evidence "
-            "FROM stock_relations WHERE from_symbol = ?"
-        )
-        params = [symbol]
+        sql = """
+            SELECT from_symbol, to_symbol, relation_type, strength, polarity, evidence
+            FROM stock_relations
+            WHERE from_symbol = ? OR to_symbol = ?
+        """
+        params = [symbol, symbol]
+
     rows = conn.execute(sql, params).fetchall()
-    return [
-        Edge(
-            from_symbol=symbol,
-            to_symbol=r["to_symbol"],
-            edge_type=r["relation_type"],
-            strength=float(r["strength"]),
-            polarity=float(r["polarity"]),
-            confidence="high",              # hand/spine + 10k-mined are all "high" at relation level
-            source="stock_relations",
-            evidence=r["evidence"],
-        )
-        for r in rows
-    ]
+
+    # Dedup on (neighbor, edge_type_from_my_view). Forward rows take priority
+    # over the inverse — if both directions are seeded for the same pair, we
+    # keep the explicit one to honor whatever evidence it carries.
+    edges_by_key: dict[tuple[str, str], Edge] = {}
+    inverse_pending: list[Edge] = []
+
+    for r in rows:
+        if r["from_symbol"] == symbol:
+            # Forward edge — type as stored
+            edge = Edge(
+                from_symbol=symbol,
+                to_symbol=r["to_symbol"],
+                edge_type=r["relation_type"],
+                strength=float(r["strength"]),
+                polarity=float(r["polarity"]),
+                confidence="high",
+                source="stock_relations",
+                evidence=r["evidence"],
+            )
+            edges_by_key[(edge.to_symbol, edge.edge_type)] = edge
+        else:
+            # Inverse edge — flip type (supplier↔customer; substitute/complement stay)
+            flipped_type = _flip(r["relation_type"])
+            edge = Edge(
+                from_symbol=symbol,
+                to_symbol=r["from_symbol"],
+                edge_type=flipped_type,
+                strength=float(r["strength"]),
+                polarity=float(r["polarity"]),
+                confidence="high",
+                source="stock_relations",
+                evidence=r["evidence"],
+            )
+            inverse_pending.append(edge)
+
+    # Apply inverse only if a forward edge for the same (neighbor, type) isn't already present.
+    for edge in inverse_pending:
+        key = (edge.to_symbol, edge.edge_type)
+        if key not in edges_by_key:
+            edges_by_key[key] = edge
+
+    # If the caller filtered, drop edges that ended up as types they didn't ask for.
+    if relation_types:
+        wanted = {t for t in relation_types}
+        return [e for e in edges_by_key.values() if e.edge_type in wanted]
+    return list(edges_by_key.values())
 
 
 # ── public expansion ────────────────────────────────────────────

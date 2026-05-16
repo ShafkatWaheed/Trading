@@ -188,3 +188,76 @@ def test_neighborhood_unknown_symbol_returns_empty_dict():
     out = neighborhood("ZZZZZNOTAREALSYMBOL")
     for k, lst in out.items():
         assert lst == []
+
+
+# ── inverse-direction lookup (supplier ↔ customer flip) ──────────
+
+
+def test_neighborhood_finds_supplier_via_inverse_customer_row():
+    """AMZN has no `from_symbol=AMZN` supplier/customer rows in the seed.
+
+    But (NVDA, AMZN, customer) exists → from AMZN's view NVDA is a supplier.
+    Read-time symmetric lookup should surface this.
+    """
+    out = neighborhood("AMZN")
+    sups = [e.to_symbol for e in out["suppliers"]]
+    assert "NVDA" in sups, f"expected NVDA in AMZN suppliers via inverse lookup, got {sups}"
+
+
+def test_neighborhood_finds_customer_via_inverse_supplier_row():
+    """(AAPL, AVGO, supplier) is hand-seeded with no reverse row.
+
+    From AVGO's view, AAPL should appear as a customer via inverse lookup
+    (flipping supplier → customer for the inverse-direction row).
+    """
+    out = neighborhood("AVGO")
+    custs = [e.to_symbol for e in out["customers"]]
+    assert "AAPL" in custs, f"expected AAPL in AVGO customers via inverse lookup, got {custs}"
+
+
+def test_neighborhood_msft_sees_nvda_as_supplier_via_inverse():
+    """(NVDA, MSFT, customer) is in the seed; from MSFT's view NVDA should be a supplier."""
+    out = neighborhood("MSFT")
+    sups = [e.to_symbol for e in out["suppliers"]]
+    assert "NVDA" in sups
+
+
+def test_neighborhood_inverse_edge_has_correct_type_and_polarity():
+    """The flipped edge must carry the correct edge_type (supplier, not customer)
+    and preserve polarity from the underlying row."""
+    out = neighborhood("AMZN")
+    nvda_edges = [e for e in out["suppliers"] if e.to_symbol == "NVDA"]
+    assert len(nvda_edges) == 1
+    edge = nvda_edges[0]
+    assert edge.edge_type == "supplier"          # flipped from underlying 'customer'
+    assert edge.from_symbol == "AMZN"            # from the queried symbol's POV
+    assert edge.polarity == 1.0                  # preserved from underlying row
+
+
+def test_neighborhood_bilateral_relation_dedupes():
+    """NVDA↔TSM is seeded in both directions: (NVDA,TSM,supplier) AND (TSM,NVDA,customer).
+
+    NVDA's suppliers list should contain TSM exactly once, not duplicated by the
+    inverse-direction lookup.
+    """
+    out = neighborhood("NVDA")
+    tsm_supplier_edges = [e for e in out["suppliers"] if e.to_symbol == "TSM"]
+    assert len(tsm_supplier_edges) == 1, (
+        f"TSM appears {len(tsm_supplier_edges)} times in NVDA suppliers; expected 1"
+    )
+
+
+def test_neighborhood_substitute_is_symmetric_not_flipped():
+    """substitute/complement are symmetric — inverse lookup should keep the type."""
+    # TSLA → substitute → F is in the seed
+    out = neighborhood("F")
+    subs = [e.to_symbol for e in out["substitutes"]]
+    # F should see TSLA as a substitute via the inverse direction
+    assert "TSLA" in subs
+
+
+def test_expand_finds_inverse_supplier_for_msft():
+    """1-hop expand from MSFT with edge_types=['supplier'] should reach NVDA
+    via the inverse (NVDA, MSFT, customer) row."""
+    out = expand({"MSFT"}, hops=1, edge_types=["supplier"])
+    assert "NVDA" in out

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { DisruptionTheme } from "@/lib/api/types";
+import { ExternalLink } from "lucide-react";
+import type { DisruptionTheme, DisruptionArticle } from "@/lib/api/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,32 @@ function intensityTone(i: DisruptionTheme["intensity"]) {
   }
 }
 
-function ThemeCard({ t }: { t: DisruptionTheme }) {
+function SourcePill({ article }: { article: DisruptionArticle }) {
+  if (!article.url) return null;
+  return (
+    <a
+      href={article.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={article.title}
+      className={cn(
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono tabular-nums",
+        "bg-bg-card2 text-text-muted border border-bg-borderHi",
+        "hover:bg-bg-card hover:text-accent-cyan hover:border-accent-cyan/40 transition-colors",
+      )}
+    >
+      [{article.idx}]
+      <span className="font-sans normal-case max-w-[100px] truncate">{article.source || "source"}</span>
+      <ExternalLink size={9} className="shrink-0" />
+    </a>
+  );
+}
+
+function ThemeCard({ t, articleMap }: { t: DisruptionTheme; articleMap: Map<number, DisruptionArticle> }) {
+  const cited = (t.sources || [])
+    .map((i) => articleMap.get(i))
+    .filter((a): a is DisruptionArticle => Boolean(a && a.url));
+
   return (
     <div className="card p-5 flex flex-col gap-3">
       <div className="flex items-start justify-between gap-3">
@@ -31,6 +57,13 @@ function ThemeCard({ t }: { t: DisruptionTheme }) {
 
       {t.headline && (
         <p className="text-xs text-text-secondary leading-relaxed">{t.headline}</p>
+      )}
+
+      {cited.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 -mt-1">
+          <span className="text-[10px] uppercase tracking-wider text-text-muted">Sources:</span>
+          {cited.map((a) => <SourcePill key={a.idx} article={a} />)}
+        </div>
       )}
 
       {t.tickers_benefit.length > 0 && (
@@ -84,7 +117,13 @@ function ThemeCard({ t }: { t: DisruptionTheme }) {
   );
 }
 
-export function DisruptionThemes({ themes, loading }: { themes?: DisruptionTheme[]; loading?: boolean }) {
+export function DisruptionThemes({
+  themes, articles, loading,
+}: {
+  themes?: DisruptionTheme[];
+  articles?: DisruptionArticle[];
+  loading?: boolean;
+}) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -101,6 +140,10 @@ export function DisruptionThemes({ themes, loading }: { themes?: DisruptionTheme
       </div>
     );
   }
+
+  const articleMap = new Map<number, DisruptionArticle>(
+    (articles || []).map((a) => [a.idx, a]),
+  );
 
   // Intensity summary banner
   const counts = { HIGH: 0, MEDIUM: 0, EMERGING: 0 } as Record<string, number>;
@@ -130,7 +173,7 @@ export function DisruptionThemes({ themes, loading }: { themes?: DisruptionTheme
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {themes.map((t, i) => <ThemeCard key={i} t={t} />)}
+        {themes.map((t, i) => <ThemeCard key={i} t={t} articleMap={articleMap} />)}
       </div>
     </div>
   );

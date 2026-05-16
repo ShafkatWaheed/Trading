@@ -128,11 +128,11 @@ def _congress_section(symbol: str) -> dict:
             "total_sells":        s.total_sells,
             "unique_politicians": s.unique_politicians,
             "net_sentiment":      s.net_sentiment or "neutral",
-            "top_buyers":         list(s.top_buyers)[:5],
-            "top_sellers":        list(s.top_sellers)[:5],
+            "top_buyers":         list(s.top_buyers)[:25],
+            "top_sellers":        list(s.top_sellers)[:25],
             "party_breakdown":    s.party_breakdown or {},
         })
-        for t in (s.recent_trades or [])[:10]:
+        for t in (s.recent_trades or [])[:50]:
             out["recent_trades"].append({
                 "politician":        t.politician,
                 "party":             t.party,

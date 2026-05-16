@@ -53,7 +53,8 @@ const NO_QUOTA_REASON: Record<string, string> = {
   yahoo:    "Scraped — no published rate limit.",
   tavily:   "Plan-dependent — your tier determines the limit.",
   exa:      "Plan-dependent — your tier determines the limit.",
-  congress: "Free MCP — no rate limit applies.",
+  congress: "Scraper against Capitol Trades — no published limit.",
+  fred:     "St. Louis Fed — no published rate limit on the free tier.",
 };
 
 function usageText(s: DataSourceStatus): string {
@@ -124,7 +125,7 @@ export default function DataSourcesPage() {
 
       {isLoading && (
         <div className="space-y-2">
-          {Array.from({ length: 7 }).map((_, i) => (
+          {Array.from({ length: 10 }).map((_, i) => (
             <Skeleton key={i} className="h-[68px] w-full" />
           ))}
         </div>

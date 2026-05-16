@@ -99,11 +99,34 @@ def test_multiple_themes_compose():
 
 
 def test_tier_filter_restricts_results():
+    """Filter must restrict the result set to symbols of the requested tier(s),
+    and the union of per-tier results must match the unfiltered set."""
     themes = [ActiveTheme(commodity_code="crude_oil", direction="up")]
+    out_unfiltered = relevance_for_universe(themes)
     out_a = relevance_for_universe(themes, tier=["A"])
     out_b = relevance_for_universe(themes, tier=["B"])
-    # Tier A should have ≥ Tier B (everything in our seed is Tier A right now)
-    assert len(out_a) >= len(out_b)
+
+    # Each filtered set is a strict subset of the unfiltered set
+    assert set(out_a) <= set(out_unfiltered)
+    assert set(out_b) <= set(out_unfiltered)
+    # And A and B partition disjointly
+    assert set(out_a).isdisjoint(set(out_b))
+
+    # Every symbol in the filtered set has the requested tier in the universe
+    import sqlite3
+    from src.utils.db import get_connection
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol, tier FROM stocks_universe WHERE symbol IN ({})".format(
+                ",".join("?" * len(out_a))
+            ),
+            list(out_a.keys()),
+        ).fetchall() if out_a else []
+        for r in rows:
+            assert r["tier"] == "A", f"{r['symbol']} leaked into tier=A filter with tier={r['tier']}"
+    finally:
+        conn.close()
 
 
 # ── relevance_for_stock convenience ──────────────────────────────

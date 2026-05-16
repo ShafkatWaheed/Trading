@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Target, ArrowUp, ArrowDown, Minus, Hourglass, Loader2 } from "lucide-react";
 import { stocksApi } from "@/lib/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RefreshButton } from "@/components/ui/refresh-button";
 import { cn } from "@/lib/utils";
 
 type Props = { symbol: string };
@@ -19,10 +20,10 @@ const TONE_MAP: Record<string, { color: string; bg: string; border: string; Icon
 };
 
 export function RecommendationCard({ symbol }: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["recommendation", symbol],
     queryFn: () => stocksApi.recommendation(symbol),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 
@@ -54,6 +55,7 @@ export function RecommendationCard({ symbol }: Props) {
         <span className="text-[10px] text-text-muted ml-auto">
           synthesized from verdict · valuation · analysts · smart money
         </span>
+        <RefreshButton onClick={() => refetch()} isFetching={isFetching} title="Re-synthesize" />
       </div>
 
       <div className="flex items-start gap-4 mb-3">

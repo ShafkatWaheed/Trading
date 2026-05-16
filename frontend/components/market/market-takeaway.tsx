@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, ArrowUp, ArrowDown, Hourglass, Shield, Minus } from "lucide-react";
 import { marketApi } from "@/lib/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RefreshButton } from "@/components/ui/refresh-button";
 import { cn } from "@/lib/utils";
 
 const TONE: Record<string, { color: string; border: string; Icon: typeof ArrowUp; label: string }> = {
@@ -15,7 +16,7 @@ const TONE: Record<string, { color: string; border: string; Icon: typeof ArrowUp
 };
 
 export function MarketTakeaway() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["market-takeaway"],
     queryFn: () => marketApi.takeaway(),
     staleTime: 10 * 60 * 1000,
@@ -46,6 +47,7 @@ export function MarketTakeaway() {
           Today's market takeaway
         </h3>
         <span className="text-[10px] text-text-muted ml-auto">synthesized from regime · breadth · volatility</span>
+        <RefreshButton onClick={() => refetch()} isFetching={isFetching} title="Refresh takeaway" />
       </div>
 
       <div className="flex items-start gap-4 mb-3">

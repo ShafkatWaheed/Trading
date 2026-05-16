@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import ta
 
+from src.analysis import _yf_cache
 from src.models.backtest_types import BacktestResult, BacktestTrade
 from src.utils.point_in_time import enforce
 from src.analysis.edge_validator import LookaheadViolation, assert_no_lookahead
@@ -441,9 +442,7 @@ def _get_event_dates(symbol: str, signal_name: str, available_dates: list[str]) 
 def _get_earnings_event_dates(symbol: str, signal_name: str) -> list[str]:
     """Get dates when earnings beat or missed estimates."""
     try:
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        ed = ticker.earnings_dates
+        ed = _yf_cache.get_earnings_dates(symbol)
         if ed is None or ed.empty:
             return []
 
@@ -478,9 +477,9 @@ def _get_earnings_event_dates(symbol: str, signal_name: str) -> list[str]:
 def _get_vix_event_dates(signal_name: str, available_dates: list[str]) -> list[str]:
     """Get dates when VIX crossed thresholds."""
     try:
-        import yfinance as yf
-        # Fetch VIX history covering the same period as the stock
-        vix = yf.download("^VIX", period="2y", progress=False, auto_adjust=True)
+        # ^VIX is shared across all signals — memoize so multiple deep-dives
+        # in quick succession reuse one fetch.
+        vix = _yf_cache.get_history("^VIX", period="2y")
         if vix is None or vix.empty:
             return []
         if hasattr(vix.columns, "levels") and vix.columns.nlevels > 1:
@@ -549,9 +548,7 @@ def _get_insider_event_dates(symbol: str, signal_name: str) -> list[str]:
         if not cached or not isinstance(cached, list):
             # Try fetching fresh
             try:
-                import yfinance as yf
-                ticker = yf.Ticker(symbol)
-                insider = ticker.insider_transactions
+                insider = _yf_cache.get_insider_transactions(symbol)
                 if insider is not None and not insider.empty:
                     insider = enforce(insider, "Start Date", source="yfinance:insider_transactions")
                     dates = []
@@ -614,11 +611,9 @@ def _get_congress_event_dates(symbol: str, signal_name: str) -> list[str]:
 def _get_analyst_event_dates(symbol: str, signal_name: str) -> list[str]:
     """Get approximate dates when analyst consensus shifted."""
     try:
-        import yfinance as yf
         from datetime import datetime as dt, timedelta
 
-        ticker = yf.Ticker(symbol)
-        recs = ticker.recommendations
+        recs = _yf_cache.get_recommendations(symbol)
         if recs is None or recs.empty or len(recs) < 2:
             return []
 
@@ -822,11 +817,9 @@ def _get_community_event_dates(symbol: str, signal_name: str) -> list[str]:
 def _get_institutional_event_dates(symbol: str, signal_name: str) -> list[str]:
     """Get approximate quarterly dates when institutional ownership changed."""
     try:
-        import yfinance as yf
         from datetime import datetime as dt, timedelta
 
-        ticker = yf.Ticker(symbol)
-        ih = ticker.institutional_holders
+        ih = _yf_cache.get_institutional_holders(symbol)
         if ih is None or ih.empty:
             return []
 
@@ -868,14 +861,8 @@ def _get_geopolitical_event_dates(symbol: str, available_dates: list[str]) -> li
         if not TAVILY_API_KEY:
             return []
 
-        # Get stock's sector for relevance
-        sector = ""
-        try:
-            import yfinance as yf
-            info = yf.Ticker(symbol).info
-            sector = info.get("sector", "")
-        except Exception:
-            pass
+        # Get stock's sector for relevance — shared across signal evaluators.
+        sector = _yf_cache.get_info(symbol).get("sector", "")
 
         dates = []
         now = dt.now()
@@ -929,14 +916,9 @@ def _get_disruption_event_dates(symbol: str) -> list[str]:
         if not EXA_API_KEY:
             return []
 
-        # Get sector
-        sector = ""
-        try:
-            import yfinance as yf
-            info = yf.Ticker(symbol).info
-            sector = info.get("sector", "") or info.get("industry", "")
-        except Exception:
-            pass
+        # Get sector — shared cache across all signal evaluators.
+        info = _yf_cache.get_info(symbol)
+        sector = info.get("sector", "") or info.get("industry", "")
 
         if not sector:
             return []

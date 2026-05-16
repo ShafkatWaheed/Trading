@@ -3,7 +3,10 @@ from_symbol,to_symbol,relation_type,strength,polarity,evidence,notes
 # Convention: from_symbol is the SUBJECT of the edge; to_symbol is the related party.
 #   (NVDA, TSM, "supplier")  ⇒ NVDA's supplier is TSM      (NVDA depends on TSM)
 #   (TSM, NVDA, "customer")  ⇒ TSM's customer is NVDA      (revenue concentration)
-# The loader writes both rows where both are knowable so traversal works either way.
+# Each relationship is stored as ONE row. The reader (`src/graph/traverse.py`
+# `_relations_of`) walks both directions and flips supplier↔customer for the
+# inverse side, so you do NOT need to write the mirror row to make traversal
+# work either way. Substitute/complement are symmetric and pass through unchanged.
 #
 # relation_type: supplier | customer | substitute | complement
 #   supplier  → upstream input dependency

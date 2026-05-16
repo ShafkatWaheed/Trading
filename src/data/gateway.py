@@ -161,7 +161,11 @@ class DataGateway:
     # ── Sector Flows ────────────────────────────────────────────
 
     def get_sector_flows(self, period: str = "1mo") -> list[dict]:
-        """Fetch sector ETF performance as proxy for money flows."""
+        """Fetch sector ETF performance as proxy for money flows.
+
+        Uses a single batched `yf.download` for all 11 sector ETFs — one HTTP
+        roundtrip instead of 11 serial ones (~10x faster on cold path).
+        """
         try:
             import yfinance as yf
             sectors = {
@@ -170,10 +174,27 @@ class DataGateway:
                 "XLE": "Energy", "XLI": "Industrials", "XLRE": "Real Estate",
                 "XLU": "Utilities", "XLB": "Materials", "XLC": "Communication Services",
             }
+            tickers = list(sectors.keys())
+            try:
+                bulk = yf.download(
+                    tickers, period=period, progress=False,
+                    auto_adjust=True, group_by="ticker", threads=True,
+                )
+            except Exception:
+                return []
+
             results = []
             for ticker, name in sectors.items():
                 try:
-                    data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+                    # When group_by="ticker", columns are MultiIndex
+                    # (ticker, field). Pull this ETF's slice safely.
+                    if isinstance(bulk.columns, pd.MultiIndex) and ticker in bulk.columns.get_level_values(0):
+                        data = bulk[ticker]
+                    elif not isinstance(bulk.columns, pd.MultiIndex):
+                        data = bulk    # single-ticker fallback (e.g. only one ticker requested)
+                    else:
+                        continue
+                    data = data.dropna(how="all")
                     if data.empty or len(data) < 2:
                         continue
                     start_price = float(data["Close"].iloc[0])

@@ -6,40 +6,9 @@ and whether the investment case changes.
 """
 from __future__ import annotations
 
-import json
-import os
-import re
-import subprocess
+from src.utils.claude_cli import ask_claude_json
 
-_TIMEOUT_SECONDS = 60
 _MAX_INPUT_CHARS = 12_000
-
-
-def _ask_claude(prompt: str) -> str | None:
-    try:
-        env = os.environ.copy()
-        env.pop("CLAUDECODE", None)
-        proc = subprocess.run(
-            ["claude", "-p", prompt, "--model", "haiku", "--allowedTools", ""],
-            capture_output=True, text=True, timeout=_TIMEOUT_SECONDS, env=env,
-        )
-        if proc.returncode != 0:
-            return None
-        return (proc.stdout or "").strip()
-    except Exception:
-        return None
-
-
-def _extract_json(text: str) -> dict | None:
-    if not text:
-        return None
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
 
 
 def explain_earnings(symbol: str, text: str) -> dict:
@@ -65,13 +34,11 @@ def explain_earnings(symbol: str, text: str) -> dict:
         f"=== REPORT ===\n{body}\n=== END ===\n"
     )
 
-    raw = _ask_claude(prompt)
-    parsed = _extract_json(raw) if raw else None
-    if not parsed:
+    parsed = ask_claude_json(prompt, model="haiku", timeout=60, retries=2)
+    if not isinstance(parsed, dict):
         return {
             "symbol": symbol,
             "error": "Could not parse Claude response.",
-            "raw": (raw or "")[:500],
         }
 
     def _str_list(v) -> list[str]:

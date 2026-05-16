@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { marketApi } from "@/lib/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sparkline } from "@/components/market/sparkline";
+import { RefreshButton } from "@/components/ui/refresh-button";
 import { cn } from "@/lib/utils";
 
 function fmtCountdown(mins: number | null | undefined): string {
@@ -32,11 +33,11 @@ function priceColor(pct: number | null | undefined): string {
 }
 
 export function LiveIndicesStrip() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["market-dashboard"],
     queryFn: () => marketApi.dashboard(),
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
   });
 
   if (isLoading) {
@@ -66,6 +67,7 @@ export function LiveIndicesStrip() {
       <span className="hidden sm:inline-block w-px h-6 bg-bg-borderHi" />
 
       <div className="flex items-center gap-4 sm:gap-6 flex-wrap text-sm">
+        <RefreshButton onClick={() => refetch()} isFetching={isFetching} title="Refresh live indices" />
         {(data.indices || []).map((i) => (
           <div key={i.key} className="flex items-center gap-2.5 tabular-nums">
             <div className="flex flex-col gap-0.5">

@@ -109,7 +109,11 @@ export default function MarketPulsePage() {
           <SectorFlows sectors={data?.sectors} loading={isLoading && !data} />
         </section>
 
-        <DisruptionThemes themes={disruption.data?.themes} loading={disruption.isLoading} />
+        <DisruptionThemes
+          themes={disruption.data?.themes}
+          articles={disruption.data?.articles}
+          loading={disruption.isLoading}
+        />
         {disruption.data?.source === "fallback" && (
           <p className="text-[10px] text-text-muted -mt-2">
             Built-in themes (configure TAVILY_API_KEY for live AI-derived themes)

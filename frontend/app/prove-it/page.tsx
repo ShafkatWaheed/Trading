@@ -65,7 +65,6 @@ export default function ProveItPage() {
   // Multi-stock AI Analyst — anchor + additional symbols
   const [aiMultiEnabled, setAiMultiEnabled] = useState(false);
   const [aiExtraSymbols, setAiExtraSymbols] = useState<string[]>([]);
-  const [aiExtraInput, setAiExtraInput] = useState("");
   const [aiMode, setAiMode] = useState<"single" | "multi">("single");
 
   const { data: catalog } = useQuery({
@@ -1023,35 +1022,56 @@ export default function ProveItPage() {
 
               {aiMultiEnabled && (
                 <>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const v = aiExtraInput.trim().toUpperCase();
-                      if (v && v !== symbol && !aiExtraSymbols.includes(v) && aiExtraSymbols.length < 7) {
-                        setAiExtraSymbols([...aiExtraSymbols, v]);
-                        setAiExtraInput("");
-                      }
-                    }}
-                    className="flex items-center gap-2 mt-3"
-                  >
-                    <input
-                      value={aiExtraInput}
-                      onChange={(e) => setAiExtraInput(e.target.value.toUpperCase())}
-                      placeholder="Add ticker (e.g. NVDA)"
-                      maxLength={10}
-                      disabled={aiExtraSymbols.length >= 7}
-                      className="flex-1 bg-bg-card border border-bg-border rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent-pink/60 disabled:opacity-50"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!aiExtraInput.trim() || aiExtraSymbols.length >= 7}
-                      className="bg-accent-pink/10 border border-accent-pink/40 hover:bg-accent-pink/20 text-accent-pink px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
-                    >
-                      <Plus size={11} /> Add
-                    </button>
-                  </form>
+                  {/* Autocompleting ticker search — suggests matches as user types */}
+                  <div className="mt-3">
+                    {aiExtraSymbols.length < 7 ? (
+                      <TickerSearchInput
+                        onPick={(picked) => {
+                          const v = picked.toUpperCase();
+                          if (v && v !== symbol && !aiExtraSymbols.includes(v)) {
+                            setAiExtraSymbols([...aiExtraSymbols, v]);
+                          }
+                        }}
+                        placeholder="Search to add ticker (e.g. NVDA, AAPL)…"
+                        tone="pink"
+                        compact
+                        clearOnPick
+                      />
+                    ) : (
+                      <p className="text-[11px] text-text-muted py-1.5">
+                        Max 7 additional stocks selected. Remove one below to add more.
+                      </p>
+                    )}
+                  </div>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {/* Quick-add from watchlist */}
+                  {watchlist.length > 0 && aiExtraSymbols.length < 7 && (() => {
+                    const candidates = watchlist
+                      .map((w) => w.symbol)
+                      .filter((s) => s !== symbol && !aiExtraSymbols.includes(s))
+                      .slice(0, 10);
+                    if (candidates.length === 0) return null;
+                    return (
+                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wider text-text-muted shrink-0">From watchlist</span>
+                        {candidates.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => {
+                              if (aiExtraSymbols.length < 7) {
+                                setAiExtraSymbols([...aiExtraSymbols, s]);
+                              }
+                            }}
+                            className="badge bg-bg-base border-bg-border text-text-secondary hover:border-accent-pink/40 hover:text-accent-pink font-mono"
+                          >
+                            + {s}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     <span className="badge bg-accent-pink/15 text-accent-pink border-accent-pink/50 font-mono">
                       {symbol} <span className="ml-1 text-[9px] uppercase tracking-wider opacity-80">anchor</span>
                     </span>

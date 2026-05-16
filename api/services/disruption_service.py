@@ -67,7 +67,15 @@ def _search_tavily(query: str) -> list[dict]:
             json={"query": query, "api_key": api_key, "max_results": 5, "search_depth": "basic"},
             timeout=12,
         )
-        return r.json().get("results", []) or []
+        results = r.json().get("results", []) or []
+        return [
+            {
+                "title": (x.get("title") or "")[:120],
+                "content": (x.get("content") or "")[:200],
+                "url": x.get("url") or "",
+            }
+            for x in results
+        ]
     except Exception:
         return []
 
@@ -87,12 +95,25 @@ def _search_exa(query: str) -> list[dict]:
         )
         results = r.json().get("results", []) or []
         return [
-            {"title": (x.get("title") or "")[:100],
-             "content": " ".join(x.get("highlights", []))[:150]}
+            {"title": (x.get("title") or "")[:120],
+             "content": " ".join(x.get("highlights", []))[:200],
+             "url": x.get("url") or ""}
             for x in results
         ]
     except Exception:
         return []
+
+
+def _domain(url: str) -> str:
+    """Extract a short domain label (e.g. 'reuters.com') from a URL for display."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
 
 
 def _gather_articles() -> list[dict]:
@@ -131,7 +152,12 @@ def _gather_articles() -> list[dict]:
         if len(articles) >= 24:
             break
     return [
-        {"title": (a.get("title") or "")[:100], "content": (a.get("content") or "")[:150]}
+        {
+            "title": (a.get("title") or "")[:120],
+            "content": (a.get("content") or "")[:200],
+            "url": a.get("url") or "",
+            "source": _domain(a.get("url") or ""),
+        }
         for a in articles[:24]
     ]
 
@@ -139,7 +165,11 @@ def _gather_articles() -> list[dict]:
 def _ask_claude_for_themes(articles: list[dict]) -> list[dict] | None:
     if not articles:
         return None
-    articles_text = "\n".join(f"- {a['title']}: {a['content'][:80]}" for a in articles)
+    # Number articles 1..N so Claude can cite the supporting indices per theme.
+    articles_text = "\n".join(
+        f"[{i+1}] {a['title']}: {a['content'][:80]}"
+        for i, a in enumerate(articles)
+    )
     prompt = (
         "Identify the top 6 technology disruption themes impacting US stocks based on these articles.\n\n"
         f"{articles_text}\n\n"
@@ -152,7 +182,11 @@ def _ask_claude_for_themes(articles: list[dict]) -> list[dict] | None:
         "Respond with ONLY a JSON array of 6 items. Each item must have: "
         "name (string), icon (single emoji), intensity (HIGH/MEDIUM/EMERGING), "
         "tickers_benefit (array of 3-5 tickers), sectors_benefit (array of 1-3), "
-        "tickers_risk (array of 0-3), sectors_risk (array of 0-3), headline (one short sentence)."
+        "tickers_risk (array of 0-3), sectors_risk (array of 0-3), "
+        "headline (one short sentence), "
+        "sources (array of 1-3 article indices from above that support this theme — "
+        "use the numbers in brackets like [1], [4]; only cite articles that actually mention "
+        "this theme)."
     )
     try:
         env = os.environ.copy()
@@ -185,11 +219,24 @@ def get_disruption_themes() -> dict:
     themes = claude_themes or FALLBACK_THEMES
     source = "claude" if claude_themes else "fallback"
 
-    # Sanity: enforce shape
+    # Sanity: enforce shape. Validate cited indices against actual articles list.
+    n_articles = len(articles)
     cleaned = []
     for t in themes[:6]:
         if not isinstance(t, dict):
             continue
+        # Normalize sources: keep only valid 1..N indices, max 3 per theme.
+        raw_sources = t.get("sources") or []
+        sources: list[int] = []
+        for s in raw_sources:
+            try:
+                idx = int(s)
+                if 1 <= idx <= n_articles and idx not in sources:
+                    sources.append(idx)
+            except (TypeError, ValueError):
+                continue
+            if len(sources) >= 3:
+                break
         cleaned.append({
             "name": str(t.get("name", "Theme"))[:60],
             "icon": str(t.get("icon", "💡"))[:4],
@@ -199,12 +246,25 @@ def get_disruption_themes() -> dict:
             "tickers_risk": [str(x).upper()[:6] for x in (t.get("tickers_risk") or [])][:6],
             "sectors_risk": [str(x)[:30] for x in (t.get("sectors_risk") or [])][:4],
             "headline": str(t.get("headline", ""))[:200],
+            "sources": sources,
         })
+
+    # Build the top-level articles list (1-indexed for parity with citations).
+    article_index = [
+        {
+            "idx": i + 1,
+            "title": (a.get("title") or "")[:120],
+            "url": a.get("url") or "",
+            "source": a.get("source") or _domain(a.get("url") or ""),
+        }
+        for i, a in enumerate(articles)
+    ]
 
     payload = {
         "themes": cleaned,
         "source": source,
         "articles_used": len(articles),
+        "articles": article_index,
         "last_updated": datetime.utcnow().isoformat() + "Z",
     }
     try:

@@ -11,6 +11,7 @@ from api.schemas import HealthResponse
 from api.routes import (
     market, discover, stocks, backtest, agent, watchlist, compare, alerts, simulation,
     data_sources, universe, news_impact, graph, freshness, earnings, graph_relevance,
+    refresh, track_record, context_search,
 )
 
 app = FastAPI(
@@ -43,6 +44,9 @@ app.include_router(graph.router)
 app.include_router(freshness.router)
 app.include_router(earnings.router)
 app.include_router(graph_relevance.router)
+app.include_router(refresh.router)
+app.include_router(track_record.router)
+app.include_router(context_search.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])

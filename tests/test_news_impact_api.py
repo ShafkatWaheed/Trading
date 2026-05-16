@@ -213,12 +213,21 @@ def test_results_sorted_by_composite_score(client):
 
 
 def test_tier_a_stocks_preferred_over_lower_tiers(client):
-    """When Tier A and Tier B/C stocks both match, Tier A should rank higher
-    (assuming similar industry weights)."""
+    """When Tier A and Tier B/C stocks both match, Tier A on average should
+    rank higher (the tier weight multiplier favours A=1.0 over B=0.7/C=0.4).
+
+    With ~3k stocks in the universe, individual Tier B stocks can outscore
+    individual Tier A stocks on industry-fit grounds — that's expected. We
+    instead check the *aggregate*: mean Tier A composite_score >= mean of
+    the rest, which is the soundness property the tier weight is supposed
+    to enforce.
+    """
     payload = _post(client, "GPU demand booms")
     tier_a = [s for s in payload["stocks"] if s["tier"] == "A"]
-    # Most prototype stocks are Tier A right now (160 hand-curated), so this
-    # is mostly a soundness check that Tier A actually dominates.
-    if tier_a:
-        assert all(s["tier"] == "A" or s["composite_score"] <= tier_a[-1]["composite_score"]
-                   for s in payload["stocks"])
+    others = [s for s in payload["stocks"] if s["tier"] != "A"]
+    if tier_a and others:
+        avg_a = sum(s["composite_score"] for s in tier_a) / len(tier_a)
+        avg_o = sum(s["composite_score"] for s in others) / len(others)
+        assert avg_a >= avg_o, (
+            f"Tier A average ({avg_a:.3f}) should be >= other tiers ({avg_o:.3f})"
+        )

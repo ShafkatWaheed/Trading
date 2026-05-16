@@ -256,6 +256,35 @@ def _default_fetch_summary(symbol: str) -> tuple[str | None, str | None]:
 # ── batch runner ───────────────────────────────────────────────
 
 
+def detect_drift_and_reset(conn) -> int:
+    """Reset 'done' causal_jobs rows whose claimed exposures have disappeared.
+
+    Same pattern as `peer_jobs.detect_drift_and_reset` — if the ledger says
+    `edges_written > 0` but `stock_commodity_exposure` has no claude-sourced
+    rows for that symbol, the ledger has drifted and we reset to pending.
+    """
+    rows = conn.execute(
+        "SELECT symbol, edges_written FROM causal_jobs "
+        "WHERE status='done' AND edges_written > 0"
+    ).fetchall()
+    reset = 0
+    for r in rows:
+        actual = conn.execute(
+            "SELECT COUNT(*) FROM stock_commodity_exposure "
+            "WHERE symbol=? AND source='claude'",
+            (r["symbol"],),
+        ).fetchone()[0]
+        if actual == 0:
+            conn.execute(
+                "UPDATE causal_jobs SET status='pending', last_attempt=? WHERE symbol=?",
+                (_now(), r["symbol"]),
+            )
+            reset += 1
+    if reset:
+        conn.commit()
+    return reset
+
+
 def run_for_tiers(
     tiers: list[str],
     *,
@@ -267,6 +296,11 @@ def run_for_tiers(
     init_db()
     conn = get_connection()
     try:
+        # Heal ledger drift before discovering pending work.
+        drift_reset = detect_drift_and_reset(conn)
+        if log and drift_reset:
+            print(f"  [causal_extract] drift detected — reset {drift_reset} stale 'done' rows")
+
         placeholders = ",".join("?" * len(tiers))
         symbols = [
             r["symbol"] for r in conn.execute(
@@ -304,6 +338,7 @@ def run_for_tiers(
         "succeeded": succeeded,
         "failed": failed,
         "edges_written": edges,
+        "drift_reset": drift_reset,
     }
 
 

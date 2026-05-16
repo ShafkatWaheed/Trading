@@ -36,7 +36,7 @@ export function BreadthCard() {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["market-dashboard"],
     queryFn: () => marketApi.dashboard(),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
   });
 
   // Detect cached-empty: the cache only stores responses with real data now,

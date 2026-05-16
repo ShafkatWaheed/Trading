@@ -36,7 +36,7 @@ export function NewsFeed({ symbol }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["news-feed", symbol],
     queryFn: () => stocksApi.newsFeed(symbol),
-    staleTime: 30 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 

@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity, Compass, Search, BarChart3, Bot, Bell, Network, Newspaper,
-  Radio, Eye, ChevronDown,
+  Radio, Eye, ChevronDown, RefreshCw, LineChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { alertsApi } from "@/lib/api/endpoints";
@@ -21,9 +21,12 @@ const PRIMARY = [
 ];
 
 const SECONDARY = [
+  { href: "/track-record",    label: "Track Record",   icon: LineChart, blurb: "How often is the AI right — graded vs. real moves" },
+  { href: "/context-search",  label: "Context Search", icon: Search,    blurb: "Free-text scenario → ranked stocks via the graph" },
   { href: "/universe",        label: "Universe",       icon: Network,   blurb: "Tracked stock universe" },
   { href: "/news-impact",     label: "News Impact",    icon: Newspaper, blurb: "Cross-stock news propagation" },
   { href: "/edge-freshness",  label: "Edge Freshness", icon: Eye,       blurb: "Data freshness queue" },
+  { href: "/refresh",         label: "Refresh Graph",  icon: RefreshCw, blurb: "Manual pipeline refresh + quality" },
   { href: "/data-sources",    label: "Data Sources",   icon: Radio,     blurb: "Connected feeds + rate limits" },
 ];
 

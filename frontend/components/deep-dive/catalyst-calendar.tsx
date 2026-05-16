@@ -33,7 +33,7 @@ export function CatalystCalendar({ symbol }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["catalyst-calendar", symbol],
     queryFn: () => stocksApi.catalystCalendar(symbol),
-    staleTime: 6 * 60 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
     enabled: Boolean(symbol),
   });
 

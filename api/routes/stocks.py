@@ -1,12 +1,15 @@
 """Stock routes — deep dive + search."""
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Query
 
 from api.schemas import (
     AnalystConsensusResponse, BenchmarksResponse, BubbleScoreResponse,
-    BullNarrativeResponse, CatalystCalendarResponse, DeepDiveResponse,
-    NewsFeedResponse, PeerValuationResponse, RecommendationResponse,
-    RiskNarrativeResponse, SignalEvidenceResponse, SmartMoneyResponse,
-    StockSearchResult,
+    BullNarrativeResponse, CatalystCalendarResponse, DeepDiveBundleResponse,
+    DeepDiveResponse, NewsFeedResponse, PeerValuationResponse,
+    RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
+    SmartMoneyResponse, StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
@@ -52,6 +55,72 @@ def deep_dive(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+
+@router.get("/{ticker}/deep-dive-bundle", response_model=DeepDiveBundleResponse)
+def deep_dive_bundle(
+    ticker: str,
+    period: str = Query("3M", regex="^(1D|1W|1M|3M|6M|1Y)$"),
+    signal_filter: str = Query("all", regex="^(all|buy|sell|strong)$"),
+    account_size: float = Query(10000, ge=100, le=10000000),
+    risk_pct: float = Query(2, ge=0.1, le=10),
+    force: bool = Query(False, description="Bypass caches and recompute everything"),
+) -> dict:
+    """Fetch deep-dive + 4 core sidecar payloads in a single request.
+
+    The 5 services run concurrently. The deep-dive itself is the slowest;
+    bubble/peer/analyst/benchmarks each take a few hundred ms, so concurrency
+    means the bundle effectively costs the deep-dive call alone.
+
+    Each sidecar is wrapped in try/except — a single failure surfaces in
+    `errors[<name>]` and the rest still come back. The frontend uses this to
+    prime the React Query cache for each child query.
+    """
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+
+    # The deep-dive is the largest payload and the prerequisite of useful page
+    # render — run it inline and bail if it fails.
+    try:
+        dd = deep_dive_service.get_deep_dive(
+            ticker, period=period, signal_filter=signal_filter,
+            account_size=account_size, risk_pct=risk_pct, force=force,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+    errors: dict[str, str] = {}
+
+    def _safe(name: str, fn):
+        try:
+            return fn()
+        except Exception as e:
+            errors[name] = str(e)
+            return None
+
+    jobs = {
+        "bubble_score":      lambda: bubble_score_service.get_bubble_score(ticker, force=force),
+        "peer_valuation":    lambda: peer_valuation_service.get_peer_valuation(ticker, force=force),
+        "analyst_consensus": lambda: analyst_consensus_service.get_analyst_consensus(ticker, force=force),
+        "benchmarks":        lambda: benchmarks_service.get_benchmarks(ticker, period=period, force=force),
+    }
+
+    results: dict[str, dict | None] = {}
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {name: pool.submit(_safe, name, fn) for name, fn in jobs.items()}
+        for name, fut in futures.items():
+            results[name] = fut.result()
+
+    return {
+        "deep_dive": dd,
+        "bubble_score":      results["bubble_score"],
+        "peer_valuation":    results["peer_valuation"],
+        "analyst_consensus": results["analyst_consensus"],
+        "benchmarks":        results["benchmarks"],
+        "period":            period,
+        "last_updated":      datetime.utcnow().isoformat() + "Z",
+        "errors":            errors,
+    }
 
 
 @router.get("/{ticker}/risk-narrative", response_model=RiskNarrativeResponse)

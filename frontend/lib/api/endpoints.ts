@@ -39,6 +39,10 @@ import type {
   TopHoldersResponse,
   InstitutionHoldingsResponse,
   FreshnessQueueResponse,
+  RefreshKindMeta,
+  RefreshJob,
+  RefreshQualitySnapshot,
+  ContextSearchResponse,
   RiskNarrative,
   EarningsExplanation,
   BubbleScore,
@@ -54,6 +58,12 @@ import type {
   MarketDashboard,
   MarketTakeaway,
   MarketNews,
+  TrackRecord,
+  TrackRecordSource,
+  DecisionsRecent,
+  TopWinsLosses,
+  EvaluatorRun,
+  DeepDiveBundle,
 } from "./types";
 
 export const marketApi = {
@@ -199,6 +209,42 @@ export const stocksApi = {
     const qs = params.toString();
     return api.get<DeepDive>(`/stocks/${encodeURIComponent(ticker)}/deep-dive${qs ? "?" + qs : ""}`);
   },
+  // Deep-dive bundle runs 5 services concurrently and the slowest sub-call
+  // (yfinance fundamentals) can push the total past 60s when Yahoo's crumb
+  // cache invalidates. The Next.js dev proxy drops anything over ~60s with
+  // an empty 500, so in dev we bypass the proxy and hit FastAPI directly.
+  // Production keeps the relative path so deployed reverse-proxy timeouts
+  // can be tuned independently.
+  deepDiveBundle: async (
+    ticker: string,
+    opts?: {
+      period?: string;
+      signal_filter?: string;
+      account_size?: number;
+      risk_pct?: number;
+      force?: boolean;
+    }
+  ): Promise<DeepDiveBundle> => {
+    const params = new URLSearchParams();
+    if (opts?.period) params.set("period", opts.period);
+    if (opts?.signal_filter) params.set("signal_filter", opts.signal_filter);
+    if (opts?.account_size !== undefined) params.set("account_size", String(opts.account_size));
+    if (opts?.risk_pct !== undefined) params.set("risk_pct", String(opts.risk_pct));
+    if (opts?.force) params.set("force", "true");
+    const qs = params.toString();
+    const path = `/stocks/${encodeURIComponent(ticker)}/deep-dive-bundle${qs ? "?" + qs : ""}`;
+
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev ? `http://localhost:8000${path}` : `/api${path}`;
+
+    const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as DeepDiveBundle;
+  },
   riskNarrative: (ticker: string, force = false) =>
     api.get<RiskNarrative>(
       `/stocks/${encodeURIComponent(ticker)}/risk-narrative${force ? "?force=true" : ""}`
@@ -342,6 +388,27 @@ export const newsImpactApi = {
     api.post<NewsImpactResponse>("/news-impact", { text }),
 };
 
+export const contextSearchApi = {
+  // Context Search goes through the LLM-mediated expander which can take
+  // 5-15 seconds end-to-end. Bypass the Next.js dev proxy in dev so we
+  // don't hit the proxy's 60s ceiling on slow Claude responses.
+  search: async (text: string, limit = 40): Promise<ContextSearchResponse> => {
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev ? "http://localhost:8000/context-search" : "/api/context-search";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, limit }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as ContextSearchResponse;
+  },
+};
+
 export const graphApi = {
   peers: (symbol: string, max_results = 20) =>
     api.get<PeerListResponse>(
@@ -368,4 +435,43 @@ export const freshnessApi = {
       "/freshness/acknowledge",
       { symbol, action }
     ),
+};
+
+export const refreshApi = {
+  kinds: () => api.get<{ kinds: RefreshKindMeta[] }>("/refresh/kinds"),
+  start: (kind: string) => api.post<RefreshJob>(`/refresh/${encodeURIComponent(kind)}`, {}),
+  job: (id: number) => api.get<RefreshJob>(`/refresh/jobs/${id}`),
+  jobs: (kind?: string, limit = 20) => {
+    const params = new URLSearchParams();
+    if (kind) params.set("kind", kind);
+    params.set("limit", String(limit));
+    return api.get<{ jobs: RefreshJob[] }>(`/refresh/jobs?${params.toString()}`);
+  },
+  latest: () => api.get<Record<string, RefreshJob>>("/refresh/latest"),
+  quality: () => api.get<RefreshQualitySnapshot>("/refresh/quality"),
+};
+
+export const trackRecordApi = {
+  summary: (opts?: { source?: TrackRecordSource; symbol?: string; days?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.symbol) params.set("symbol", opts.symbol);
+    if (opts?.days !== undefined) params.set("days", String(opts.days));
+    const qs = params.toString();
+    return api.get<TrackRecord>(`/ai/track-record${qs ? "?" + qs : ""}`);
+  },
+  decisions: (opts?: { source?: TrackRecordSource; symbol?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.symbol) params.set("symbol", opts.symbol);
+    params.set("limit", String(opts?.limit ?? 50));
+    return api.get<DecisionsRecent>(`/ai/decisions/recent?${params.toString()}`);
+  },
+  top: (opts?: { limit?: number; days?: number }) => {
+    const params = new URLSearchParams();
+    params.set("limit", String(opts?.limit ?? 10));
+    if (opts?.days !== undefined) params.set("days", String(opts.days));
+    return api.get<TopWinsLosses>(`/ai/decisions/top?${params.toString()}`);
+  },
+  evaluateNow: () => api.post<EvaluatorRun>("/ai/decisions/evaluate-now", {}),
 };

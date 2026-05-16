@@ -98,11 +98,20 @@ export type DisruptionTheme = {
   tickers_risk: string[];
   sectors_risk: string[];
   headline: string;
+  sources?: number[];
+};
+
+export type DisruptionArticle = {
+  idx: number;
+  title: string;
+  url: string;
+  source: string;
 };
 
 export type DisruptionPayload = {
   themes: DisruptionTheme[];
   source: "claude" | "fallback";
+  articles?: DisruptionArticle[];
   last_updated: string;
 };
 
@@ -1408,4 +1417,194 @@ export type EarningsExplanation = {
   input_chars?: number | null;
   error?: string | null;
   raw?: string | null;
+};
+
+// ── Refresh pipeline ─────────────────────────────────────────────
+
+export type RefreshKindMeta = {
+  kind: string;
+  description: string;
+};
+
+export type RefreshJob = {
+  id: number;
+  kind: string;
+  status: "queued" | "running" | "done" | "failed";
+  progress: number;             // 0..1
+  processed: number;
+  total: number;
+  message?: string | null;
+  error?: string | null;
+  result_json?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type RefreshQualitySnapshot = {
+  universe: { total: number; by_tier: Record<string, number> };
+  industries: {
+    stock_industry_rows: number;
+    tagged_symbols: number;
+    distinct_industries: number;
+  };
+  peers: { by_source: Record<string, number> };
+  relations: { by_type: Record<string, number> };
+  commodity_exposures: { by_source: Record<string, number> };
+  institutional: {
+    holdings_total: number;
+    by_source: Record<string, number>;
+  };
+  freshness: { by_status: Record<string, number> };
+  latest_jobs: Record<string, { status: string; finished_at?: string | null }>;
+};
+
+
+// ── Deep Dive Bundle (Phase 4) ────────────────────────────────
+
+export type DeepDiveBundle = {
+  deep_dive: DeepDive;
+  bubble_score: BubbleScore | null;
+  peer_valuation: PeerValuation | null;
+  analyst_consensus: AnalystConsensus | null;
+  benchmarks: Benchmarks | null;
+  period: string;
+  last_updated: string;
+  errors: Record<string, string>;
+};
+
+
+// ── AI Track Record (Phase 2) ─────────────────────────────────
+
+export type TrackRecordSource = "recommendation" | "ai_analyst" | "bubble_score";
+
+export type TrackRecordOverall = {
+  total: number;
+  correct: number;
+  accuracy_pct: number;
+  avg_return_pct: number;
+  avg_win_return_pct: number;
+  avg_loss_return_pct: number;
+};
+
+export type TrackRecordBySource = {
+  source: TrackRecordSource;
+  total: number;
+  correct: number;
+  accuracy_pct: number;
+  avg_return_pct: number;
+};
+
+export type TrackRecord = {
+  filter: {
+    source: TrackRecordSource | null;
+    symbol: string | null;
+    days: number | null;
+  };
+  overall: TrackRecordOverall;
+  by_source: TrackRecordBySource[];
+  pending_count: number;
+  last_updated: string;
+};
+
+export type DecisionStatus = "pending" | "correct" | "incorrect";
+
+export type DecisionLogItem = {
+  id: number;
+  created_at: string;
+  symbol: string;
+  source: TrackRecordSource;
+  decision: string;
+  score: number | null;
+  price_at_call: number;
+  prediction_window_days: number;
+  context: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+  status: DecisionStatus;
+  evaluated_at: string | null;
+  price_now: number | null;
+  return_pct: number | null;
+};
+
+export type DecisionsRecent = {
+  filter: { source: TrackRecordSource | null; symbol: string | null; limit: number };
+  items: DecisionLogItem[];
+  last_updated: string;
+};
+
+export type TopWinLossRow = {
+  id: number;
+  created_at: string;
+  symbol: string;
+  source: TrackRecordSource;
+  decision: string;
+  price_at_call: number;
+  return_pct: number;
+  was_correct: number;
+};
+
+export type TopWinsLosses = {
+  wins: TopWinLossRow[];
+  losses: TopWinLossRow[];
+  last_updated: string;
+};
+
+export type EvaluatorRun = {
+  ran_at: string;
+  candidates: number;
+  evaluated: number;
+  correct: number;
+  incorrect: number;
+  skipped_pending: number;
+  skipped_no_price: number;
+};
+
+// ── Context Search (Tier 1: LLM query expander → graph) ───────────
+
+export type ContextSearchCommodity = {
+  code: string;
+  direction: "up" | "down";
+  intensity: number;
+};
+
+export type ContextSearchIndustry = {
+  code: string;
+  polarity: number;
+};
+
+export type ContextSearchExpansion = {
+  keywords: string[];
+  commodities: ContextSearchCommodity[];
+  industries: ContextSearchIndustry[];
+  themes: string[];
+  substitutes_hint: string[];
+  interpretation: string;
+};
+
+export type ContextSearchStock = {
+  symbol: string;
+  name?: string | null;
+  tier?: string | null;
+  sector?: string | null;
+  industry_code?: string | null;
+  composite_score: number;
+  polarity: number;
+  legs: ("keywords" | "commodities" | "graph_relevance")[];
+  reasoning: string[];
+};
+
+export type ContextSearchIndustryRow = {
+  industry_code: string;
+  polarity: number;
+  strength: number;
+  contributing_keywords: string[];
+  stocks: string[];
+};
+
+export type ContextSearchResponse = {
+  query: string;
+  expansion: ContextSearchExpansion;
+  stocks: ContextSearchStock[];
+  by_industry: ContextSearchIndustryRow[];
+  matched_keywords: string[];
+  matched_symbols: string[];
 };
