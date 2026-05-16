@@ -296,6 +296,13 @@ def get_litigation(ticker: str) -> dict:
     return get_litigation_for_ticker(ticker.upper())
 
 
+@router.get("/{ticker}/exec-changes", response_model=StockInformationResponse)
+def get_exec_changes(ticker: str) -> dict:
+    """Wave 2 Phase G: Executive Changes card — 8-K Item 5.02 events."""
+    from api.services.exec_changes_service import get_exec_changes_for_ticker
+    return get_exec_changes_for_ticker(ticker.upper())
+
+
 @router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
 def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
