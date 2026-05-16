@@ -42,7 +42,8 @@ def _mock_response(payload, status: int = 200):
     return resp
 
 
-def test_no_key_short_circuits():
+def test_no_key_short_circuits(monkeypatch):
+    monkeypatch.setattr(tiingo, "TIINGO_API_KEY", "")
     with patch.object(tiingo.httpx, "get") as mock_get:
         assert tiingo.get_daily_prices("NVDA") is None
         assert tiingo.get_intraday("NVDA") is None

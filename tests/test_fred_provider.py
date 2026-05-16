@@ -42,7 +42,8 @@ def _mock_response(payload, status: int = 200):
     return resp
 
 
-def test_no_key_short_circuits():
+def test_no_key_short_circuits(monkeypatch):
+    monkeypatch.setattr(fred, "FRED_API_KEY", "")
     with patch.object(fred.httpx, "get") as mock_get:
         assert fred.get_series("FEDFUNDS") is None
         assert fred.get_latest("FEDFUNDS") is None

@@ -42,8 +42,10 @@ def _mock_response(payload, status: int = 200):
     return resp
 
 
-def test_no_key_returns_none_without_request():
+def test_no_key_returns_none_without_request(monkeypatch):
     """Every getter must short-circuit when the API key is missing."""
+    # Force module to behave as if env var was unset, even if .env supplied one.
+    monkeypatch.setattr(finnhub, "FINNHUB_API_KEY", "")
     with patch.object(finnhub.httpx, "get") as mock_get:
         assert finnhub.get_eps_estimates("NVDA") is None
         assert finnhub.get_recommendation_trend("NVDA") is None
