@@ -1608,3 +1608,27 @@ export type ContextSearchResponse = {
   matched_keywords: string[];
   matched_symbols: string[];
 };
+
+// ── Sector-influence Wave 2: card payloads ─────────────────────────
+
+export type InformationFact = {
+  text: string;
+  as_of: string;
+  source: string;
+  source_url: string | null;
+  confidence: number;
+};
+
+export type StockInformation = {
+  ticker: string;
+  topic: string;
+  headline: string;
+  facts: InformationFact[];
+  narrative: string | null;
+  implications: string[];
+  related_catalysts: string[];
+  confidence: "high" | "med" | "low";
+  as_of: string;
+  sources_used: string[];
+  severity: "high" | "med" | "low";
+};

@@ -26,6 +26,7 @@ import { SmartMoneyCard } from "@/components/deep-dive/smart-money";
 import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
+import { InnovationCard } from "@/components/deep-dive/innovation-card";
 import { StickyVerdictBar } from "@/components/deep-dive/sticky-verdict-bar";
 import { PositionSizing } from "@/components/deep-dive/position-sizing";
 import { SectionHeader } from "@/components/deep-dive/section-header";
@@ -275,6 +276,7 @@ export default function DeepDiveTickerPage() {
 
           <BubbleScoreCard symbol={data.symbol} />
           <PeerValuationStrip symbol={data.symbol} />
+          <InnovationCard ticker={data.symbol} />
 
           {/* ── 06 · BULL vs BEAR ──────────────────────────────────────── */}
           <SectionHeader index={6} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
