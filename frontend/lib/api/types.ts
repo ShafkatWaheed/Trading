@@ -1632,3 +1632,26 @@ export type StockInformation = {
   sources_used: string[];
   severity: "high" | "med" | "low";
 };
+
+// Wave 2 Entity Match Debug card ────────────────────────────────────
+
+export type EntityMatchRejected = {
+  ticker: string;
+  alias_name: string;
+  score: number;
+};
+
+export type EntityMatchDecision = {
+  source: string;
+  input_name: string;
+  matched_alias: string | null;
+  method: "exact_cik" | "exact_uei" | "exact_alias" | "fuzzy" | "no_match";
+  confidence: number;
+  rejected: EntityMatchRejected[];
+  decided_at: string;
+};
+
+export type EntityMatches = {
+  ticker: string;
+  matches: EntityMatchDecision[];
+};

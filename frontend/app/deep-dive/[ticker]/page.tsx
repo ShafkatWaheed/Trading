@@ -27,6 +27,7 @@ import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
 import { InnovationCard } from "@/components/deep-dive/innovation-card";
+import { EntityMatchDebugCard } from "@/components/deep-dive/entity-match-debug-card";
 import { StickyVerdictBar } from "@/components/deep-dive/sticky-verdict-bar";
 import { PositionSizing } from "@/components/deep-dive/position-sizing";
 import { SectionHeader } from "@/components/deep-dive/section-header";
@@ -313,6 +314,8 @@ export default function DeepDiveTickerPage() {
 
           {data.earnings.length > 0 && <EarningsTable rows={data.earnings} />}
           <EarningsExplainer symbol={data.symbol} />
+
+          <EntityMatchDebugCard ticker={data.symbol} />
 
           <p className="text-xs text-text-muted text-right pt-2">
             Analyzed {formatRelativeTime(data.last_updated)}

@@ -65,6 +65,7 @@ import type {
   EvaluatorRun,
   DeepDiveBundle,
   StockInformation,
+  EntityMatches,
 } from "./types";
 
 export const marketApi = {
@@ -292,6 +293,8 @@ export const stocksApi = {
     ),
   innovation: (ticker: string) =>
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/innovation`),
+  entityMatches: (ticker: string) =>
+    api.get<EntityMatches>(`/stocks/${encodeURIComponent(ticker)}/entity-matches`),
 };
 
 export const earningsApi = {
