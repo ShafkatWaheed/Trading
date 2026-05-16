@@ -436,13 +436,20 @@ See §3.3 for the complete list (FCC ID, Google Trends, DOL WARN, App downloads,
 - 10-K Exhibit 21 subsidiary rollup verified/extended
 - Unit tests for fuzzy matching threshold + alias rollup
 
-### Wave 2 — High-edge catalysts (4 new cards + alerts)
-- USPTO patents + trademarks → Innovation card (Deep Dive, conditional)
-- openFDA + FDA calendar → FDA Catalysts card (Deep Dive, conditional)
-- USAspending + SAM.gov → Backlog card (Deep Dive, conditional)
-- ITC EDIS → Alerts + Risk narrative enrichment
-- SEC 8-K exec turnover → Alerts + Risk narrative enrichment
-- Bubble Score integration for FDA, gov contracts, ITC, exec turnover
+### Wave 2 — High-edge catalysts (6 new cards + alerts) — PURELY ADDITIVE
+
+**Design principle (revised 2026-05-15):** Wave 2 is purely additive. Existing
+Deep Dive cards (verdict, bubble score, bull/risk narratives, smart money,
+peer valuation, catalyst calendar, news feed) and existing scoring services
+are NEVER modified. Wave 2 only appends new card sections on Deep Dive.
+- USPTO patents + trademarks → **Innovation card** (Deep Dive, conditional)
+- openFDA + FDA calendar → **FDA Catalysts card** (Deep Dive, conditional)
+- USAspending + SAM.gov → **Backlog card** (Deep Dive, conditional)
+- ITC EDIS → **Litigation card** (Deep Dive, conditional on active investigations) — flipped from "Risk narrative enrichment" to honor additive principle
+- SEC 8-K Item 5.02 → **Executive Changes card** (Deep Dive, always visible if any) — flipped from "Risk narrative enrichment"
+- `entity_match_decisions` table + `/stocks/{t}/entity-matches` → **Entity Match Debug card** (Deep Dive, always visible). Shows for each Wave 2+ source: what name was matched, method (exact CIK/UEI vs fuzzy), confidence, alternatives considered, why this match was chosen. Designed to make the entity-resolution layer auditable.
+- Alerts page gets new types: FDA decision/PDUFA imminent, ITC §337 filing/determination, exec departure, container-rate spike. Alerts are an existing list-append surface, NOT a modification.
+- **Bubble Score integration DEFERRED to a later wave.** Adding new factors changes existing scoring behavior, which violates the additive principle. The new SignalReadings are emitted and stored but do not yet affect any displayed score.
 
 ### Wave 3 — Physical economy (2 new Market Pulse cards)
 - Drewry WCI, Freightos FBX, Cass, AAR, Port of LA → Goods Flow card
