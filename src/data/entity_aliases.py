@@ -586,3 +586,72 @@ def resolve_ticker_with_audit(
         ticker=chosen_ticker, matched_alias=matched_alias,
         confidence=chosen_score, method=method, rejected=rejected,
     )
+
+
+# ── Lazy bootstrap (Wave 2 fix) ──────────────────────────────────────
+#
+# Cards return null when no alias exists for a ticker. Rather than
+# requiring a manual seed step, services call ensure_alias_for_ticker()
+# on cache miss. The SEC company_tickers.json mapping is fetched once
+# per process lifetime and reused for all subsequent bootstrap calls.
+
+from typing import Callable as _Callable
+
+_SEC_MAPPING_CACHE: dict[str, tuple[str, str]] | None = None
+
+
+def _default_sec_fetcher() -> dict[str, tuple[str, str]]:
+    """Default fetcher uses load_sec_mapping_from_provider() — real network call."""
+    return load_sec_mapping_from_provider()
+
+
+def ensure_alias_for_ticker(
+    ticker: str,
+    *,
+    fetcher: _Callable[[], dict[str, tuple[str, str]]] | None = None,
+) -> bool:
+    """Lazily insert a 'legal' alias for `ticker` if no alias exists yet.
+
+    Returns True if a new row was inserted, False otherwise (already exists,
+    or ticker not in the SEC mapping). The SEC mapping is fetched once per
+    process and cached in `_SEC_MAPPING_CACHE`.
+
+    `fetcher` is dependency-injected for testing; production callers leave
+    it None and the default SEC fetcher runs.
+    """
+    global _SEC_MAPPING_CACHE
+
+    init_db()
+    ticker_up = ticker.upper()
+
+    # Already has any alias? Skip.
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM entity_aliases WHERE ticker = ? LIMIT 1",
+            (ticker_up,),
+        ).fetchone()
+        if row is not None:
+            return False
+    finally:
+        conn.close()
+
+    # Fetch (or reuse cached) SEC mapping
+    if _SEC_MAPPING_CACHE is None:
+        fetch_fn = fetcher if fetcher is not None else _default_sec_fetcher
+        _SEC_MAPPING_CACHE = fetch_fn() or {}
+
+    entry = _SEC_MAPPING_CACHE.get(ticker_up)
+    if entry is None:
+        return False
+    cik, legal_name = entry
+    if not cik or not legal_name:
+        return False
+
+    insert_alias(
+        ticker=ticker_up, cik=cik, uei=None,
+        alias_type="legal", alias_name=legal_name,
+        alias_source="sec_lazy_bootstrap", confidence=1.0,
+        created_at=_now_iso(),
+    )
+    return True
