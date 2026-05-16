@@ -9,7 +9,7 @@ from api.schemas import (
     BullNarrativeResponse, CatalystCalendarResponse, DeepDiveBundleResponse,
     DeepDiveResponse, NewsFeedResponse, PeerValuationResponse,
     RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
-    SmartMoneyResponse, StockSearchResult,
+    SmartMoneyResponse, StockInformationResponse, StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
@@ -265,3 +265,10 @@ def signal_evidence(
         return signal_evidence_service.get_signal_evidence(ticker, force=force)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Signal evidence failed: {e}")
+
+
+@router.get("/{ticker}/innovation", response_model=StockInformationResponse)
+def get_innovation(ticker: str) -> dict:
+    """Wave 2: Innovation card — USPTO patents over last 365 days."""
+    from api.services.innovation_service import get_innovation_for_ticker
+    return get_innovation_for_ticker(ticker.upper())

@@ -1727,3 +1727,28 @@ class DeepDiveBundleResponse(BaseModel):
     period: str
     last_updated: str
     errors: dict[str, str] = {}    # partial-failure map: service_name -> error message
+
+
+# ── Sector-influence Wave 2: card response models ─────────────────────
+
+
+class InformationFactResponse(BaseModel):
+    text: str
+    as_of: str
+    source: str
+    source_url: str | None
+    confidence: float
+
+
+class StockInformationResponse(BaseModel):
+    ticker: str
+    topic: str
+    headline: str
+    facts: list[InformationFactResponse]
+    narrative: str | None
+    implications: list[str]
+    related_catalysts: list[str]
+    confidence: str
+    as_of: str
+    sources_used: list[str]
+    severity: str
