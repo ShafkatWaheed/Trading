@@ -35,6 +35,8 @@ def get_innovation_for_ticker(ticker: str, *, lookback_days: int = 365) -> dict:
       3. Query PatentsView for each canonical assignee name, dedupe by patent_id
       4. Map raw patents → StockInformation
     """
+    from src.data.entity_aliases import ensure_alias_for_ticker
+    ensure_alias_for_ticker(ticker)
     canonical_names = _get_uspto_canonical_names(ticker)
     if not canonical_names:
         # No canonical assignee seeded — try the legal name as a single best-effort query

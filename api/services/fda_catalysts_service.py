@@ -38,6 +38,8 @@ def get_fda_catalysts_for_ticker(ticker: str) -> dict:
       2. Query openFDA for each candidate sponsor name, dedupe by application_number
       3. Map raw applications -> StockInformation
     """
+    from src.data.entity_aliases import ensure_alias_for_ticker
+    ensure_alias_for_ticker(ticker)
     legal_names = _get_legal_aliases(ticker)
 
     seen_ids: set[str] = set()

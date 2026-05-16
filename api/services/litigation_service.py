@@ -45,6 +45,8 @@ def get_litigation_for_ticker(ticker: str) -> dict:
       3. Query EDIS per name; dedupe rows by investigation_number
       4. Map raw rows → StockInformation
     """
+    from src.data.entity_aliases import ensure_alias_for_ticker
+    ensure_alias_for_ticker(ticker)
     names = _get_party_names(ticker)
 
     seen_ids: set[str] = set()

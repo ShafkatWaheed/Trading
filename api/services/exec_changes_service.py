@@ -46,6 +46,8 @@ def get_exec_changes_for_ticker(ticker: str) -> dict:
       2. If no CIK, return an empty info payload (low severity)
       3. Otherwise fetch_recent_8ks(cik, days=180) and map
     """
+    from src.data.entity_aliases import ensure_alias_for_ticker
+    ensure_alias_for_ticker(ticker)
     as_of = datetime.now(tz=timezone.utc).isoformat()
     cik = _get_cik_for_ticker(ticker)
     if not cik:

@@ -37,7 +37,14 @@ def get_backlog_for_ticker(ticker: str, *, lookback_days: int = 730) -> dict:
       2. Query USAspending for each UEI (authoritative ID, no fuzzy)
       3. Dedupe awards by award_id
       4. Map raw awards → StockInformation
+
+    Note: lazy bootstrap below only populates `legal` aliases (CIK/name from
+    SEC), NOT `sam_business_name`/UEI rows. Backlog will still return empty
+    for unseeded tickers until SAM.gov UEI seeding is run separately —
+    tracked as a follow-up.
     """
+    from src.data.entity_aliases import ensure_alias_for_ticker
+    ensure_alias_for_ticker(ticker)
     ueis = _get_ueis_for_ticker(ticker)
     since = (datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)).date().isoformat()
 
