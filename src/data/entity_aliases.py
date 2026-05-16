@@ -657,19 +657,30 @@ def ensure_alias_for_ticker(
     return True
 
 
-def get_sec_display_name(ticker: str) -> str | None:
+def get_sec_display_name(
+    ticker: str,
+    *,
+    fetcher: _Callable[[], dict[str, tuple[str, str]]] | None = None,
+) -> str | None:
     """Return the SEC company_tickers.json display name for `ticker` (unnormalized).
 
     The raw form is what external APIs like USPTO, openFDA, ITC EDIS expect
-    when querying by company name. Returns None if the SEC mapping hasn't
-    been fetched yet for the current process, or if the ticker isn't in
-    the mapping.
+    when querying by company name (e.g. "Apple Inc." not the normalized "apple").
 
-    Does NOT trigger a fetch — call `ensure_alias_for_ticker()` first if
-    you need a freshly-populated cache.
+    Triggers a one-time SEC fetch if the cache is empty. This is necessary
+    because ensure_alias_for_ticker may short-circuit (when ANY alias exists
+    for the ticker, e.g. from manual overrides) without populating the cache.
+    Subsequent calls reuse the cached mapping.
+
+    `fetcher` is dependency-injected for testing; production callers leave
+    it None and the default SEC fetcher runs.
+
+    Returns None when the ticker isn't in the SEC mapping (private company,
+    delisted, etc.) or when the SEC fetch fails entirely.
     """
     global _SEC_MAPPING_CACHE
     if _SEC_MAPPING_CACHE is None:
-        return None
+        fetch_fn = fetcher if fetcher is not None else _default_sec_fetcher
+        _SEC_MAPPING_CACHE = fetch_fn() or {}
     entry = _SEC_MAPPING_CACHE.get(ticker.upper())
     return entry[1] if entry else None

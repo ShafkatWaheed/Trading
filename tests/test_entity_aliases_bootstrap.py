@@ -130,10 +130,27 @@ def test_get_sec_display_name_returns_none_when_ticker_unknown():
     assert get_sec_display_name("ZZZZZ_NOT_IN_CACHE") is None
 
 
-def test_get_sec_display_name_returns_none_before_cache_populated():
-    """If the SEC mapping hasn't been fetched yet, return None (no fetch)."""
+def test_get_sec_display_name_triggers_fetch_when_cache_empty():
+    """When cache is None, get_sec_display_name auto-fetches via the
+    injected fetcher (production: real SEC call). This handles the case
+    where ensure_alias_for_ticker short-circuited without populating the
+    cache (e.g. ticker had manual override aliases already)."""
     import src.data.entity_aliases as ea
     ea._SEC_MAPPING_CACHE = None  # reset
 
     from src.data.entity_aliases import get_sec_display_name
-    assert get_sec_display_name("AAPL") is None
+
+    fake_mapping = {"AUTOTRIG": ("0002222222", "Auto Trigger Inc.")}
+    name = get_sec_display_name("AUTOTRIG", fetcher=lambda: fake_mapping)
+    assert name == "Auto Trigger Inc."
+
+
+def test_get_sec_display_name_returns_none_for_unknown_ticker_after_auto_fetch():
+    """After auto-fetch, an unknown ticker still returns None."""
+    import src.data.entity_aliases as ea
+    ea._SEC_MAPPING_CACHE = None  # reset
+
+    from src.data.entity_aliases import get_sec_display_name
+
+    fake_mapping = {"KNOWN": ("0000000001", "Known Co")}
+    assert get_sec_display_name("UNKNOWN", fetcher=lambda: fake_mapping) is None
