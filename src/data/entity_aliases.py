@@ -465,3 +465,124 @@ def seed_from_patentsview_assignees(
                 # `insert_alias` rejects empty normalized names — skip and continue.
                 continue
     return inserted
+
+
+# ── Audit-logging resolver wrapper (Wave 2) ──────────────────────────
+
+
+from dataclasses import dataclass as _dc_audit
+
+
+@_dc_audit(frozen=True)
+class AuditedMatch:
+    """Resolver output with debug attribution data."""
+    ticker: str | None
+    matched_alias: str | None
+    confidence: float
+    method: str        # 'exact_cik' | 'exact_uei' | 'exact_alias' | 'fuzzy' | 'no_match'
+    rejected: list[dict]  # [{ticker, alias_name, score}, ...]
+
+
+def resolve_ticker_with_audit(
+    input_name: str,
+    *,
+    source: str,
+    min_confidence: float = 0.9,
+    use_fuzzy: bool = True,
+    top_k_rejected: int = 3,
+) -> AuditedMatch:
+    """Resolve a name to a ticker AND log the decision to entity_match_decisions.
+
+    Differs from resolve_ticker in three ways:
+      1. ALWAYS persists the decision (success or no-match) to the log table
+      2. Captures top-K rejected candidates (their scores + tickers) for the
+         debug card
+      3. Returns an AuditedMatch with a `method` and `rejected` field
+
+    Use this from every Wave 2+ fetcher that maps free-text → ticker.
+    """
+    import json as _json
+
+    init_db()
+    normalized = normalize_name(input_name)
+    decided_at = _now_iso()
+
+    method = "no_match"
+    matched_alias: str | None = None
+    chosen_ticker: str | None = None
+    chosen_score: float = 0.0
+    rejected: list[dict] = []
+
+    if normalized:
+        conn = get_connection()
+        try:
+            # 1) Exact match
+            row = conn.execute(
+                "SELECT ticker, alias_name, alias_type FROM entity_aliases WHERE alias_name = ? LIMIT 1",
+                (normalized,),
+            ).fetchone()
+            if row is not None:
+                chosen_ticker = row["ticker"]
+                matched_alias = row["alias_name"]
+                chosen_score = 1.0
+                method = "exact_alias"
+            elif use_fuzzy:
+                # 2) Fuzzy scan
+                from rapidfuzz import fuzz
+
+                candidates = conn.execute(
+                    "SELECT ticker, alias_name, alias_type FROM entity_aliases"
+                ).fetchall()
+                scored = []
+                for c in candidates:
+                    s = fuzz.token_set_ratio(normalized, c["alias_name"]) / 100.0
+                    scored.append((s, c["ticker"], c["alias_name"]))
+                # sort desc by score, alpha ticker tie-break
+                scored.sort(key=lambda x: (-x[0], x[1]))
+
+                if scored and scored[0][0] >= min_confidence:
+                    chosen_score, chosen_ticker, matched_alias = scored[0]
+                    method = "fuzzy"
+                    # Top-K next-best candidates that were NOT chosen
+                    for s, t, a in scored[1:1 + top_k_rejected]:
+                        rejected.append({"ticker": t, "alias_name": a, "score": round(s, 4)})
+                else:
+                    # No candidate cleared the threshold — capture top-K for debug
+                    for s, t, a in scored[:top_k_rejected]:
+                        rejected.append({"ticker": t, "alias_name": a, "score": round(s, 4)})
+
+            # Always log
+            conn.execute(
+                """
+                INSERT INTO entity_match_decisions
+                  (ticker, source, input_name, matched_alias, method, confidence,
+                   rejected_candidates_json, decided_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chosen_ticker, source, input_name, matched_alias,
+                    method, chosen_score,
+                    _json.dumps(rejected) if rejected else None,
+                    decided_at,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        # Empty/whitespace input → log no_match
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO entity_match_decisions "
+            "(ticker, source, input_name, matched_alias, method, confidence, "
+            " rejected_candidates_json, decided_at) "
+            "VALUES (NULL, ?, ?, NULL, 'no_match', 0.0, NULL, ?)",
+            (source, input_name, decided_at),
+        )
+        conn.commit()
+        conn.close()
+
+    return AuditedMatch(
+        ticker=chosen_ticker, matched_alias=matched_alias,
+        confidence=chosen_score, method=method, rejected=rejected,
+    )
