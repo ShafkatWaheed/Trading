@@ -500,3 +500,42 @@ Wave 1 (Foundation) shipped on branch `feat/sector-influence-wave-1`.
 - Wave 1 plan's Task F4 (per-source token bucket) — existing `src/utils/rate_limit.py` covers the use case
 - `/freshness` route extension to surface `get_sources_status()` (service exists; route wiring deferred until Wave 2 admin UI work)
 - Replacing existing macro / commodity / news / smart-money / options-flow pipelines — these stay as-is.
+
+---
+
+## Wave 2 completion log
+
+Wave 2 (Catalysts) shipped to main on 2026-05-16. Purely additive per the
+revised principle in §12: no existing Deep Dive card, service, or scoring
+path was modified.
+
+**Delivered:**
+- 6 new Deep Dive cards: Innovation (patents), FDA Catalysts, Backlog
+  (gov contracts), Litigation (ITC §337), Executive Changes (SEC 8-K
+  Item 5.02), and Entity Match Debug (always visible, audits fuzzy/exact
+  resolution decisions per source).
+- 4 new alert types: FDA decision, ITC §337 filing, exec departure,
+  contract award. Severity rules: CEO/CFO departures = high; ITC
+  respondent = high; FDA Approved/CRL = high; $1B+ contract = warning.
+- Wave 1 deferrals resolved: `seed_from_sam_mapping()`,
+  `seed_from_patentsview_assignees()`, `parse_8k_item_502()`
+  (moved to `src/utils/sec_8k_parser.py` to comply with the analysis →
+  data dependency rule).
+- `entity_match_decisions` table + `resolve_ticker_with_audit()` writer
+  underpinning the Entity Match Debug card.
+- ~50 new unit/integration tests across the 6 cards, parsers, and seeders.
+
+**Endpoint surface added:**
+- `GET /stocks/{ticker}/innovation`
+- `GET /stocks/{ticker}/fda-catalysts`
+- `GET /stocks/{ticker}/backlog`
+- `GET /stocks/{ticker}/litigation`
+- `GET /stocks/{ticker}/exec-changes`
+- `GET /stocks/{ticker}/entity-matches`
+
+**Deferred (intentionally, per additive principle):**
+- Bubble Score integration of the new SignalReadings — modifies existing
+  scoring, so out of scope until later. Readings are emitted and
+  available; nothing consumes them yet.
+- Narrative-bullet enrichments (originally Wave 4) — flipped to dedicated
+  cards already.
