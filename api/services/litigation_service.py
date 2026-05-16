@@ -13,7 +13,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from src.analysis.sector_signals.itc import itc_investigations_to_information
-from src.data.entity_aliases import resolve_ticker_with_audit
+from src.data.entity_aliases import get_sec_display_name, resolve_ticker_with_audit
 from src.data.itc_edis import fetch_337_investigations_for_party
 from src.utils.db import get_connection, init_db
 
@@ -47,11 +47,27 @@ def get_litigation_for_ticker(ticker: str) -> dict:
     """
     from src.data.entity_aliases import ensure_alias_for_ticker
     ensure_alias_for_ticker(ticker)
-    names = _get_party_names(ticker)
+    party_names = _get_party_names(ticker)
+    if not party_names:
+        # Prefer the raw SEC display name (unnormalized — what ITC EDIS actually expects,
+        # e.g. "Apple Inc." not "apple")
+        display = get_sec_display_name(ticker)
+        if display:
+            party_names = [display]
+        else:
+            # Last resort: normalized legal alias
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT alias_name FROM entity_aliases WHERE ticker = ? AND alias_type = 'legal' LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            conn.close()
+            if row:
+                party_names = [row["alias_name"]]
 
     seen_ids: set[str] = set()
     merged: list[dict] = []
-    for name in names:
+    for name in party_names:
         resolve_ticker_with_audit(name, source="itc", use_fuzzy=False)
         for row in fetch_337_investigations_for_party(name):
             inv_no = row.get("investigation_number", "")

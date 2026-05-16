@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from src.analysis.sector_signals.fda import fda_applications_to_information
-from src.data.entity_aliases import resolve_ticker_with_audit
+from src.data.entity_aliases import get_sec_display_name, resolve_ticker_with_audit
 from src.data.fda_openfda import fetch_fda_applications_for_sponsor
 from src.utils.db import get_connection, init_db
 
@@ -40,11 +40,27 @@ def get_fda_catalysts_for_ticker(ticker: str) -> dict:
     """
     from src.data.entity_aliases import ensure_alias_for_ticker
     ensure_alias_for_ticker(ticker)
-    legal_names = _get_legal_aliases(ticker)
+    sponsor_names = _get_legal_aliases(ticker)
+    if not sponsor_names:
+        # Prefer the raw SEC display name (unnormalized — what openFDA actually expects,
+        # e.g. "Apple Inc." not "apple")
+        display = get_sec_display_name(ticker)
+        if display:
+            sponsor_names = [display]
+        else:
+            # Last resort: normalized legal alias
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT alias_name FROM entity_aliases WHERE ticker = ? AND alias_type = 'legal' LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            conn.close()
+            if row:
+                sponsor_names = [row["alias_name"]]
 
     seen_ids: set[str] = set()
     merged: list[dict] = []
-    for name in legal_names:
+    for name in sponsor_names:
         # Log the resolution decision (input was the legal name we're querying)
         resolve_ticker_with_audit(name, source="fda", use_fuzzy=False)
         for app in fetch_fda_applications_for_sponsor(name):

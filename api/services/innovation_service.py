@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
 
 from src.analysis.sector_signals.innovation import patents_to_information
-from src.data.entity_aliases import resolve_ticker_with_audit
+from src.data.entity_aliases import get_sec_display_name, resolve_ticker_with_audit
 from src.data.uspto_patentsview import fetch_patents_for_assignee
 from src.utils.db import get_connection, init_db
 
@@ -39,16 +39,22 @@ def get_innovation_for_ticker(ticker: str, *, lookback_days: int = 365) -> dict:
     ensure_alias_for_ticker(ticker)
     canonical_names = _get_uspto_canonical_names(ticker)
     if not canonical_names:
-        # No canonical assignee seeded — try the legal name as a single best-effort query
-        # (this won't catch subsidiary patents, but it's better than nothing)
-        conn = get_connection()
-        row = conn.execute(
-            "SELECT alias_name FROM entity_aliases WHERE ticker = ? AND alias_type = 'legal' LIMIT 1",
-            (ticker,),
-        ).fetchone()
-        conn.close()
-        if row:
-            canonical_names = [row["alias_name"]]
+        # No canonical assignee seeded — try the raw SEC display name first
+        # (unnormalized — what USPTO actually expects, e.g. "Apple Inc." not "apple")
+        display = get_sec_display_name(ticker)
+        if display:
+            canonical_names = [display]
+        else:
+            # Last resort: normalized legal alias
+            # (won't catch subsidiary patents, but better than nothing)
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT alias_name FROM entity_aliases WHERE ticker = ? AND alias_type = 'legal' LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            conn.close()
+            if row:
+                canonical_names = [row["alias_name"]]
 
     since = (datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)).date().isoformat()
     seen_ids: set[str] = set()
