@@ -429,3 +429,39 @@ def seed_subsidiaries_from_text(
         )
         inserted += 1
     return inserted
+
+
+def seed_from_patentsview_assignees(
+    mapping: dict[str, list[str]],
+    *,
+    alias_source: str = "patentsview",
+) -> int:
+    """Seed entity_aliases from PatentsView disambiguated_assignee names.
+
+    The caller produces the mapping (typically by querying PatentsView's
+    `disambiguated_assignee_organization` table for tickers' known
+    assignee names). Each name becomes an `uspto_canonical` alias.
+
+    Returns count of insert attempts (not unique inserts — INSERT OR REPLACE
+    means duplicates after normalization are silently de-duplicated by the
+    table's (ticker, alias_type, alias_name) PRIMARY KEY).
+    """
+    now = _now_iso()
+    inserted = 0
+    for ticker, names in mapping.items():
+        if not ticker:
+            continue
+        for name in names:
+            if not name or not name.strip():
+                continue
+            try:
+                insert_alias(
+                    ticker=ticker, cik=None, uei=None,
+                    alias_type="uspto_canonical", alias_name=name,
+                    alias_source=alias_source, confidence=1.0, created_at=now,
+                )
+                inserted += 1
+            except ValueError:
+                # `insert_alias` rejects empty normalized names — skip and continue.
+                continue
+    return inserted
