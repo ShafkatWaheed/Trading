@@ -275,6 +275,13 @@ def get_innovation(ticker: str) -> dict:
     return get_innovation_for_ticker(ticker.upper())
 
 
+@router.get("/{ticker}/fda-catalysts", response_model=StockInformationResponse)
+def get_fda_catalysts(ticker: str) -> dict:
+    """Wave 2 Phase D: FDA Catalysts card — openFDA drug applications by sponsor."""
+    from api.services.fda_catalysts_service import get_fda_catalysts_for_ticker
+    return get_fda_catalysts_for_ticker(ticker.upper())
+
+
 @router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
 def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
