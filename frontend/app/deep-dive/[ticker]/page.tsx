@@ -30,6 +30,7 @@ import { InnovationCard } from "@/components/deep-dive/innovation-card";
 import { FdaCatalystsCard } from "@/components/deep-dive/fda-catalysts-card";
 import { BacklogCard } from "@/components/deep-dive/backlog-card";
 import { LitigationCard } from "@/components/deep-dive/litigation-card";
+import { ExecChangesCard } from "@/components/deep-dive/exec-changes-card";
 import { EntityMatchDebugCard } from "@/components/deep-dive/entity-match-debug-card";
 import { StickyVerdictBar } from "@/components/deep-dive/sticky-verdict-bar";
 import { PositionSizing } from "@/components/deep-dive/position-sizing";
@@ -284,6 +285,7 @@ export default function DeepDiveTickerPage() {
           <FdaCatalystsCard ticker={data.symbol} />
           <BacklogCard ticker={data.symbol} />
           <LitigationCard ticker={data.symbol} />
+          <ExecChangesCard ticker={data.symbol} />
 
           {/* ── 06 · BULL vs BEAR ──────────────────────────────────────── */}
           <SectionHeader index={6} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
