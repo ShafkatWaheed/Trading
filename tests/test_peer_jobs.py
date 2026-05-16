@@ -73,25 +73,26 @@ def test_write_edges_filters_self_loops_and_unknown_peers():
     init_db()
     conn = get_connection()
     try:
-        # Pre-seed the universe so the FK-style symbol check passes
-        _seed_universe([("NVDA", "B"), ("AMD", "B"), ("MRVL", "B"), ("FAKE", "B")])
+        # Synthetic symbols only — never reference real tickers in tests so
+        # the cleanup can be symbol-scoped without needing a source filter.
+        _seed_universe([("FAKEH1", "B"), ("FAKEH2", "B"), ("FAKEH3", "B"), ("FAKE", "B")])
 
         parsed = [
-            {"symbol": "NVDA", "peers": [
-                {"sym": "NVDA", "reason": "self loop"},        # self → drop
-                {"sym": "AMD", "reason": "competitor"},         # ok
+            {"symbol": "FAKEH1", "peers": [
+                {"sym": "FAKEH1", "reason": "self loop"},       # self → drop
+                {"sym": "FAKEH2", "reason": "competitor"},       # ok
                 {"sym": "UNKNOWN", "reason": "not in universe"}, # not in valid_symbols → drop
-                {"sym": "MRVL", "reason": "datacenter"},        # ok
+                {"sym": "FAKEH3", "reason": "datacenter"},       # ok
             ]},
         ]
         n = _write_claude_edges(
             conn, parsed,
-            valid_symbols={"NVDA", "AMD", "MRVL"},
+            valid_symbols={"FAKEH1", "FAKEH2", "FAKEH3"},
             tier="B",
         )
         assert n == 2
     finally:
-        conn.execute("DELETE FROM stock_peers WHERE source='claude_batch' AND from_symbol='NVDA'")
+        conn.execute("DELETE FROM stock_peers WHERE from_symbol='FAKEH1'")
         conn.commit()
         conn.close()
 
@@ -101,14 +102,14 @@ def test_write_edges_caps_peers_at_5():
     conn = get_connection()
     try:
         peers = [{"sym": f"P{i}", "reason": f"r{i}"} for i in range(10)]
-        valid = {"NVDA"} | {f"P{i}" for i in range(10)}
-        _seed_universe([("NVDA", "B")] + [(f"P{i}", "B") for i in range(10)])
+        valid = {"FAKEH1"} | {f"P{i}" for i in range(10)}
+        _seed_universe([("FAKEH1", "B")] + [(f"P{i}", "B") for i in range(10)])
 
-        parsed = [{"symbol": "NVDA", "peers": peers}]
+        parsed = [{"symbol": "FAKEH1", "peers": peers}]
         n = _write_claude_edges(conn, parsed, valid_symbols=valid, tier="B")
         assert n == 5  # capped
     finally:
-        conn.execute("DELETE FROM stock_peers WHERE source='claude_batch' AND from_symbol='NVDA'")
+        conn.execute("DELETE FROM stock_peers WHERE from_symbol='FAKEH1'")
         conn.commit()
         conn.close()
 
@@ -222,9 +223,15 @@ def test_process_industry_marks_done_on_success(monkeypatch):
         assert row["status"] == "done"
         assert row["edges_written"] == 3
     finally:
-        # Cleanup
+        # Cleanup — scoped to synthetic test symbols only. A previous version
+        # used `DELETE FROM stock_peers WHERE source='claude_batch'` which
+        # wiped real LLM-generated peer data from the live DB.
         conn.execute("DELETE FROM peer_jobs WHERE industry_code='FakeIndustry'")
-        conn.execute("DELETE FROM stock_peers WHERE source='claude_batch'")
+        conn.execute(
+            "DELETE FROM stock_peers "
+            "WHERE from_symbol IN ('FAKEB1','FAKEB2','FAKEB3') "
+            "   OR to_symbol IN ('FAKEB1','FAKEB2','FAKEB3')"
+        )
         conn.execute("DELETE FROM stock_industry WHERE source='test'")
         conn.execute("DELETE FROM industries WHERE code='FakeIndustry'")
         conn.commit()

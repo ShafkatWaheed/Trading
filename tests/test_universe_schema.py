@@ -149,21 +149,11 @@ def test_tier_a_includes_critical_themes():
 
 
 # --- loader behavior --------------------------------------------------------
+# Tests that assert exact insert counts use `fresh_db` (conftest.py) for a
+# guaranteed-empty DB. No DELETE-by-source needed.
 
 
-def _wipe_universe():
-    """Clear stocks_universe + stock_industry between idempotency tests."""
-    conn = get_connection()
-    try:
-        conn.execute("DELETE FROM stock_industry WHERE source='tier_a_seed'")
-        conn.execute("DELETE FROM stocks_universe WHERE source='tier_a_seed'")
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def test_load_tier_a_inserts_all_seed_rows():
-    _wipe_universe()
+def test_load_tier_a_inserts_all_seed_rows(fresh_db):
     counts = load_tier_a()
     assert counts["stocks_inserted"] == tier_a_count(), counts
 
@@ -173,8 +163,7 @@ def test_load_tier_a_inserts_all_seed_rows():
     assert syms == set(tier_a_symbols())
 
 
-def test_load_tier_a_creates_primary_industry_mapping_per_stock():
-    _wipe_universe()
+def test_load_tier_a_creates_primary_industry_mapping_per_stock(fresh_db):
     load_tier_a()
     conn = get_connection()
     try:
@@ -190,8 +179,7 @@ def test_load_tier_a_creates_primary_industry_mapping_per_stock():
         conn.close()
 
 
-def test_load_tier_a_creates_industry_rows():
-    _wipe_universe()
+def test_load_tier_a_creates_industry_rows(fresh_db):
     load_tier_a()
     conn = get_connection()
     try:
@@ -207,8 +195,7 @@ def test_load_tier_a_creates_industry_rows():
         conn.close()
 
 
-def test_load_tier_a_is_idempotent():
-    _wipe_universe()
+def test_load_tier_a_is_idempotent(fresh_db):
     first = load_tier_a()
     second = load_tier_a()
     # Second run finds the already-inserted rows; no duplicates.

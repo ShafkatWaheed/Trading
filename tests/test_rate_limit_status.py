@@ -111,5 +111,8 @@ def test_db_unavailable_returns_untracked_for_all(monkeypatch):
         raise RuntimeError("db gone")
     monkeypatch.setattr(db_module, "get_connection", boom)
     statuses = get_rate_limit_status()
-    assert len(statuses) == 7
+    # One row per spec in _API_SPECS — derive from the source-of-truth so the
+    # test doesn't drift every time we add a provider.
+    from src.utils.rate_limit import _API_SPECS
+    assert len(statuses) == len(_API_SPECS)
     assert all(s.status == "untracked" for s in statuses)

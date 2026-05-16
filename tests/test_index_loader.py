@@ -54,21 +54,11 @@ def test_parser_raises_on_missing_file():
 
 
 # ── Universe upsert ────────────────────────────────────────────────────
+# Each test below uses the `fresh_db` fixture (defined in conftest.py) for a
+# guaranteed-empty DB. No production-source DELETEs needed.
 
 
-def _wipe_index_loader_rows():
-    """Remove rows the index_loader would create, for clean test runs."""
-    init_db()
-    conn = get_connection()
-    try:
-        conn.execute("DELETE FROM stocks_universe WHERE source='index_loader'")
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def test_apply_memberships_inserts_correct_tier():
-    _wipe_index_loader_rows()
+def test_apply_memberships_inserts_correct_tier(fresh_db):
     test_syms = ("NVDA", "MSFT", "AAPL", "MIDCAP", "RUSSELL_ONLY", "SMALLCAP", "RY")
     counts = apply_universe_memberships(
         memberships={
@@ -118,10 +108,9 @@ def test_apply_memberships_inserts_correct_tier():
         conn.close()
 
 
-def test_apply_memberships_promotes_hand_seeded_tier_a_above_classifier():
+def test_apply_memberships_promotes_hand_seeded_tier_a_above_classifier(fresh_db):
     """ARM is in the tier_a_seed but might not show up in S&P 500 indices.
     Even if memberships have it only in Russell 1000, it must stay tier A."""
-    _wipe_index_loader_rows()
     counts = apply_universe_memberships(
         memberships={"russell1k": {"ARM"}},
     )
@@ -136,8 +125,7 @@ def test_apply_memberships_promotes_hand_seeded_tier_a_above_classifier():
         conn.close()
 
 
-def test_apply_memberships_idempotent():
-    _wipe_index_loader_rows()
+def test_apply_memberships_idempotent(fresh_db):
     apply_universe_memberships(
         memberships={"sp500": {"NEW_NAME"}},
         market_cap_map={"NEW_NAME": 60e9},
@@ -153,10 +141,9 @@ def test_apply_memberships_idempotent():
     assert second["inserted"] == 0
 
 
-def test_apply_memberships_does_not_demote_tier_a():
+def test_apply_memberships_does_not_demote_tier_a(fresh_db):
     """Once a stock is tier A (hand-seeded or classifier), index_loader
     must never demote it on a later run that lacks index data."""
-    _wipe_index_loader_rows()
     load_tier_a()                       # establishes NVDA = A from hand seed
     apply_universe_memberships(
         memberships={"russell1k": {"NVDA"}},   # no S&P, no cap data
