@@ -333,6 +333,30 @@ def seed_from_sec_mapping(
     return inserted
 
 
+def seed_from_sam_mapping(
+    mapping: dict[str, tuple[str, str]],
+    *,
+    alias_source: str = "sam",
+) -> int:
+    """Seed entity_aliases from a {ticker: (uei, business_name)} mapping.
+
+    Caller produces the mapping (typically by querying SAM.gov's entity API
+    for known contractor tickers). UEI is authoritative (confidence=1.0).
+    """
+    now = _now_iso()
+    inserted = 0
+    for ticker, (uei, business_name) in mapping.items():
+        if not ticker or not uei or not business_name:
+            continue
+        insert_alias(
+            ticker=ticker, cik=None, uei=uei,
+            alias_type="sam_business_name", alias_name=business_name,
+            alias_source=alias_source, confidence=1.0, created_at=now,
+        )
+        inserted += 1
+    return inserted
+
+
 def load_sec_mapping_from_provider() -> dict[str, tuple[str, str]]:
     """Convenience: build the {ticker: (cik, name)} mapping from the
     existing SECEdgarProvider. Network call.
