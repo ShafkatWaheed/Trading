@@ -289,6 +289,13 @@ def get_backlog(ticker: str) -> dict:
     return get_backlog_for_ticker(ticker.upper())
 
 
+@router.get("/{ticker}/litigation", response_model=StockInformationResponse)
+def get_litigation(ticker: str) -> dict:
+    """Wave 2 Phase F: Litigation card — ITC §337 investigations by party name."""
+    from api.services.litigation_service import get_litigation_for_ticker
+    return get_litigation_for_ticker(ticker.upper())
+
+
 @router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
 def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
