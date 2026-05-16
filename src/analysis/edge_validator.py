@@ -16,7 +16,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from src.analysis.commodity_validator import (
     ValidationResult,
@@ -24,6 +24,9 @@ from src.analysis.commodity_validator import (
     validate_exposure,
 )
 from src.utils.db import get_connection, init_db
+
+if TYPE_CHECKING:
+    from src.analysis.sector_signals._shared import SignalReading
 
 
 @dataclass
@@ -205,3 +208,54 @@ def run_validation(
     finally:
         if own_conn:
             conn.close()
+
+
+# ── Point-in-time backtest validator (Wave 1) ──────────────────────
+
+
+class LookaheadViolation(Exception):
+    """Raised when a SignalReading's available_at is after the decision timestamp."""
+
+
+def assert_no_lookahead(
+    readings: list["SignalReading"],
+    *,
+    decision_timestamp: str,
+    strict: bool = False,
+) -> None:
+    """Raise LookaheadViolation if any reading is not available at decision time.
+
+    Args:
+      readings: list of SignalReading
+      decision_timestamp: ISO 8601 UTC. A reading must have
+                          available_at <= decision_timestamp (or < if strict).
+      strict: when True, treat available_at == decision_timestamp as a violation.
+
+    Timestamp format contract: ALL timestamps (each reading's `available_at`
+    AND `decision_timestamp`) MUST be UTC ISO 8601 with the SAME suffix
+    convention — either all ending in 'Z' or all in '+00:00'. The function
+    compares strings lexicographically; mixed formats may compare incorrectly.
+
+    No-op on empty input. Aggregates all violations into a single
+    exception message (do not stop at first).
+    """
+    if not readings:
+        return
+
+    violations = []
+    for r in readings:
+        available = r.available_at
+        if strict:
+            bad = available >= decision_timestamp
+        else:
+            bad = available > decision_timestamp
+        if bad:
+            violations.append(
+                f"signal={r.signal_name} ticker={r.ticker} sector={r.sector} "
+                f"available_at={available} > decision={decision_timestamp}"
+            )
+
+    if violations:
+        n = len(violations)
+        msg = f"{n} violation(s) found ({n} readings not yet available at decision time):\n  " + "\n  ".join(violations)
+        raise LookaheadViolation(msg)

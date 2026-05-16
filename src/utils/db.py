@@ -380,6 +380,55 @@ def init_db() -> None:
             flagged_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_freshness_status ON edge_freshness(status);
+
+        -- ── Sector-influence Wave 1: entity alias table ───────────────────
+        CREATE TABLE IF NOT EXISTS entity_aliases (
+            ticker          TEXT NOT NULL,
+            cik             TEXT,
+            uei             TEXT,
+            alias_type      TEXT NOT NULL CHECK (alias_type IN (
+                                'legal', 'common', 'subsidiary',
+                                'uspto_canonical', 'sam_business_name',
+                                'brand', 'override'
+                            )),
+            alias_name      TEXT NOT NULL,
+            alias_source    TEXT NOT NULL,
+            confidence      REAL NOT NULL,
+            created_at      TEXT NOT NULL,
+            PRIMARY KEY (ticker, alias_type, alias_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_name ON entity_aliases(alias_name);
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_cik ON entity_aliases(cik);
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_uei ON entity_aliases(uei);
+
+        -- ── Sector-influence Wave 1: per-source freshness registry ───────
+        CREATE TABLE IF NOT EXISTS source_freshness (
+            source                  TEXT PRIMARY KEY,
+            cadence                 TEXT NOT NULL,      -- 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly'
+            ttl_seconds             INTEGER NOT NULL,
+            last_fetched_at         TEXT,
+            next_due_at             TEXT,
+            last_status             TEXT,               -- 'ok' | 'error' | 'rate_limited' | 'empty'
+            last_error              TEXT,
+            last_payload_count      INTEGER,
+            rate_limit_budget       INTEGER,
+            rate_limit_remaining    INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_source_freshness_next_due ON source_freshness(next_due_at);
+
+        -- ── Sector-influence Wave 1: forward-looking catalysts ───────────
+        CREATE TABLE IF NOT EXISTS known_future_events (
+            event_id        TEXT PRIMARY KEY,
+            ticker          TEXT,
+            event_type      TEXT NOT NULL,
+            event_date      TEXT NOT NULL,
+            source          TEXT NOT NULL,
+            source_url      TEXT,
+            details_json    TEXT,
+            added_at        TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_known_future_events_date ON known_future_events(event_date);
+        CREATE INDEX IF NOT EXISTS idx_known_future_events_ticker ON known_future_events(ticker);
     """)
     conn.commit()
     conn.close()

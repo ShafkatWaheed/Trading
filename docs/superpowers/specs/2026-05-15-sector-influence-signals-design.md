@@ -412,14 +412,15 @@ See §3.3 for the complete list (FCC ID, Google Trends, DOL WARN, App downloads,
 
 ---
 
-## 11. Open verifications before implementation
+## 11. Verifications resolved during Wave 1
 
-These are concrete checks to do during Wave 1, not unresolved design questions:
-
-1. **EIA coverage in existing `src/data/macro.py`** — does it already pull crude/NatGas inventories? If yes, extend rather than create `eia_inventories.py`.
-2. **8-K Item 5.02 extraction in `src/data/sec_edgar.py`** — verify presence; extend if missing.
-3. **10-K Exhibit 21 parsing in `src/data/sec_10k_extractor.py`** — needed for parent-subsidiary alias seeding; verify or extend.
-4. **`RefreshableResponse` envelope shape** — confirm it's exported from a single module and reusable for the 5 new endpoints.
+| Item | Outcome | Where addressed |
+|---|---|---|
+| EIA coverage in `src/data/macro.py` | NOT present | Build new `src/data/eia_inventories.py` in Wave 3 |
+| 8-K Item 5.02 extraction in `src/data/sec_edgar.py` | NOT present | Add in Wave 2 (exec turnover signal) |
+| 10-K Exhibit 21 parsing | Added in Wave 1 | `src/data/sec_10k_extractor.py::parse_exhibit_21_subsidiaries` |
+| `RefreshableResponse` shape | Open | Verify as first task of Wave 2 plan |
+| Pre-existing `src/utils/rate_limit.py` | Present (sliding-window `RateLimiter` per-provider) | Wave 1 Task F4 (per-source token bucket) DEFERRED — existing module covers the use case; Wave 2 fetchers can call `RateLimiter.acquire()` directly. Wave 2 may add the new sources to `_API_SPECS` for visibility in the rate-limit admin route. |
 
 ---
 
@@ -475,4 +476,20 @@ Each wave ships independently after Wave 1. A user could stop after Wave 2 with 
 - AIS vessel tracking (deferred Phase 2)
 - Composite "Sector Influence Score" — explicitly rejected. Composites hide which signal is firing and degrade alpha; surface signals separately.
 - Order execution, broker integration, real money flow — out of project scope per CLAUDE.md.
+
+---
+
+## Wave 1 completion log
+
+Wave 1 (Foundation) shipped on branch `feat/sector-influence-wave-1`. 
+
+**Delivered:** Three new SQLite tables (`entity_aliases`, `source_freshness`, `known_future_events`), shared dataclasses (`Fact`, `StockInformation`, `SignalReading`), entity-alias resolver with exact-match + fuzzy (≥0.9 scored / ≥0.8 information), manual override YAML seeder, SEC EDGAR alias seeder, 10-K Exhibit 21 subsidiary parser, parent→subsidiary alias seeder, point-in-time lookahead validator wired into the backtester, per-source freshness registry (18 endpoints), and admin-facing `get_sources_status()` service.
+
+**Tests:** 60+ new unit/integration tests across `tests/test_entity_aliases_*.py`, `tests/test_sector_signals_shared.py`, `tests/test_source_freshness*.py`, `tests/test_known_future_events_schema.py`, `tests/test_lookahead_assertion.py`, `tests/test_backtester_lookahead_integration.py`, `tests/test_sec_10k_exhibit21.py`, `tests/test_freshness_service_sources.py`, `tests/test_wave1_smoke.py`.
+
+**Deferred to Wave 2:**
+- SAM.gov entity-API seeder (needs gov-contracts fetcher to be useful)
+- PatentsView assignee canonicalization (needs patents fetcher to be useful)
+- Wave 1 plan's Task F4 (per-source token bucket) — existing `src/utils/rate_limit.py` covers the use case
+- `/freshness` route extension to surface `get_sources_status()` (service exists; route wiring deferred until Wave 2 admin UI work)
 - Replacing existing macro / commodity / news / smart-money / options-flow pipelines — these stay as-is.

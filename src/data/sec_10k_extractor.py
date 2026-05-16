@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, timezone
 
 import httpx
+from bs4 import BeautifulSoup
 
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import get_connection, init_db
@@ -408,6 +409,110 @@ def _main() -> int:
     for k, v in out.items():
         print(f"  {k:20s}: {v}")
     return 0 if out["failed"] == 0 else 1
+
+
+# ── Exhibit 21 (Subsidiaries of the Registrant) ──────────────────────
+# Used by sector-influence Wave 1 to seed parent→subsidiary aliases
+# in `entity_aliases`. See Plan: 2026-05-15-sector-influence-wave-1.
+
+_EXHIBIT_HEADER_RE = re.compile(
+    r"(?:exhibit\s*21|list\s+of\s+subsidiaries|subsidiaries\s+of\s+the\s+registrant)",
+    flags=re.IGNORECASE,
+)
+
+# Boilerplate strings that look like rows but aren't subsidiary names.
+_NOISE_LINES = {
+    "name", "subsidiary", "subsidiaries",
+    "jurisdiction of incorporation", "state / country",
+    "state of incorporation", "country of incorporation",
+    "list of subsidiaries of the registrant",
+    "subsidiaries of the registrant",
+    "exhibit 21",
+    "name jurisdiction of incorporation",
+}
+
+
+def _is_html(text: str) -> bool:
+    return "<html" in text.lower() or "<body" in text.lower() or "<table" in text.lower()
+
+
+def _extract_subsidiaries_from_html(text: str) -> list[str]:
+    """Pull subsidiary names from HTML tables (TD cells, first column)."""
+    soup = BeautifulSoup(text, "html.parser")
+    names: list[str] = []
+    for table in soup.find_all("table"):
+        for row in table.find_all("tr"):
+            cells = row.find_all(["td", "th"])
+            if not cells:
+                continue
+            first = cells[0].get_text(strip=True)
+            if not first:
+                continue
+            if first.lower() in _NOISE_LINES:
+                continue
+            # Heuristic: a subsidiary name should have at least one letter
+            # and not be a pure header like "name" or "subsidiary".
+            if re.search(r"[A-Za-z]", first):
+                names.append(first)
+    return names
+
+
+def _extract_subsidiaries_from_text(text: str) -> list[str]:
+    """Pull subsidiary names from plaintext Exhibit 21 (one per line)."""
+    lines = text.splitlines()
+    names: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if line.lower() in _NOISE_LINES:
+            continue
+        if _EXHIBIT_HEADER_RE.search(line):
+            continue
+        # Plaintext exhibit-21 layout is typically:
+        #   <Subsidiary Name>          <Jurisdiction>
+        # Many filings use multiple spaces or tabs as a column separator.
+        # We take everything before the first run of 2+ spaces.
+        parts = re.split(r"\s{2,}", line, maxsplit=1)
+        candidate = parts[0].strip()
+        if not candidate or candidate.lower() in _NOISE_LINES:
+            continue
+        # Require at least one alpha char to filter out "1" / "—" lines.
+        if not re.search(r"[A-Za-z]", candidate):
+            continue
+        names.append(candidate)
+    return names
+
+
+def parse_exhibit_21_subsidiaries(text: str) -> list[str]:
+    """Parse a 10-K Exhibit 21 (subsidiary list) into subsidiary names.
+
+    Accepts plaintext or HTML. Returns a list of subsidiary names as
+    they appear in the filing (NOT normalized — call normalize_name
+    when inserting into entity_aliases).
+
+    Returns [] when no recognizable Exhibit 21 content is found.
+    """
+    if not text:
+        return []
+    if not _EXHIBIT_HEADER_RE.search(text):
+        return []
+
+    if _is_html(text):
+        names = _extract_subsidiaries_from_html(text)
+    else:
+        names = _extract_subsidiaries_from_text(text)
+
+    # De-duplicate while preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in names:
+        key = n.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
 
 
 if __name__ == "__main__":
