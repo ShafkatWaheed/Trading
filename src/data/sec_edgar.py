@@ -545,3 +545,93 @@ def parse_8k_item_502(text: str) -> list[ExecChange]:
             raw_excerpt=s[:300],
         ))
     return out
+
+
+# -- 8-K recent fetcher (Wave 2 Phase G) ------------------------------
+
+
+def fetch_recent_8ks(cik: str, *, days: int = 180) -> list[dict]:
+    """Fetch recent 8-K filings for `cik` from SEC submissions JSON.
+
+    Queries `https://data.sec.gov/submissions/CIK{cik:010}.json` and
+    filters to 8-K filings whose `filingDate` falls within the last
+    `days` days.
+
+    Returns a list of dicts shaped:
+        {accession_number, form, filing_date, primary_document_url, raw_text}
+
+    `raw_text` is fetched on demand from the primary doc URL; if the
+    fetch fails the field is "" so the caller can decide what to do.
+
+    Returns [] on any network error against the submissions JSON
+    (failure logged via log_api_call).
+    """
+    cik_padded = str(cik).zfill(10)
+    try:
+        cik_int = int(cik)
+    except (TypeError, ValueError):
+        log_api_call("sec_edgar", f"submissions/{cik}", "error", error="invalid cik")
+        return []
+
+    url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+    headers = {"User-Agent": SEC_USER_AGENT, "Accept": "application/json"}
+
+    try:
+        resp = httpx.get(url, headers=headers, timeout=30.0)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        log_api_call("sec_edgar", url, "error", error=str(exc))
+        return []
+
+    recent = (data.get("filings") or {}).get("recent") or {}
+    accession_numbers = recent.get("accessionNumber") or []
+    forms = recent.get("form") or []
+    filing_dates = recent.get("filingDate") or []
+    primary_docs = recent.get("primaryDocument") or []
+
+    cutoff = datetime.utcnow().date() - timedelta(days=days)
+    out: list[dict] = []
+    n = min(len(accession_numbers), len(forms), len(filing_dates), len(primary_docs))
+    for i in range(n):
+        form = forms[i]
+        if form != "8-K":
+            continue
+        filing_date = filing_dates[i]
+        try:
+            fd = datetime.fromisoformat(filing_date[:10]).date()
+        except (TypeError, ValueError):
+            continue
+        if fd < cutoff:
+            continue
+
+        accession = accession_numbers[i]
+        primary_doc = primary_docs[i]
+        accession_no_dashes = accession.replace("-", "")
+        primary_document_url = (
+            f"https://www.sec.gov/Archives/edgar/data/{cik_int}/"
+            f"{accession_no_dashes}/{primary_doc}"
+        )
+
+        raw_text = ""
+        try:
+            doc_resp = httpx.get(
+                primary_document_url, headers=headers, timeout=30.0
+            )
+            doc_resp.raise_for_status()
+            raw_text = doc_resp.text
+        except Exception as exc:
+            log_api_call(
+                "sec_edgar", primary_document_url, "error", error=str(exc)
+            )
+
+        out.append({
+            "accession_number": accession,
+            "form": form,
+            "filing_date": filing_date,
+            "primary_document_url": primary_document_url,
+            "raw_text": raw_text,
+        })
+
+    log_api_call("sec_edgar", url, "ok")
+    return out
