@@ -475,6 +475,26 @@ def init_db() -> None:
             FOREIGN KEY (decision_id) REFERENCES ai_decisions(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_ai_outcomes_was_correct ON ai_decision_outcomes(was_correct);
+
+        -- ── Sector-influence Wave 2: entity-match decision log ──────────
+        -- Every fetcher that resolves a free-text name to a ticker writes
+        -- one row here, so the Entity Match Debug card can show how each
+        -- data point was attributed (CIK exact / UEI exact / fuzzy / etc.)
+        -- and what alternatives were considered.
+        CREATE TABLE IF NOT EXISTS entity_match_decisions (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker                      TEXT,                -- nullable: NULL when no match found
+            source                      TEXT NOT NULL,       -- 'patents' | 'fda' | 'gov_contracts' | 'itc' | 'sec_8k' | ...
+            input_name                  TEXT NOT NULL,       -- free-text input that was resolved
+            matched_alias               TEXT,                -- normalized alias_name from entity_aliases (NULL if no match)
+            method                      TEXT NOT NULL,       -- 'exact_cik' | 'exact_uei' | 'exact_alias' | 'fuzzy' | 'no_match'
+            confidence                  REAL NOT NULL,       -- 0.0 if no match, else 0.0-1.0
+            rejected_candidates_json    TEXT,                -- JSON list of {ticker, alias, score} for top alternatives
+            decided_at                  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_ticker ON entity_match_decisions(ticker);
+        CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_source ON entity_match_decisions(source);
+        CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_decided_at ON entity_match_decisions(decided_at);
     """)
     conn.commit()
     conn.close()
