@@ -293,6 +293,8 @@ export const stocksApi = {
     ),
   innovation: (ticker: string) =>
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/innovation`),
+  fdaCatalysts: (ticker: string) =>
+    api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/fda-catalysts`),
   entityMatches: (ticker: string) =>
     api.get<EntityMatches>(`/stocks/${encodeURIComponent(ticker)}/entity-matches`),
 };
