@@ -297,6 +297,8 @@ export const stocksApi = {
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/fda-catalysts`),
   backlog: (ticker: string) =>
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/backlog`),
+  litigation: (ticker: string) =>
+    api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/litigation`),
   entityMatches: (ticker: string) =>
     api.get<EntityMatches>(`/stocks/${encodeURIComponent(ticker)}/entity-matches`),
 };
