@@ -282,6 +282,13 @@ def get_fda_catalysts(ticker: str) -> dict:
     return get_fda_catalysts_for_ticker(ticker.upper())
 
 
+@router.get("/{ticker}/backlog", response_model=StockInformationResponse)
+def get_backlog(ticker: str) -> dict:
+    """Wave 2 Phase E: Backlog card — USAspending government contracts by UEI."""
+    from api.services.backlog_service import get_backlog_for_ticker
+    return get_backlog_for_ticker(ticker.upper())
+
+
 @router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
 def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
