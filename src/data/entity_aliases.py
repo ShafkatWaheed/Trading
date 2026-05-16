@@ -655,3 +655,21 @@ def ensure_alias_for_ticker(
         created_at=_now_iso(),
     )
     return True
+
+
+def get_sec_display_name(ticker: str) -> str | None:
+    """Return the SEC company_tickers.json display name for `ticker` (unnormalized).
+
+    The raw form is what external APIs like USPTO, openFDA, ITC EDIS expect
+    when querying by company name. Returns None if the SEC mapping hasn't
+    been fetched yet for the current process, or if the ticker isn't in
+    the mapping.
+
+    Does NOT trigger a fetch — call `ensure_alias_for_ticker()` first if
+    you need a freshly-populated cache.
+    """
+    global _SEC_MAPPING_CACHE
+    if _SEC_MAPPING_CACHE is None:
+        return None
+    entry = _SEC_MAPPING_CACHE.get(ticker.upper())
+    return entry[1] if entry else None

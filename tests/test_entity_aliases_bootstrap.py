@@ -104,3 +104,36 @@ def test_ensure_alias_caches_sec_mapping_across_calls():
     ensure_alias_for_ticker("CACHED_A", fetcher=counting_fetcher)
     ensure_alias_for_ticker("CACHED_B", fetcher=counting_fetcher)
     assert call_count["n"] == 1  # Only one network call
+
+
+def test_get_sec_display_name_returns_raw_name_after_bootstrap():
+    """After lazy bootstrap, the raw SEC display name should be retrievable
+    (unnormalized — for downstream API queries like USPTO that need
+    'Apple Inc.' not 'apple')."""
+    from src.data.entity_aliases import get_sec_display_name
+
+    fake_mapping = {"DISP_TEST": ("0001111111", "Display Test Industries Inc.")}
+    ensure_alias_for_ticker("DISP_TEST", fetcher=lambda: fake_mapping)
+
+    name = get_sec_display_name("DISP_TEST")
+    assert name == "Display Test Industries Inc."
+
+
+def test_get_sec_display_name_returns_none_when_ticker_unknown():
+    """If the ticker has never been bootstrapped (cache miss), return None."""
+    from src.data.entity_aliases import get_sec_display_name
+
+    # Force cache to a known-mapped state without the target ticker
+    fake_mapping = {"SOMETHING_ELSE": ("0000000001", "Something Else Co")}
+    ensure_alias_for_ticker("SOMETHING_ELSE", fetcher=lambda: fake_mapping)
+
+    assert get_sec_display_name("ZZZZZ_NOT_IN_CACHE") is None
+
+
+def test_get_sec_display_name_returns_none_before_cache_populated():
+    """If the SEC mapping hasn't been fetched yet, return None (no fetch)."""
+    import src.data.entity_aliases as ea
+    ea._SEC_MAPPING_CACHE = None  # reset
+
+    from src.data.entity_aliases import get_sec_display_name
+    assert get_sec_display_name("AAPL") is None
