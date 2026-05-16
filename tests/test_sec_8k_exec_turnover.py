@@ -1,7 +1,7 @@
 """Tests for SEC 8-K Item 5.02 (exec departure/appointment) parser."""
 from __future__ import annotations
 
-from src.data.sec_edgar import parse_8k_item_502, ExecChange
+from src.utils.sec_8k_parser import parse_8k_item_502, ExecChange
 
 
 SAMPLE_8K_DEPARTURE = """

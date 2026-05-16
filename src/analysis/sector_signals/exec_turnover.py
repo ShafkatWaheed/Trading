@@ -11,7 +11,7 @@ is materially adverse and gets `severity="high"`. Other departures get
 from __future__ import annotations
 
 from src.analysis.sector_signals._shared import Fact, StockInformation
-from src.data.sec_edgar import parse_8k_item_502
+from src.utils.sec_8k_parser import parse_8k_item_502
 
 
 _HIGH_SEVERITY_ROLES = (
