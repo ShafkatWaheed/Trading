@@ -5,6 +5,7 @@ Single interface for all news and research queries.
 
 import httpx
 
+from src.data.quota_tracker import mark_exhausted
 from src.utils.config import TAVILY_API_KEY, EXA_API_KEY
 from src.utils.db import cache_get, cache_set, log_api_call
 
@@ -85,9 +86,21 @@ class NewsProvider:
                 json={"query": query, "api_key": TAVILY_API_KEY, "max_results": max_results},
                 timeout=30,
             )
+            if resp.status_code in (402, 403, 429):
+                mark_exhausted("tavily")
+                log_api_call("tavily", f"search/{query[:50]}", "quota_exhausted",
+                             f"status={resp.status_code}")
+                return []
             resp.raise_for_status()
             raw = resp.json()
             log_api_call("tavily", f"search/{query[:50]}", "success")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (402, 403, 429):
+                mark_exhausted("tavily")
+                log_api_call("tavily", f"search/{query[:50]}", "quota_exhausted", str(e))
+            else:
+                log_api_call("tavily", f"search/{query[:50]}", "error", str(e))
+            return []
         except Exception as e:
             log_api_call("tavily", f"search/{query[:50]}", "error", str(e))
             return []
@@ -119,9 +132,21 @@ class NewsProvider:
                 },
                 timeout=30,
             )
+            if resp.status_code in (402, 403, 429):
+                mark_exhausted("exa")
+                log_api_call("exa", f"search/{query[:50]}", "quota_exhausted",
+                             f"status={resp.status_code}")
+                return []
             resp.raise_for_status()
             raw = resp.json()
             log_api_call("exa", f"search/{query[:50]}", "success")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (402, 403, 429):
+                mark_exhausted("exa")
+                log_api_call("exa", f"search/{query[:50]}", "quota_exhausted", str(e))
+            else:
+                log_api_call("exa", f"search/{query[:50]}", "error", str(e))
+            return []
         except Exception as e:
             log_api_call("exa", f"search/{query[:50]}", "error", str(e))
             return []
