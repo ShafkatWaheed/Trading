@@ -7,7 +7,18 @@ export function ExecChangesCard({ ticker }: { ticker: string }) {
 
   if (isLoading) return null;
   if (error || !data) return null;
-  if (data.facts.length === 0) return null;
+
+  if (data.facts.length === 0) {
+    return (
+      <section className="card-subtle p-6 opacity-60">
+        <h3 className="text-lg font-semibold mb-1">Executive Changes</h3>
+        <p className="text-sm text-text-secondary mb-2">{data.headline}</p>
+        <p className="text-xs text-text-secondary italic">
+          Surfaces executive departures and appointments from SEC 8-K Item 5.02 in the last 180 days. Empty when no C-suite changes have been filed.
+        </p>
+      </section>
+    );
+  }
 
   const borderClass =
     data.severity === "high"

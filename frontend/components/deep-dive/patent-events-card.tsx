@@ -16,7 +16,18 @@ export function PatentEventsCard({ ticker }: { ticker: string }) {
 
   if (isLoading) return null;
   if (error || !data) return null;
-  if (data.facts.length === 0) return null;
+
+  if (data.facts.length === 0) {
+    return (
+      <section className="card-subtle p-6 opacity-60">
+        <h3 className="text-lg font-semibold mb-1">Patent Events</h3>
+        <p className="text-sm text-text-secondary mb-2">{data.headline}</p>
+        <p className="text-xs text-text-secondary italic">
+          Consolidates FDA Orange Book patent-cliff dates, ITC §337 status, and material 8-K IP events (license deals, infringement outcomes). Empty when nothing material is happening — common for non-pharma tickers without recent IP-related filings.
+        </p>
+      </section>
+    );
+  }
 
   const borderClass =
     data.severity === "high"

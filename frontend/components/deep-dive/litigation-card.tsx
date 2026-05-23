@@ -7,7 +7,18 @@ export function LitigationCard({ ticker }: { ticker: string }) {
 
   if (isLoading) return null;
   if (error || !data) return null;
-  if (data.facts.length === 0) return null;
+
+  if (data.facts.length === 0) {
+    return (
+      <section className="card-subtle p-6 opacity-60">
+        <h3 className="text-lg font-semibold mb-1">Litigation</h3>
+        <p className="text-sm text-text-secondary mb-2">{data.headline}</p>
+        <p className="text-xs text-text-secondary italic">
+          Surfaces active ITC §337 patent/import-ban investigations from EDIS. Empty when the company isn&apos;t currently in any §337 case (most tickers most of the time).
+        </p>
+      </section>
+    );
+  }
 
   const borderClass =
     data.severity === "high"

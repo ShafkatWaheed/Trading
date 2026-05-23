@@ -7,7 +7,18 @@ export function BacklogCard({ ticker }: { ticker: string }) {
 
   if (isLoading) return null;
   if (error || !data) return null;
-  if (data.facts.length === 0) return null;
+
+  if (data.facts.length === 0) {
+    return (
+      <section className="card-subtle p-6 opacity-60">
+        <h3 className="text-lg font-semibold mb-1">Government Contracts</h3>
+        <p className="text-sm text-text-secondary mb-2">{data.headline}</p>
+        <p className="text-xs text-text-secondary italic">
+          Surfaces federal contract awards from USAspending. Empty when the ticker has no SAM.gov UEI seeded or no recent awards — most non-defense/non-IT companies.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="card-subtle p-6">

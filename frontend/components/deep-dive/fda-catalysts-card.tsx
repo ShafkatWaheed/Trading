@@ -7,7 +7,18 @@ export function FdaCatalystsCard({ ticker }: { ticker: string }) {
 
   if (isLoading) return null;
   if (error || !data) return null;
-  if (data.facts.length === 0) return null;
+
+  if (data.facts.length === 0) {
+    return (
+      <section className="card-subtle p-6 opacity-60">
+        <h3 className="text-lg font-semibold mb-1">FDA Catalysts</h3>
+        <p className="text-sm text-text-secondary mb-2">{data.headline}</p>
+        <p className="text-xs text-text-secondary italic">
+          Surfaces FDA drug applications + PDUFA dates from openFDA. Empty for non-pharma tickers — common for non-biotech/non-pharma companies.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="card-subtle p-6">
