@@ -291,8 +291,6 @@ export const stocksApi = {
     api.get<SignalEvidence>(
       `/stocks/${encodeURIComponent(ticker)}/signal-evidence${force ? "?force=true" : ""}`
     ),
-  innovation: (ticker: string) =>
-    api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/innovation`),
   fdaCatalysts: (ticker: string) =>
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/fda-catalysts`),
   backlog: (ticker: string) =>

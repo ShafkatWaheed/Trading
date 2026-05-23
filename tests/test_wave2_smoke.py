@@ -3,8 +3,11 @@
 Walks every Wave 2 public surface:
   - Phase A: SAM.gov + PatentsView seeders, 8-K Item 5.02 parser
   - Phase B: entity_match_decisions table + resolve_ticker_with_audit
-  - Phase C-G: 6 services (Innovation, FDA, Backlog, Litigation, Exec Changes, Entity Match Debug)
+  - Phase C-G: 5 services (FDA, Backlog, Litigation, Exec Changes, Entity Match Debug)
   - Phase I: 4 alert types
+
+Innovation card was dropped post-Wave-2 (weak signal + dead USPTO API).
+See spec post-Wave-2 design change note.
 """
 from __future__ import annotations
 
@@ -84,8 +87,7 @@ def test_wave2_smoke_phase_b_audit():
 
 
 def test_wave2_smoke_phase_c_through_g_services(monkeypatch):
-    """All six card services should be callable and return well-formed payloads."""
-    from api.services.innovation_service import get_innovation_for_ticker
+    """All five card services should be callable and return well-formed payloads."""
     from api.services.fda_catalysts_service import get_fda_catalysts_for_ticker
     from api.services.backlog_service import get_backlog_for_ticker
     from api.services.litigation_service import get_litigation_for_ticker
@@ -95,7 +97,6 @@ def test_wave2_smoke_phase_c_through_g_services(monkeypatch):
     # For unknown ticker: all services should return non-empty dicts with the
     # right shape (empty facts, but valid envelope).
     for fn in (
-        get_innovation_for_ticker,
         get_fda_catalysts_for_ticker,
         get_backlog_for_ticker,
         get_litigation_for_ticker,
@@ -170,11 +171,13 @@ def test_wave2_smoke_phase_i_alert_types():
     conn.close()
 
 
-def test_wave2_smoke_six_endpoints_registered():
-    """All 6 Wave 2 endpoints must be registered on the FastAPI app."""
+def test_wave2_smoke_five_endpoints_registered():
+    """All 5 surviving Wave 2 endpoints must be registered on the FastAPI app.
+
+    Innovation was dropped post-Wave-2 — see spec design change note.
+    """
     from api.main import app
     paths = {route.path for route in app.routes}
-    assert "/stocks/{ticker}/innovation" in paths
     assert "/stocks/{ticker}/fda-catalysts" in paths
     assert "/stocks/{ticker}/backlog" in paths
     assert "/stocks/{ticker}/litigation" in paths

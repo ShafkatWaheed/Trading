@@ -1,16 +1,18 @@
-"""Catalog of the 18 endpoints covering the 15 sector-influence sources (Wave 1+ spec §3).
+"""Catalog of the 17 endpoints covering the 15 sector-influence sources (Wave 1+ spec §3).
 
 Calling `register_all_wave1_plus_sources()` makes them visible on the
 `source_freshness` table — even before their data fetchers exist. The
 admin /freshness page then shows them with last_fetched_at=NULL so we
 can see staleness uniformly as fetchers are added wave by wave.
 
-Note on the 15-vs-18 distinction: spec §3 lists 15 logical "sources"
+Note on the 15-vs-17 distinction: spec §3 lists 15 logical "sources"
 but several are aggregates of multiple endpoints with distinct native
 publication cadences (e.g. container rates = Drewry + Freightos; the
 Goods Flow card draws from Drewry, Freightos, Cass, AAR, and Port of
 LA; the USDA NASS + NOAA weather spec row is 2 endpoints). We track
-all 18 endpoints independently for freshness.
+all 17 endpoints independently for freshness. (Was 18 before the
+Innovation card was dropped — see post-Wave-2 design change note in
+the spec.)
 
 Per spec §6.1, the `cadence` column records the *native* publishing
 cadence of the upstream source (used in UI/staleness labels) while
@@ -35,8 +37,7 @@ _SOURCES: tuple[tuple[str, str, int, int | None], ...] = (
     ("freightos_fbx",      "daily",        24 * 3600,  None),
     ("eia_inventories",    "weekly",       24 * 3600,  5000 * 24),       # Wed 10:30 ET release
     ("census_bps",         "monthly",       7 * 86400, None),            # ~18th of next month
-    # ── Information-source endpoints (9) ─────────────────────────
-    ("uspto_patentsview",  "weekly",        7 * 86400, None),            # bulk
+    # ── Information-source endpoints (8) ─────────────────────────
     ("uspto_tsdr",         "daily",        24 * 3600,  None),
     ("cass_freight",       "monthly",       7 * 86400, None),            # scrape, mid-month publication
     ("aar_rail",           "weekly",        7 * 86400, None),            # Wed publication
@@ -56,7 +57,7 @@ def register_all_wave1_plus_sources() -> int:
 
     Returns the count registered (== len(_SOURCES) on success).
 
-    Note: spec §3 lists 15 "sources" but we track 18 endpoints because
+    Note: spec §3 lists 15 "sources" but we track 17 endpoints because
     several spec sources are aggregates (e.g. container rates =
     Drewry + Freightos; the Goods Flow card draws on Drewry, Freightos,
     Cass, AAR, and Port of LA; USDA NASS + NOAA weather is one spec

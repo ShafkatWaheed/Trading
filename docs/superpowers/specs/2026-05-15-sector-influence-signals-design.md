@@ -539,3 +539,29 @@ path was modified.
   available; nothing consumes them yet.
 - Narrative-bullet enrichments (originally Wave 4) — flipped to dedicated
   cards already.
+
+---
+
+## Post-Wave-2 design change (2026-05-16): Innovation card dropped
+
+Removed shortly after Wave 2 shipped:
+
+1. **API deprecation.** PatentsView (`search.patentsview.org`) terminated late
+   2024. USPTO's replacement Open Data Portal requires a key with manual
+   approval friction.
+2. **Weak signal.** Patent count alone is not predictive of short-term stock
+   moves (Kogan et al. 2017 show citation-weighted patent value matters for
+   long-horizon returns, not raw counts).
+3. **High-signal subset already covered.** Patent litigation that moves
+   stocks (§337 import-ban determinations, NPE suits) flows through the
+   Litigation card.
+
+Files removed: src/data/uspto_patentsview.py, src/analysis/sector_signals/
+innovation.py, api/services/innovation_service.py, the React component and
+hook, plus 3 test modules. `seed_from_patentsview_assignees()` retained as
+unused infrastructure for future re-use.
+
+Wave 2 final card count: **5 user-visible cards** (down from 6) — FDA
+Catalysts, Backlog, Litigation, Executive Changes, Entity Match Debug.
+A follow-on "Patent Events" card (Orange Book + 8-K + ITC consolidation)
+is in progress in a separate work stream.

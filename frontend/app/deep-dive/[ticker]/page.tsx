@@ -26,7 +26,6 @@ import { SmartMoneyCard } from "@/components/deep-dive/smart-money";
 import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
-import { InnovationCard } from "@/components/deep-dive/innovation-card";
 import { FdaCatalystsCard } from "@/components/deep-dive/fda-catalysts-card";
 import { BacklogCard } from "@/components/deep-dive/backlog-card";
 import { LitigationCard } from "@/components/deep-dive/litigation-card";
@@ -281,7 +280,6 @@ export default function DeepDiveTickerPage() {
 
           <BubbleScoreCard symbol={data.symbol} />
           <PeerValuationStrip symbol={data.symbol} />
-          <InnovationCard ticker={data.symbol} />
           <FdaCatalystsCard ticker={data.symbol} />
           <BacklogCard ticker={data.symbol} />
           <LitigationCard ticker={data.symbol} />

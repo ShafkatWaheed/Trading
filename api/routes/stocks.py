@@ -268,13 +268,6 @@ def signal_evidence(
         raise HTTPException(status_code=500, detail=f"Signal evidence failed: {e}")
 
 
-@router.get("/{ticker}/innovation", response_model=StockInformationResponse)
-def get_innovation(ticker: str) -> dict:
-    """Wave 2: Innovation card — USPTO patents over last 365 days."""
-    from api.services.innovation_service import get_innovation_for_ticker
-    return get_innovation_for_ticker(ticker.upper())
-
-
 @router.get("/{ticker}/fda-catalysts", response_model=StockInformationResponse)
 def get_fda_catalysts(ticker: str) -> dict:
     """Wave 2 Phase D: FDA Catalysts card — openFDA drug applications by sponsor."""
