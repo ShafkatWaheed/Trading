@@ -147,3 +147,22 @@ def test_tavily_429_marks_exhausted(monkeypatch):
     rows, ok = svc._search_tavily("anything")
     assert rows == [] and ok is False
     assert is_exhausted("tavily") is True
+
+
+def test_tavily_432_marks_exhausted(monkeypatch):
+    """Tavily's custom HTTP 432 (plan usage exceeded) must trigger cooldown."""
+    from api.services import events_service as svc
+    from src.data.quota_tracker import is_exhausted
+
+    class FakeResp:
+        status_code = 432
+        text = '{"detail":{"error":"plan usage exceeded"}}'
+        def json(self): return {}
+
+    monkeypatch.setenv("TAVILY_API_KEY", "fake-key")
+    monkeypatch.setattr(svc.httpx, "post", lambda *a, **kw: FakeResp())
+    clear_exhausted("tavily")
+
+    rows, ok = svc._search_tavily("anything")
+    assert rows == [] and ok is False
+    assert is_exhausted("tavily") is True

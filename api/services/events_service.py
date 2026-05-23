@@ -74,7 +74,8 @@ def _search_tavily(query: str) -> tuple[list[dict], bool]:
             json={"query": query, "api_key": api_key, "max_results": 3, "search_depth": "basic"},
             timeout=12,
         )
-        if r.status_code in (402, 403, 429):
+        # 432 is Tavily's custom "plan usage exceeded" code (not a standard HTTP code).
+        if r.status_code in (402, 403, 429, 432):
             mark_exhausted("tavily")
             logger.warning("Tavily quota exhausted (HTTP %s); cooldown applied", r.status_code)
             return [], False
