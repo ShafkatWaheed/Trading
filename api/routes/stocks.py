@@ -296,6 +296,14 @@ def get_exec_changes(ticker: str) -> dict:
     return get_exec_changes_for_ticker(ticker.upper())
 
 
+@router.get("/{ticker}/patent-events", response_model=StockInformationResponse)
+def get_patent_events(ticker: str) -> dict:
+    """Wave 2 follow-on: Patent Events card — consolidates Orange Book (patent
+    cliff), ITC §337, and 8-K IP material agreements / litigation outcomes."""
+    from api.services.patent_events_service import get_patent_events_for_ticker
+    return get_patent_events_for_ticker(ticker.upper())
+
+
 @router.get("/{ticker}/entity-matches", response_model=EntityMatchesResponse)
 def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
