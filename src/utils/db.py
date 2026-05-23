@@ -495,6 +495,24 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_ticker ON entity_match_decisions(ticker);
         CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_source ON entity_match_decisions(source);
         CREATE INDEX IF NOT EXISTS idx_entity_match_decisions_decided_at ON entity_match_decisions(decided_at);
+
+        -- ── Orange Book bulk cache (pharma patent cliff signal) ─────────
+        -- Caches the FDA Orange Book ZIP unzipped, joined products+patents.
+        -- Refreshed every 7 days via fda_orange_book.py.
+        CREATE TABLE IF NOT EXISTS orange_book_patents (
+            application_number  TEXT NOT NULL,
+            patent_number       TEXT NOT NULL,
+            patent_expire_date  TEXT,
+            drug_substance_flag INTEGER,
+            drug_product_flag   INTEGER,
+            use_code            TEXT,
+            sponsor_name        TEXT,
+            trade_name          TEXT,
+            fetched_at          TEXT NOT NULL,
+            PRIMARY KEY (application_number, patent_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_orange_book_sponsor ON orange_book_patents(sponsor_name);
+        CREATE INDEX IF NOT EXISTS idx_orange_book_expire ON orange_book_patents(patent_expire_date);
     """)
     conn.commit()
     conn.close()
