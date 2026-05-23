@@ -14,69 +14,65 @@ def _ensure_api_log_table():
     yield
 
 
-class _FakeResp:
-    def __init__(self, payload, status=200):
-        self._payload = payload
+SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<results>
+  <investigations>
+    <investigation>
+      <investigationNumber>337-TA-1234</investigationNumber>
+      <investigationPhase>Final</investigationPhase>
+      <investigationStatus>Active</investigationStatus>
+      <investigationTitle>Certain Apple devices and related products</investigationTitle>
+      <investigationType>Section 337</investigationType>
+    </investigation>
+    <investigation>
+      <investigationNumber>1205-007</investigationNumber>
+      <investigationStatus>Active</investigationStatus>
+      <investigationTitle>Proposed Modifications to the Harmonized Tariff Schedule</investigationTitle>
+      <investigationType>Tariff Affairs &amp; Trade Agreements</investigationType>
+    </investigation>
+  </investigations>
+</results>
+"""
+
+
+class _FakeXmlResp:
+    def __init__(self, text, status=200):
+        self.text = text
         self.status_code = status
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
-    def json(self):
-        return self._payload
 
 
-def test_fetch_337_returns_list_with_complainant_and_respondent(monkeypatch):
-    fake = {
-        "investigations": [
-            {
-                "investigation_number": "337-TA-1234",
-                "title": "Certain Mobile Devices and Components Thereof",
-                "status": "Active",
-                "filing_date": "2026-02-01",
-                "parties": [
-                    {"name": "Apple Inc.", "role": "Complainant"},
-                    {"name": "Acme Imports LLC", "role": "Respondent"},
-                ],
-            },
-            {
-                "investigation_number": "337-TA-1235",
-                "title": "Certain Wireless Audio Equipment",
-                "status": "Active",
-                "filing_date": "2026-03-15",
-                "parties": [
-                    {"name": "Foo Holdings", "role": "Complainant"},
-                    {"name": "Apple Inc.", "role": "Respondent"},
-                ],
-            },
-        ],
-    }
+def test_fetch_337_returns_investigations_matching_party(monkeypatch):
     monkeypatch.setattr(
         "src.data.itc_edis.httpx.get",
-        lambda *a, **k: _FakeResp(fake),
+        lambda *a, **k: _FakeXmlResp(SAMPLE_XML),
     )
-    out = fetch_337_investigations_for_party("Apple Inc.")
-    assert len(out) == 4  # 2 parties per investigation × 2 investigations
-    roles = {row["party_role"] for row in out}
-    assert "complainant" in roles
-    assert "respondent" in roles
-    # First investigation, first party
+    out = fetch_337_investigations_for_party("Apple")
+    # Only the Section 337 investigation matching "Apple" in the title
+    assert len(out) == 1
     assert out[0]["investigation_number"] == "337-TA-1234"
-    assert out[0]["title"].startswith("Certain Mobile")
-    assert out[0]["filing_date"] == "2026-02-01"
+    assert out[0]["status"] == "Active"
+    assert "Apple" in out[0]["title"]
+    assert out[0]["party_name"] == "Apple"
+    assert out[0]["party_role"] == "unknown"
 
 
-def test_fetch_337_returns_empty_on_no_results(monkeypatch):
+def test_fetch_337_filters_out_non_section_337(monkeypatch):
     monkeypatch.setattr(
         "src.data.itc_edis.httpx.get",
-        lambda *a, **k: _FakeResp({"investigations": []}),
+        lambda *a, **k: _FakeXmlResp(SAMPLE_XML),
     )
-    out = fetch_337_investigations_for_party("Nonexistent Co")
+    out = fetch_337_investigations_for_party("Modifications")
+    # 1205-007 is in the XML and the title matches, but it's NOT Section 337 — filter out
     assert out == []
 
 
 def test_fetch_337_returns_empty_on_network_error(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("network down")
+
     monkeypatch.setattr("src.data.itc_edis.httpx.get", _boom)
-    out = fetch_337_investigations_for_party("Apple Inc.")
-    assert out == []  # silent [] on failure, logged via log_api_call
+    assert fetch_337_investigations_for_party("Apple") == []
