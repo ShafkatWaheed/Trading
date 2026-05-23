@@ -74,22 +74,113 @@ _NAME_BLOCK_FULL = {
     "certain officer", "election of", "appointment of", "departure of",
     "compensatory arrangements", "board of",
 }
-_NAME_BLOCK_FIRST_TOKEN = {
-    "on", "the", "ms", "mr", "mrs", "dr", "our", "this", "that", "it",
-    "he", "she", "they", "we", "as", "to", "in", "of", "at", "by",
+
+# Font-family names that leak from PDF/HTML metadata into text extraction.
+_FONT_WORDS = {
+    "times", "new", "roman", "arial", "helvetica", "calibri", "courier",
+    "sans", "serif", "verdana", "georgia", "tahoma", "garamond", "cambria",
+}
+
+# Company-suffix tokens (registrant's own name leaking through).
+_COMPANY_SUFFIX_WORDS = {
+    "inc", "corp", "corporation", "company", "co", "ltd", "llc", "lp",
+    "holdings", "group", "trust", "plc", "sa", "ag", "nv", "limited",
+    "incorporated",
+}
+
+# Form / document boilerplate (matches the structure of an SEC filing).
+_DOC_BOILERPLATE_WORDS = {
+    "item", "form", "section", "exhibit", "schedule", "annex", "appendix",
+    "part", "article",
+}
+
+# Body-meta words pulled from headings inside Item 5.02 itself.
+_BODY_META_WORDS = {
+    "board", "directors", "director", "committee", "officers", "officer",
+    "registrant", "company", "corporation",
+}
+
+# C-suite / role words that the name regex can grab when no real name exists
+# next to the role. Keeps "Chief Financial" from being detected as a person.
+_ROLE_WORDS = {
+    "chief", "executive", "financial", "operating", "technology", "accounting",
+    "legal", "president", "vice", "principal", "senior", "general", "counsel",
+    "secretary", "treasurer", "controller", "manager", "head",
+}
+
+# Calendar tokens (months, days, fiscal quarters).
+_CALENDAR_WORDS = {
     "january", "february", "march", "april", "may", "june", "july",
     "august", "september", "october", "november", "december",
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "q1", "q2", "q3", "q4",
 }
+
+# Sentence starters / titles / prepositions that can begin a capitalized run.
+_SENTENCE_STARTER_WORDS = {
+    "on", "the", "mr", "ms", "mrs", "dr", "as", "in", "by", "with", "upon",
+    "our", "this", "that", "it", "he", "she", "they", "we", "to", "of", "at",
+    "for", "from", "an", "a",
+}
+
+# Tokens that must not appear as EITHER the first OR last word of a candidate
+# name. Compared lowercase, with punctuation stripped.
+_NAME_TOKEN_BLOCKLIST = (
+    _FONT_WORDS
+    | _COMPANY_SUFFIX_WORDS
+    | _DOC_BOILERPLATE_WORDS
+    | _BODY_META_WORDS
+    | _CALENDAR_WORDS
+    | _SENTENCE_STARTER_WORDS
+    | _ROLE_WORDS
+)
+
+
+def _clean_token(tok: str) -> str:
+    """Lowercase + strip punctuation so blocklist comparisons are robust."""
+    return re.sub(r"[^a-zA-Z0-9]", "", tok).lower()
 
 
 def _is_real_name(cand: str) -> bool:
-    low = cand.lower()
+    """Validate that a regex-matched candidate looks like a real person's name.
+
+    Rejects font names, company names, document boilerplate, calendar tokens,
+    single-word matches, names with digits, and overly long matches.
+    """
+    if not cand:
+        return False
+    # Reject overly long matches (likely caught a sentence fragment).
+    if len(cand) > 60:
+        return False
+    # Reject anything containing digits (real names don't have digits).
+    if any(ch.isdigit() for ch in cand):
+        return False
+
+    low = cand.lower().strip()
     if low in _NAME_BLOCK_FULL:
         return False
-    first = low.split()[0] if low.split() else ""
-    if first in _NAME_BLOCK_FIRST_TOKEN:
+
+    tokens = cand.split()
+    # Must contain at least 2 tokens (First + Last).
+    if len(tokens) < 2:
         return False
+
+    first_clean = _clean_token(tokens[0])
+    last_clean = _clean_token(tokens[-1])
+
+    # First token must look like a given name: starts with capital, >= 2 letters.
+    if len(first_clean) < 2 or not tokens[0][:1].isupper():
+        return False
+    # Last token (likely surname) must be at least 3 letters.
+    if len(last_clean) < 3:
+        return False
+
+    # Reject if either the first OR last token is in the blocklist.
+    if first_clean in _NAME_TOKEN_BLOCKLIST:
+        return False
+    if last_clean in _NAME_TOKEN_BLOCKLIST:
+        return False
+
     return True
 
 

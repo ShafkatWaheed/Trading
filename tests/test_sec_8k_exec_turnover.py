@@ -45,3 +45,55 @@ def test_parse_8k_item_502_empty_returns_empty_list():
 def test_parse_8k_item_502_non_502_content_returns_empty():
     junk = "Item 7.01 Regulation FD Disclosure. We had a good quarter."
     assert parse_8k_item_502(junk) == []
+
+
+# -- Regression tests for production false positives -----------------
+
+
+def test_parse_8k_item_502_rejects_font_name_times_new():
+    """Real bug: 'Times New' (font name) leaked from PDF/HTML metadata."""
+    # Simulates what we saw in the wild - a stray font reference in the 502 section
+    txt = """Item 5.02 Departure of Directors
+
+On April 20, 2026, the Board accepted the resignation of one Director,
+font-family: Times New Roman, serif; effective immediately.
+"""
+    out = parse_8k_item_502(txt)
+    # Even if a departure is detected, the person_name must NOT be "Times New"
+    assert all("Times" not in c.person_name and "Roman" not in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_company_name_as_person():
+    """Real bug: 'Apple Inc' (registrant's own company name) detected as a person."""
+    txt = """Item 5.02 Departure of Directors
+
+On January 2, 2026, Apple Inc. announced the departure of a Director,
+effective immediately. The resignation was made for personal reasons.
+"""
+    out = parse_8k_item_502(txt)
+    assert all("Apple Inc" not in c.person_name and c.person_name != "Apple" for c in out)
+
+
+def test_parse_8k_item_502_requires_first_and_last_name():
+    """Don't match single-word 'names' - must be at least First + Last."""
+    txt = """Item 5.02 Departure of Directors
+
+On May 1, 2026, the resignation was accepted, effective immediately as Chief Financial Officer.
+"""
+    out = parse_8k_item_502(txt)
+    # No real name present - parser should yield nothing
+    assert out == []
+
+
+def test_parse_8k_item_502_keeps_real_name_extraction_working():
+    """Regression: don't break the case where there IS a real name."""
+    txt = """Item 5.02 Departure of Directors
+
+On April 1, 2026, Jane Smith notified the Board that she will resign
+from her position as Chief Financial Officer effective May 15, 2026.
+"""
+    out = parse_8k_item_502(txt)
+    departures = [c for c in out if c.event_type == "departure"]
+    assert len(departures) == 1
+    assert "Smith" in departures[0].person_name
+    assert "Jane" in departures[0].person_name
