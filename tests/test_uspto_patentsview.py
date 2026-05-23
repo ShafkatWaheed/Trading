@@ -16,6 +16,13 @@ def _ensure_api_log_table():
     yield
 
 
+@pytest.fixture
+def _with_api_key(monkeypatch):
+    """Set USPTO_API_KEY so the env-var gate passes and the monkeypatched
+    httpx call is the actual code path under test."""
+    monkeypatch.setenv("USPTO_API_KEY", "test-key")
+
+
 class _FakeResp:
     def __init__(self, payload, status=200):
         self._payload = payload
@@ -27,7 +34,7 @@ class _FakeResp:
         return self._payload
 
 
-def test_fetch_patents_returns_list_with_required_fields(monkeypatch):
+def test_fetch_patents_returns_list_with_required_fields(monkeypatch, _with_api_key):
     fake = {
         "patents": [
             {
@@ -59,7 +66,7 @@ def test_fetch_patents_returns_list_with_required_fields(monkeypatch):
     assert out[0]["date"] == "2026-01-15"
 
 
-def test_fetch_patents_returns_empty_on_no_results(monkeypatch):
+def test_fetch_patents_returns_empty_on_no_results(monkeypatch, _with_api_key):
     monkeypatch.setattr(
         "src.data.uspto_patentsview.httpx.post",
         lambda *a, **k: _FakeResp({"patents": [], "count": 0, "total_hits": 0}),
@@ -68,9 +75,15 @@ def test_fetch_patents_returns_empty_on_no_results(monkeypatch):
     assert out == []
 
 
-def test_fetch_patents_returns_empty_on_network_error(monkeypatch):
+def test_fetch_patents_returns_empty_on_network_error(monkeypatch, _with_api_key):
     def _boom(*a, **k):
         raise RuntimeError("network down")
     monkeypatch.setattr("src.data.uspto_patentsview.httpx.post", _boom)
     out = fetch_patents_for_assignee("Apple Inc.", since_date="2025-05-15")
     assert out == []  # silent {} on failure, logged via log_api_call
+
+
+def test_fetch_patents_returns_empty_when_no_api_key(monkeypatch):
+    monkeypatch.delenv("USPTO_API_KEY", raising=False)
+    out = fetch_patents_for_assignee("Apple Inc.", since_date="2025-05-15")
+    assert out == []
