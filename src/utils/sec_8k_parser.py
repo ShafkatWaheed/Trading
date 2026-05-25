@@ -44,11 +44,14 @@ _NAME_RE = re.compile(
     r"\b([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'\-]+))\b"
 )
 _DEPARTURE_TRIGGERS = (
-    "resign", "depart", "step down", "stepped down", "termination", "terminated",
-    "will leave", "no longer serve", "ceased to be",
+    "resign", "resigned", "resignation", "depart", "departed", "departure",
+    "step down", "stepped down", "termination", "terminated",
+    "will leave", "no longer serve", "ceased to be", "removed", "left",
 )
 _APPOINTMENT_TRIGGERS = (
-    "appoint", "elect", "named", "succeed", "assume the role",
+    "appoint", "appointed", "appointment", "elect", "elected",
+    "named", "succeed", "assume the role", "will serve as",
+    "joined", "joins",
 )
 
 
@@ -123,6 +126,17 @@ _SENTENCE_STARTER_WORDS = {
     "for", "from", "an", "a",
 }
 
+# Compensation-section vocabulary: tokens from comp tables / equity grants
+# (Item 5.02 also covers "Compensatory Arrangements", so this content
+# routinely appears in the same section and leaks into name extraction).
+_COMPENSATION_WORDS = frozenset({
+    "award", "awards", "amount", "amounts", "excess", "bonus",
+    "compensation", "compensatory", "grant", "grants", "interim",
+    "equity", "rsu", "performance", "vested", "vesting",
+    "stock", "options", "incentive", "salary", "payment",
+    "deferred", "retention", "severance", "package",
+})
+
 # Tokens that must not appear as EITHER the first OR last word of a candidate
 # name. Compared lowercase, with punctuation stripped.
 _NAME_TOKEN_BLOCKLIST = (
@@ -133,6 +147,7 @@ _NAME_TOKEN_BLOCKLIST = (
     | _CALENDAR_WORDS
     | _SENTENCE_STARTER_WORDS
     | _ROLE_WORDS
+    | _COMPENSATION_WORDS
 )
 
 
@@ -235,6 +250,11 @@ def parse_8k_item_502(text: str) -> list[ExecChange]:
         name = ""
         for m in _NAME_RE.finditer(s):
             cand = m.group(0)
+            # Collapse internal whitespace (incl. newlines) so blocklist
+            # checks see normalized tokens. The name regex uses `\s+`-ish
+            # patterns that can cross line breaks, producing names like
+            # "Interim\nAward" that bypass simple word checks otherwise.
+            cand = re.sub(r"\s+", " ", cand).strip()
             if not _is_real_name(cand):
                 continue
             name = cand

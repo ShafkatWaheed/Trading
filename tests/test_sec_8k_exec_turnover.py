@@ -97,3 +97,62 @@ from her position as Chief Financial Officer effective May 15, 2026.
     assert len(departures) == 1
     assert "Smith" in departures[0].person_name
     assert "Jane" in departures[0].person_name
+
+
+# -- Regression tests for compensation-section false positives --------
+
+
+def test_parse_8k_item_502_rejects_compensation_amendment_as_departure():
+    """Real bug: Tesla 2025-08-04 8-K had compensation amendments in Item 5.02
+    that the parser was emitting as exec departures with names like 'Interim Award'
+    and 'Excess Amount'."""
+    txt = """Item 5.02 Departure of Directors or Certain Officers; Election of
+Directors; Appointment of Certain Officers; Compensatory Arrangements of
+Certain Officers.
+
+On August 4, 2025, the Compensation Committee approved an Interim Award and
+an Excess Amount payable to the Chief Executive Officer pursuant to the
+amended compensation policy. The Award covers performance-based equity
+grants subject to vesting.
+"""
+    out = parse_8k_item_502(txt)
+    # No actual departure/appointment in this text — should yield 0
+    assert out == [], f"expected no events, got: {[(e.event_type, e.person_name) for e in out]}"
+
+
+def test_parse_8k_item_502_rejects_newline_in_name():
+    """Real bug: 'Interim\\nAward' was passing as a person name because the
+    name regex matched across line breaks."""
+    txt = """Item 5.02 Departure...
+
+On April 1, 2026, an Interim
+Award was granted as CEO compensation.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('\n' not in c.person_name for c in out)
+    assert all('Award' not in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_requires_actual_action_trigger():
+    """If no departure/appointment keyword in the sentence, no event emitted."""
+    txt = """Item 5.02 Departure...
+
+On April 1, 2026, John Smith, the Chief Executive Officer, received a
+$5 million performance bonus payable in restricted stock units.
+"""
+    # No departure/appointment language — should yield 0 events
+    out = parse_8k_item_502(txt)
+    assert out == [], f"expected no events, got: {[(e.event_type, e.person_name) for e in out]}"
+
+
+def test_parse_8k_item_502_still_works_for_real_departure_with_action_trigger():
+    """Regression: real departures still get extracted."""
+    txt = """Item 5.02 Departure...
+
+On April 1, 2026, Jane Smith notified the Board of her resignation as
+Chief Financial Officer, effective May 15, 2026.
+"""
+    out = parse_8k_item_502(txt)
+    departures = [c for c in out if c.event_type == "departure"]
+    assert len(departures) == 1
+    assert "Smith" in departures[0].person_name
