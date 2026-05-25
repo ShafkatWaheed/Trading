@@ -84,3 +84,36 @@ def test_fetch_fda_applications_returns_empty_on_network_error(monkeypatch):
     monkeypatch.setattr("src.data.fda_openfda.httpx.get", _boom)
     out = fetch_fda_applications_for_sponsor("PFIZER INC")
     assert out == []  # silent [] on failure, logged via log_api_call
+
+
+def test_fetch_fda_normalizes_sponsor_name_and_queries_correct_field(monkeypatch):
+    """Regression: 'Pfizer Inc.' must be normalized before hitting openFDA.
+
+    The raw user-supplied name with punctuation/suffixes 404s against
+    openFDA's exact-phrase indices. We strip them and try the
+    `openfda.manufacturer_name` phrase plus `sponsor_name` first-token.
+    """
+    captured_urls: list[str] = []
+
+    def _capture(url, *a, **k):
+        captured_urls.append(url)
+        return _FakeResp({"results": [], "meta": {"results": {"total": 0}}})
+
+    monkeypatch.setattr("src.data.fda_openfda.httpx.get", _capture)
+    fetch_fda_applications_for_sponsor("Pfizer Inc.")
+
+    # Both query strategies should have been attempted; both should use the
+    # uppercased, suffix-stripped name (PFIZER), never the raw "Pfizer Inc.".
+    assert any("openfda.manufacturer_name" in u and "PFIZER" in u for u in captured_urls), captured_urls
+    assert any("sponsor_name" in u and "PFIZER" in u for u in captured_urls), captured_urls
+    assert not any("Pfizer%20Inc" in u or "Pfizer+Inc" in u or "Inc." in u for u in captured_urls), captured_urls
+
+
+def test_fetch_fda_treats_openfda_404_as_empty_not_error(monkeypatch):
+    """openFDA returns HTTP 404 for 'no results found' — must surface as []."""
+    def _404(*a, **k):
+        return _FakeResp({}, status=404)
+
+    monkeypatch.setattr("src.data.fda_openfda.httpx.get", _404)
+    out = fetch_fda_applications_for_sponsor("Nonexistent Sponsor")
+    assert out == []
