@@ -184,3 +184,46 @@ Executive Officer was appointed to oversee the transaction.
 """
     out = parse_8k_item_502(txt)
     assert all('Purchase Price' not in c.person_name and c.person_name != 'Purchase' for c in out)
+
+
+# -- Regression: name proximity to role keyword ----------------------
+
+
+def test_parse_8k_item_502_picks_name_closer_to_role():
+    """When a sentence has multiple proper nouns, prefer the one nearest the role."""
+    txt = """Item 5.02 Departure...
+
+On August 4, 2025, Purchase Price calculations were updated. Subsequently
+Kimbal Musk was appointed as the new Chief Executive Officer of the company.
+"""
+    out = parse_8k_item_502(txt)
+    # "Purchase Price" is far from "Chief Executive Officer", "Kimbal Musk" is close
+    assert any('Musk' in c.person_name for c in out), \
+        f"Expected 'Kimbal Musk' near role; got {[c.person_name for c in out]}"
+    assert all('Purchase' not in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_name_too_far_from_role():
+    """If the only name candidate is far from any role keyword, no event."""
+    txt = """Item 5.02 Departure...
+
+Eligible Service is defined as continuous employment from the grant date
+through the second anniversary. The plan was approved by the Board.
+For more detail see Appendix B. The Chief Executive Officer is currently
+on a previously announced sabbatical with no change to his duties.
+"""
+    out = parse_8k_item_502(txt)
+    # No appointment/departure language near the role + no proper name near it
+    assert out == [], f"Expected no events; got {[(c.event_type, c.person_name) for c in out]}"
+
+
+def test_parse_8k_item_502_handles_multiline_html_mangled_sentence():
+    """Real-world bug: SEC HTML stripping leaves 3000+ char 'sentences'.
+    Name must still be picked correctly from such input."""
+    # Simulate Tesla-style giant sentence with name buried deep
+    junk_prefix = "Eligible Service " * 50  # ~850 chars of boilerplate
+    role_and_name = "On April 1, 2026, Jane Smith was appointed as Chief Financial Officer."
+    txt = f"Item 5.02 Departure...\n\n{junk_prefix} {role_and_name}"
+    out = parse_8k_item_502(txt)
+    assert any('Smith' in c.person_name for c in out), \
+        f"Expected 'Jane Smith' picked; got {[c.person_name for c in out]}"

@@ -119,11 +119,18 @@ _CALENDAR_WORDS = {
     "q1", "q2", "q3", "q4",
 }
 
-# Sentence starters / titles / prepositions that can begin a capitalized run.
+# Sentence starters / titles / prepositions / transition adverbs that can
+# begin a capitalized run. Transition adverbs like 'Subsequently',
+# 'Additionally', 'Accordingly' are critical because they often precede a
+# real name in HTML-mangled text (e.g. "Subsequently Kimbal Musk was ...").
 _SENTENCE_STARTER_WORDS = {
     "on", "the", "mr", "ms", "mrs", "dr", "as", "in", "by", "with", "upon",
     "our", "this", "that", "it", "he", "she", "they", "we", "to", "of", "at",
     "for", "from", "an", "a",
+    # Transition / connector adverbs commonly used between sentences.
+    "subsequently", "previously", "additionally", "accordingly", "furthermore",
+    "however", "moreover", "therefore", "thereafter", "concurrently",
+    "simultaneously", "consequently", "meanwhile", "nonetheless", "notwithstanding",
 }
 
 # Compensation-section vocabulary: tokens from comp tables / equity grants
@@ -224,6 +231,62 @@ def _is_real_name(cand: str) -> bool:
     return True
 
 
+# Max character distance between a name candidate and its role keyword for
+# the name to count as "describing" that role. Picked at 200 chars because
+# real exec announcements keep name+role within ~30-40 words even in SEC
+# HTML-mangled "sentences"; pure boilerplate noun phrases (Purchase Price,
+# Eligible Service, Rodino Antitrust) appear far from any role keyword.
+_NAME_ROLE_MAX_WINDOW = 200
+
+
+def _find_best_name_near_role(sentence: str, role_match: re.Match) -> str | None:
+    """Pick the name candidate closest to the role keyword.
+
+    Distance is measured in CHARACTER offset between the candidate's start
+    and the role match's start. We accept any candidate within
+    +/- _NAME_ROLE_MAX_WINDOW characters and pick the closest. The candidate
+    must still pass `_is_real_name` (blocklist + shape checks) — proximity
+    is a layer on top of the existing defenses.
+
+    Because `_NAME_RE` is greedy and consumes 2-token matches, a
+    transition-word + real-name pattern (e.g. "Subsequently Kimbal Musk")
+    gets matched as "Subsequently Kimbal", hiding the real name "Kimbal
+    Musk". To recover, when a primary match is rejected by `_is_real_name`,
+    we re-scan the same span starting one character past the first
+    capitalized word for a sub-match.
+    """
+    role_start = role_match.start()
+    best: tuple[int, str] | None = None  # (distance, normalized name)
+
+    def consider(start: int, cand: str) -> None:
+        nonlocal best
+        if not _is_real_name(cand):
+            return
+        distance = abs(start - role_start)
+        if distance > _NAME_ROLE_MAX_WINDOW:
+            return
+        if best is None or distance < best[0]:
+            best = (distance, cand)
+
+    for m in _NAME_RE.finditer(sentence):
+        cand = re.sub(r"\s+", " ", m.group(0)).strip()
+        if _is_real_name(cand):
+            consider(m.start(), cand)
+            continue
+        # Primary match rejected. Try a sub-match starting after the first
+        # capitalized token to recover names hidden behind a transition word
+        # (e.g. "Subsequently Kimbal Musk" → match "Kimbal Musk").
+        tokens = re.split(r"(\s+)", m.group(0))
+        if len(tokens) >= 3:
+            first_len = len(tokens[0]) + len(tokens[1])
+            sub_start = m.start() + first_len
+            sub = _NAME_RE.search(sentence, sub_start)
+            if sub and sub.start() < m.end() + 50:
+                sub_cand = re.sub(r"\s+", " ", sub.group(0)).strip()
+                consider(sub.start(), sub_cand)
+    return best[1] if best else None
+
+
 def _strip_item_502_header(section: str) -> str:
     """Drop the 'Item 5.02 ...' title block (up to first blank line or sentence break).
 
@@ -271,19 +334,14 @@ def parse_8k_item_502(text: str) -> list[ExecChange]:
         role_matches = list(_ROLE_RE.finditer(s))
         if not role_matches:
             continue
-        role = max((m.group(0) for m in role_matches), key=len)
-        name = ""
-        for m in _NAME_RE.finditer(s):
-            cand = m.group(0)
-            # Collapse internal whitespace (incl. newlines) so blocklist
-            # checks see normalized tokens. The name regex uses `\s+`-ish
-            # patterns that can cross line breaks, producing names like
-            # "Interim\nAward" that bypass simple word checks otherwise.
-            cand = re.sub(r"\s+", " ", cand).strip()
-            if not _is_real_name(cand):
-                continue
-            name = cand
-            break
+        best_role_match = max(role_matches, key=lambda m: len(m.group(0)))
+        role = best_role_match.group(0)
+        # Pick the name CLOSEST to the role keyword (in character offset).
+        # This kills the old "first proper noun" bug where boilerplate noun
+        # phrases (Purchase Price, Eligible Service, Rodino Antitrust) that
+        # happen to appear earlier in an HTML-mangled sentence were chosen
+        # over the real exec name sitting next to the role.
+        name = _find_best_name_near_role(s, best_role_match)
         if not name:
             continue
         out.append(ExecChange(
