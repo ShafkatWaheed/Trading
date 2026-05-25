@@ -144,6 +144,43 @@ _COMPENSATION_WORDS = frozenset({
     "deferred", "retention", "severance", "package",
 })
 
+# Organizational-unit / business-term vocabulary. Real bug: 2-token
+# capitalized noun phrases that are team/division names sit adjacent to
+# role keywords ("President, Worldwide Field Operations") and the proximity
+# heuristic picks them as the person. Examples seen in the wild:
+#   'Worldwide Field' (NVDA, from "Worldwide Field Operations")
+#   'Hardware Engineering' (AAPL team)
+#   'Commercial Engines' (GE division)
+#   'Transition Date' (from "Director Transition Date")
+_ORG_UNIT_WORDS = frozenset({
+    # Division / team / business-unit nouns
+    "engineering", "engines", "operations", "services", "technologies",
+    "solutions", "systems", "division", "group", "team", "unit",
+    "products", "platform", "network", "marketing", "sales",
+    "finance", "treasury", "legal", "research", "development",
+    "manufacturing", "design", "delivery", "logistics", "supply",
+    "field", "industrial", "commercial", "enterprise", "business",
+    "consumer", "retail", "corporate", "holdings",
+
+    # Tech vocabulary that gets capitalized in SEC text
+    "hardware", "software", "digital", "cloud", "data",
+    "infrastructure", "automotive", "energy",
+
+    # Geographic regions (often capitalized as part of unit names)
+    "worldwide", "global", "international", "regional",
+    "americas", "europe", "asia", "pacific", "atlantic",
+    "north", "south", "east", "west", "central",
+
+    # Time/phase words that pair with role nouns
+    "transition", "date", "period", "term", "phase",
+    "effective", "interim", "acting", "temporary",
+    "fiscal", "calendar", "quarter", "annual",
+
+    # Facility / place
+    "center", "centre", "campus", "office", "headquarters",
+    "lab", "labs", "facility",
+})
+
 # Legal / financial boilerplate that leaks into Item 5.02 sections when the
 # filing covers M&A, antitrust review, or compensation valuation language.
 # Real bug: 'Hart-Scott-Rodino Antitrust' → 'Rodino Antitrust' as CEO; and
@@ -180,6 +217,7 @@ _NAME_TOKEN_BLOCKLIST = (
     | _ROLE_WORDS
     | _COMPENSATION_WORDS
     | _LEGAL_BOILERPLATE_WORDS
+    | _ORG_UNIT_WORDS
 )
 
 

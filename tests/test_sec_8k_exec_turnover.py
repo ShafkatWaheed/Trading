@@ -227,3 +227,57 @@ def test_parse_8k_item_502_handles_multiline_html_mangled_sentence():
     out = parse_8k_item_502(txt)
     assert any('Smith' in c.person_name for c in out), \
         f"Expected 'Jane Smith' picked; got {[c.person_name for c in out]}"
+
+
+# -- Regression: organizational-unit names mistaken for person names --
+
+
+def test_parse_8k_item_502_rejects_worldwide_field_as_name():
+    """Real bug: 'Worldwide Field Operations President' → 'Worldwide Field' as a person."""
+    txt = """Item 5.02 Departure...
+
+On March 6, 2026, John Smith stepped down as President, Worldwide Field
+Operations, effective immediately.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('Worldwide Field' not in c.person_name for c in out)
+    # Real name should still be extracted
+    assert any('Smith' in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_hardware_engineering_as_name():
+    """Real bug: 'Hardware Engineering' team name → person name."""
+    txt = """Item 5.02 Departure...
+
+On April 20, 2026, the Board appointed Pat Jones to lead Hardware
+Engineering as the Chief Executive Officer of the company.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('Hardware Engineering' not in c.person_name for c in out)
+    # 'Pat Jones' is the actual person — make sure we still get it
+    assert any('Jones' in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_commercial_engines_division_name():
+    """Real bug: GE 'Commercial Engines' division → person name."""
+    txt = """Item 5.02 Departure...
+
+On January 15, 2026, Mary Williams was appointed President of GE
+Commercial Engines, effective immediately.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('Commercial Engines' not in c.person_name for c in out)
+    assert any('Williams' in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_transition_date_as_name():
+    """Real bug: 'Director Transition Date' phrasing → person name."""
+    txt = """Item 5.02 Departure...
+
+The Director Transition Date for outgoing board member Robert Chen
+will be April 20, 2026, on which date he will retire from the Board.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('Transition Date' not in c.person_name for c in out)
+    # Note: "Robert Chen" appears but no role+trigger combo near it in this sentence
+    # — accepted that may yield 0 events, just verify no garbage.
