@@ -156,3 +156,31 @@ Chief Financial Officer, effective May 15, 2026.
     departures = [c for c in out if c.event_type == "departure"]
     assert len(departures) == 1
     assert "Smith" in departures[0].person_name
+
+
+def test_parse_8k_item_502_rejects_hart_scott_rodino_antitrust():
+    """Real bug: 'Hart-Scott-Rodino Antitrust Improvements Act' phrasing
+    in 8-K Item 5.02 sections was being parsed as 'Rodino Antitrust' as a CEO."""
+    txt = """Item 5.02 Departure...
+
+On August 4, 2025, the parties entered into a merger agreement. Pursuant
+to the Hart-Scott-Rodino Antitrust Improvements Act, the Chief Executive
+Officer of the company will provide notice within 30 days.
+"""
+    out = parse_8k_item_502(txt)
+    # No actual departure/appointment — should yield 0
+    # But even if a match is attempted, must reject 'Rodino Antitrust' as a name
+    assert all('Rodino' not in c.person_name and 'Antitrust' not in c.person_name for c in out)
+
+
+def test_parse_8k_item_502_rejects_purchase_price_as_name():
+    """Real bug: 'Purchase Price' (valuation language) was being parsed
+    as a person name appointed as CEO."""
+    txt = """Item 5.02 Departure...
+
+On August 4, 2025, the Purchase Price of the equity grant was determined
+based on the closing price of the company's common stock. The Chief
+Executive Officer was appointed to oversee the transaction.
+"""
+    out = parse_8k_item_502(txt)
+    assert all('Purchase Price' not in c.person_name and c.person_name != 'Purchase' for c in out)

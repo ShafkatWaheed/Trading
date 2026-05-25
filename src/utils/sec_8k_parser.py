@@ -137,6 +137,30 @@ _COMPENSATION_WORDS = frozenset({
     "deferred", "retention", "severance", "package",
 })
 
+# Legal / financial boilerplate that leaks into Item 5.02 sections when the
+# filing covers M&A, antitrust review, or compensation valuation language.
+# Real bug: 'Hart-Scott-Rodino Antitrust' → 'Rodino Antitrust' as CEO; and
+# 'Purchase Price' (grant-date fair value) → 'Purchase Price' as a person.
+_LEGAL_BOILERPLATE_WORDS = frozenset({
+    # Statute / legal-doctrine names
+    "antitrust", "rodino", "scott", "hart", "clayton", "sherman",
+    "exchange", "securities", "act", "statute", "regulation",
+    "amendment", "section", "subsection", "paragraph",
+    # Court / proceeding
+    "court", "tribunal", "judgment", "verdict", "settlement",
+    "plaintiff", "defendant", "appellant",
+    # Financial / valuation
+    "purchase", "price", "fair", "value", "valuation",
+    "market", "merger", "acquisition", "tender",
+    "share", "shares", "common", "preferred",
+    # Tax / accounting
+    "tax", "revenue", "income", "expense", "depreciation",
+    "audit", "gaap", "ifrs", "fiscal", "quarter", "annual",
+    # Misc business boilerplate
+    "consideration", "transaction", "exchange", "transfer",
+    "subsidiary", "affiliate", "parent", "holding",
+})
+
 # Tokens that must not appear as EITHER the first OR last word of a candidate
 # name. Compared lowercase, with punctuation stripped.
 _NAME_TOKEN_BLOCKLIST = (
@@ -148,6 +172,7 @@ _NAME_TOKEN_BLOCKLIST = (
     | _SENTENCE_STARTER_WORDS
     | _ROLE_WORDS
     | _COMPENSATION_WORDS
+    | _LEGAL_BOILERPLATE_WORDS
 )
 
 
