@@ -17,7 +17,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw,
@@ -40,6 +40,8 @@ import {
   TrendingUp,
   Search,
   ArrowRight,
+  Zap,
+  Square,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -355,6 +357,18 @@ function QueueRow({ row }: { row: FreshnessQueueRow }) {
 function ReviewQueue() {
   const [reasonFilter, setReasonFilter] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
+  const qcRoot = useQueryClient();
+
+  // Bulk re-extract state — sequential through the filtered subset so we don't
+  // hammer SEC + Claude in parallel. cancelRef lets us abort mid-run.
+  const [bulk, setBulk] = useState<{
+    running: boolean;
+    done: number;
+    total: number;
+    errors: number;
+    currentSymbol?: string;
+  }>({ running: false, done: 0, total: 0, errors: 0 });
+  const cancelRef = useRef(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["freshness", "queue"],

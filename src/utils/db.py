@@ -247,10 +247,13 @@ def init_db() -> None:
             from_symbol TEXT NOT NULL,
             to_symbol TEXT NOT NULL,
             relation_type TEXT NOT NULL,        -- supplier | customer | substitute | complement
-            strength REAL NOT NULL,             -- 0..1
+            strength REAL NOT NULL,             -- 0..1; derived from concentration_pct when available
             polarity REAL NOT NULL DEFAULT 1.0, -- usually +1; -1 for substitutes (zero-sum)
             evidence TEXT,                      -- "10-K 2024 Item 1A" | "manual"
             as_of TEXT NOT NULL DEFAULT (datetime('now')),
+            concentration_pct REAL,             -- disclosed customer concentration % (10..100) if 10-K quantified it
+            source_filing_date TEXT,            -- filing date the % was extracted from (ISO 8601)
+            last_verified_at TEXT,              -- last refresh timestamp (ISO 8601)
             PRIMARY KEY (from_symbol, to_symbol, relation_type)
         );
         CREATE INDEX IF NOT EXISTS idx_stock_relations_from ON stock_relations(from_symbol);

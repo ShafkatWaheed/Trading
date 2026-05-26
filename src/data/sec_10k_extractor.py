@@ -44,18 +44,30 @@ Factors disclosure. The text below is from {symbol}'s 10-K Item 1A.
 
 Identify, with HIGH confidence only:
   * SUPPLIERS — companies {symbol} depends on for inputs/services
-  * CUSTOMERS — companies that contribute >10% of {symbol}'s revenue
+  * CUSTOMERS — companies that contribute >=10% of {symbol}'s revenue (Reg S-K
+    Item 101 requires this disclosure when applicable)
   * JOINT VENTURES — formal collaboration partners
 
 Use ONLY publicly-traded ticker symbols you are CONFIDENT about. Skip vague
 references like "our largest customer" without a name.
 
+For each customer/supplier, if the 10-K STATES a numeric revenue concentration
+(e.g. "Customer A accounted for 22% of consolidated revenue"), include it as
+`revenue_pct` (integer, 10..100). If the % is not numerically stated in the
+filing, set `revenue_pct` to null — do NOT estimate or infer.
+
 Return ONLY valid JSON of the form:
 
 {{
-  "suppliers": [{{"symbol": "TSM", "name": "Taiwan Semiconductor", "evidence": "<10-word citation>"}}],
-  "customers": [{{"symbol": "MSFT", "name": "Microsoft", "evidence": "<10-word citation>"}}],
-  "joint_ventures": [{{"symbol": "INTC", "name": "Intel", "evidence": "<10-word citation>"}}]
+  "suppliers": [
+    {{"symbol": "TSM", "name": "Taiwan Semiconductor", "revenue_pct": null, "evidence": "<10-word citation>"}}
+  ],
+  "customers": [
+    {{"symbol": "MSFT", "name": "Microsoft", "revenue_pct": 22, "evidence": "<10-word citation>"}}
+  ],
+  "joint_ventures": [
+    {{"symbol": "INTC", "name": "Intel", "revenue_pct": null, "evidence": "<10-word citation>"}}
+  ]
 }}
 
 Text from {symbol}'s 10-K Item 1A:
@@ -221,17 +233,63 @@ def _mark(
 # ── edge writing ────────────────────────────────────────────────
 
 
+def _strength_from_concentration(pct: float | None) -> float:
+    """Derive `strength` from a disclosed revenue-concentration percentage.
+
+    Maps Reg S-K Item 101 customer-concentration disclosures to strength:
+        >= 30 %   → 0.95   (single-customer-dominant)
+        20..30 %  → 0.80
+        10..20 %  → 0.65   (the mandatory-disclosure floor)
+        named, not quantified, or pct < 10 → 0.55 (default for 10k_mined)
+    """
+    if pct is None:
+        return 0.55
+    try:
+        v = float(pct)
+    except (TypeError, ValueError):
+        return 0.55
+    if v >= 30:
+        return 0.95
+    if v >= 20:
+        return 0.80
+    if v >= 10:
+        return 0.65
+    return 0.55
+
+
+def _parse_concentration_pct(raw) -> float | None:
+    """Normalize the extractor's revenue_pct field.
+
+    Accepts int / float / numeric string. Returns None for null / non-numeric /
+    out-of-range values. Clamps to [0, 100]."""
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v < 0 or v > 100:
+        return None
+    return v
+
+
 def _write_relations_from_extraction(
     conn: sqlite3.Connection,
     *,
     symbol: str,
     parsed: dict,
     valid_universe: set[str],
+    filing_date: str | None = None,
 ) -> int:
     """Write stock_relations rows from a parsed extraction.
 
-    Hand-loaded edges (with `evidence` starting 'seed:hand') are NEVER
-    overwritten. Where claude already wrote a 10k_mined edge, we update.
+    Hand-loaded edges (`evidence LIKE 'seed:hand%'`) are NEVER overwritten —
+    not their strength, not their evidence, not their concentration_pct.
+    Existing 10k_mined edges are updated to take the stronger / more specific
+    of the two values.
+
+    If `filing_date` is provided, it's stored on each written row. The current
+    timestamp is always written to `last_verified_at`.
     """
     written = 0
     relation_groups = (
@@ -239,6 +297,8 @@ def _write_relations_from_extraction(
         ("customers", "customer"),
         ("joint_ventures", "complement"),  # JVs map to complement for now
     )
+
+    now_iso = _now()
 
     for key, relation_type in relation_groups:
         items = parsed.get(key) or []
@@ -251,20 +311,38 @@ def _write_relations_from_extraction(
             if not target or target == symbol or target not in valid_universe:
                 continue
             evidence_text = (item.get("evidence") or "")[:240]
+            concentration_pct = _parse_concentration_pct(item.get("revenue_pct"))
+            strength = _strength_from_concentration(concentration_pct)
 
             conn.execute(
                 """
                 INSERT INTO stock_relations
-                    (from_symbol, to_symbol, relation_type, strength, polarity, evidence)
-                VALUES (?, ?, ?, 0.55, 1.0, ?)
+                    (from_symbol, to_symbol, relation_type,
+                     strength, polarity, evidence,
+                     concentration_pct, source_filing_date, last_verified_at)
+                VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?)
                 ON CONFLICT(from_symbol, to_symbol, relation_type) DO UPDATE SET
-                    strength = MAX(stock_relations.strength, excluded.strength),
-                    -- Don't overwrite the hand-loaded spine
+                    -- Never overwrite the hand-loaded spine — keep its strength + evidence.
+                    strength = CASE
+                        WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.strength
+                        ELSE MAX(stock_relations.strength, excluded.strength) END,
                     evidence = CASE
                         WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.evidence
-                        ELSE excluded.evidence END
+                        ELSE excluded.evidence END,
+                    concentration_pct = CASE
+                        WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.concentration_pct
+                        WHEN excluded.concentration_pct IS NOT NULL THEN excluded.concentration_pct
+                        ELSE stock_relations.concentration_pct END,
+                    source_filing_date = CASE
+                        WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.source_filing_date
+                        ELSE COALESCE(excluded.source_filing_date, stock_relations.source_filing_date) END,
+                    last_verified_at = excluded.last_verified_at
                 """,
-                (symbol, target, relation_type, f"10k_mined: {evidence_text}"),
+                (
+                    symbol, target, relation_type,
+                    strength, f"10k_mined: {evidence_text}",
+                    concentration_pct, filing_date, now_iso,
+                ),
             )
             written += 1
     return written
