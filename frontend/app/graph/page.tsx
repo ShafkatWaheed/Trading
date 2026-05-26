@@ -89,6 +89,7 @@ const KIND_META: Record<
   tenk_mining:  { title: "10-K supply chain",    icon: FileText,   accent: "text-accent-green",  eta: "1-2 hr" },
   "13f_overlap":{ title: "13F overlap edges",    icon: Building2,  accent: "text-accent-violet", eta: "<1s" },
   freshness:    { title: "Freshness scan",       icon: Eye,        accent: "text-accent-cyan",   eta: "minutes" },
+  composite_confidence: { title: "Composite confidence", icon: Zap, accent: "text-accent-amber", eta: "<5s" },
 };
 
 // ── freshness queue metadata ─────────────────────────────────────────

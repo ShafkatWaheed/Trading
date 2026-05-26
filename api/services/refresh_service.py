@@ -92,6 +92,15 @@ def _run_freshness() -> dict:
     return run_orchestrator(symbols, log=False)
 
 
+def _run_composite_confidence() -> dict:
+    from src.graph.composite_confidence import recompute_for_all
+    conn = get_connection()
+    try:
+        return recompute_for_all(conn)
+    finally:
+        conn.close()
+
+
 # Progress probes — return (processed, total). Called every few seconds
 # while a runner is in flight. If a kind doesn't have a meaningful progress
 # signal, return (0, 0) — the UI will show an indeterminate spinner.
@@ -149,6 +158,13 @@ def _prog_freshness() -> tuple[int, int]:
     return processed, total
 
 
+def _prog_composite_confidence() -> tuple[int, int]:
+    """Bar reaches 100% when every relation has composite_confidence populated."""
+    done = _count("SELECT COUNT(*) FROM stock_relations WHERE composite_confidence IS NOT NULL")
+    total = _count("SELECT COUNT(*) FROM stock_relations")
+    return done, total
+
+
 KIND_REGISTRY: dict[str, tuple[Callable[[], dict], Callable[[], tuple[int, int]], str]] = {
     "universe":      (_run_universe,    _prog_universe,    "Pull S&P/R1k/R2k ETF holdings and upsert stocks_universe."),
     "industries":    (_run_industries,  _prog_industries,  "Pull yfinance industry tag for every untagged stock."),
@@ -158,6 +174,8 @@ KIND_REGISTRY: dict[str, tuple[Callable[[], dict], Callable[[], tuple[int, int]]
     "tenk_mining":   (_run_tenk,        _prog_tenk,        "Mine Tier A 10-K Item 1A for named suppliers/customers."),
     "13f_overlap":   (_run_13f_overlap, _prog_13f_overlap, "Re-materialise common-institutional-holder edges."),
     "freshness":     (_run_freshness,   _prog_freshness,   "Run 5-layer freshness orchestrator and queue drift."),
+    "composite_confidence": (_run_composite_confidence, _prog_composite_confidence,
+                             "Recompute composite_confidence for every edge from its evidence channels."),
 }
 
 

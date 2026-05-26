@@ -581,3 +581,129 @@ def test_freshness_acknowledge_endpoint(client, monkeypatch):
         conn.commit()
     finally:
         conn.close()
+
+
+# ── Layer 4 wiring (correlation drift → orchestrator) ────────────
+
+
+def test_run_layer_4_flags_drifted_symbol():
+    """Inject a returns fetcher where target's correlation with its peers has
+    collapsed. Layer 4 should queue the symbol with reason='peer_decoupling'."""
+    from src.freshness.orchestrator import run_layer_4_correlation_drift
+
+    init_db()
+    conn = get_connection()
+    try:
+        # Synthetic universe + a peer relationship: TARGET ↔ PEER1, PEER2
+        for s in ("SYN_L4T", "SYN_L4P1", "SYN_L4P2"):
+            conn.execute(f"INSERT INTO stocks_universe (symbol, tier, source) VALUES ('{s}','B','test')")
+        for p in ("SYN_L4P1", "SYN_L4P2"):
+            conn.execute(
+                "INSERT INTO stock_peers (from_symbol, to_symbol, similarity, source, confidence) "
+                "VALUES (?, ?, 0.8, 'test', 'high')",
+                ("SYN_L4T", p),
+            )
+        conn.commit()
+
+        # Baseline window (252+90=342 days): all 3 stocks move together (corr ~1.0).
+        # Recent window (90 days): target decouples (random noise vs steady peers).
+        def fake_fetch(sym, days):
+            if days >= 300:
+                # Long baseline: smooth uptrend for everyone
+                return [0.01 * (i % 5 - 2) for i in range(days)]
+            # Recent: target is noise, peers are the same smooth pattern
+            base = [0.01 * (i % 5 - 2) for i in range(days)]
+            if sym == "SYN_L4T":
+                # Phase-shifted to break correlation
+                return [-x for x in base]
+            return base
+
+        out = run_layer_4_correlation_drift(
+            ["SYN_L4T"], returns_fetch_fn=fake_fetch, log=False,
+        )
+        # Drifted: 1 flagged
+        assert out["flagged"] >= 1
+
+        # edge_freshness should now have the symbol flagged with peer_decoupling
+        row = conn.execute(
+            "SELECT status, trigger_reason FROM edge_freshness WHERE symbol='SYN_L4T'"
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "needs_review"
+        assert row["trigger_reason"] == "peer_decoupling"
+    finally:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_L4T'")
+        conn.execute("DELETE FROM stock_peers WHERE from_symbol='SYN_L4T'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_L4T','SYN_L4P1','SYN_L4P2')")
+        conn.commit()
+        conn.close()
+
+
+def test_run_layer_4_skips_symbol_without_peers():
+    """Layer 4 has no signal for stocks with no tagged peers — should skip cleanly."""
+    from src.freshness.orchestrator import run_layer_4_correlation_drift
+
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_L4ORPHAN','B','test')")
+        conn.commit()
+
+        out = run_layer_4_correlation_drift(
+            ["SYN_L4ORPHAN"], returns_fetch_fn=lambda s, d: [], log=False,
+        )
+        assert out["flagged"] == 0
+        assert out["skipped"] >= 1
+    finally:
+        conn.execute("DELETE FROM stocks_universe WHERE symbol='SYN_L4ORPHAN'")
+        conn.commit()
+        conn.close()
+
+
+def test_run_orchestrator_with_layer_4_opt_in():
+    """layer4 not in default layers; explicit opt-in invokes the wrapper."""
+    from src.freshness.orchestrator import run_orchestrator
+
+    init_db()
+    # No symbols → all layers report 0/0; layer4 just needs to appear in output.
+    out = run_orchestrator(
+        [], layers=("layer4",),
+        returns_fetch_fn=lambda s, d: [],
+        log=False,
+    )
+    assert "layer4" in out
+    assert out["layer4"]["flagged"] == 0
+
+
+# ── Layer 5 wiring (news drift → orchestrator) ───────────────────
+
+
+def test_run_layer_5_skips_when_no_news():
+    """No headlines for a symbol → skipped, not flagged."""
+    from src.freshness.orchestrator import run_layer_5_news_drift
+
+    init_db()
+    out = run_layer_5_news_drift(
+        ["SYN_L5A"],
+        headlines_fetch_fn=lambda s: [],
+        industry_domains_fn=lambda s: {"ai"},
+        log=False,
+    )
+    assert out["flagged"] == 0
+    assert out["skipped"] >= 1
+
+
+def test_run_orchestrator_with_layer_5_opt_in_is_noop_without_news():
+    """layer5 should be safe to enable even without news data — it skips
+    every symbol rather than crashing."""
+    from src.freshness.orchestrator import run_orchestrator
+
+    init_db()
+    out = run_orchestrator(
+        ["SYN_L5B"], layers=("layer5",),
+        headlines_fetch_fn=None,            # default no-op
+        industry_domains_fn=None,           # default no-op
+        log=False,
+    )
+    assert "layer5" in out
+    assert out["layer5"]["flagged"] == 0

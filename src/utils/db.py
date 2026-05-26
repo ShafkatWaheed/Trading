@@ -258,6 +258,7 @@ def init_db() -> None:
             last_verified_at TEXT,              -- last refresh timestamp (ISO 8601)
             effective_from TEXT,                -- ISO 8601 date the edge started (NULL = always valid)
             effective_to TEXT,                  -- ISO 8601 date the edge ended (NULL = still in effect)
+            composite_confidence REAL,          -- 0..1 derived from multiple evidence channels (hand seed, 10-K, news, correlation)
             PRIMARY KEY (from_symbol, to_symbol, relation_type)
         );
         CREATE INDEX IF NOT EXISTS idx_stock_relations_from ON stock_relations(from_symbol);

@@ -227,20 +227,182 @@ def flag_stale_via_decay(
         conn.close()
 
 
+def run_layer_4_correlation_drift(
+    symbols: Iterable[str],
+    *,
+    returns_fetch_fn: Callable[[str, int], list[float]] | None = None,
+    baseline_days: int = 252,
+    recent_days: int = 90,
+    log: bool = True,
+) -> dict[str, int]:
+    """Layer 4: flag stocks whose 90-day rolling correlation with their tagged
+    peers has dropped sharply vs the prior 1-year baseline.
+
+    `returns_fetch_fn(symbol, days) -> list[float]` is the injection point:
+        - Default: live Tiingo fetch via src.data.tiingo (skips symbol on error)
+        - Tests pass a stub that returns synthetic return series
+
+    Stocks with no peers in stock_peers are skipped (nothing to compare against).
+    Detection threshold lives in src.freshness.correlation_drift.DEFAULT_DRIFT_THRESHOLD.
+    """
+    from src.freshness.correlation_drift import detect_drift
+
+    if returns_fetch_fn is None:
+        returns_fetch_fn = _default_returns_fetch
+
+    init_db()
+    conn = get_connection()
+    try:
+        flagged = 0
+        skipped = 0
+        for sym in symbols:
+            peer_rows = conn.execute(
+                "SELECT to_symbol FROM stock_peers WHERE from_symbol = ?", (sym,)
+            ).fetchall()
+            peer_syms = [r["to_symbol"] for r in peer_rows]
+            if not peer_syms:
+                skipped += 1
+                continue
+
+            try:
+                target_baseline = returns_fetch_fn(sym, baseline_days + recent_days)
+                target_recent   = returns_fetch_fn(sym, recent_days)
+                peer_baseline = [returns_fetch_fn(p, baseline_days + recent_days) for p in peer_syms]
+                peer_recent   = [returns_fetch_fn(p, recent_days) for p in peer_syms]
+            except Exception:
+                skipped += 1
+                continue
+
+            if not target_baseline or not target_recent:
+                skipped += 1
+                continue
+
+            result = detect_drift(
+                sym,
+                baseline_target=target_baseline,
+                baseline_peers=[p for p in peer_baseline if p],
+                recent_target=target_recent,
+                recent_peers=[p for p in peer_recent if p],
+            )
+            if result.drifted:
+                queue_for_review(sym, reason="peer_decoupling", conn=conn)
+                flagged += 1
+                if log:
+                    print(
+                        f"  [layer4] {sym} flagged: peer-correlation dropped "
+                        f"{result.baseline_correlation:.2f}→{result.recent_correlation:.2f}"
+                    )
+        return {"flagged": flagged, "skipped": skipped}
+    finally:
+        conn.close()
+
+
+def _default_returns_fetch(symbol: str, days: int) -> list[float]:
+    """Live Tiingo daily-returns fetcher. Returns [] if the data layer is
+    unavailable so the orchestrator skips the symbol rather than crashing."""
+    try:
+        from src.data.tiingo import fetch_daily_returns
+        return list(fetch_daily_returns(symbol, days=days))
+    except Exception:
+        return []
+
+
+def run_layer_5_news_drift(
+    symbols: Iterable[str],
+    *,
+    headlines_fetch_fn: Callable[[str], list[str]] | None = None,
+    industry_domains_fn: Callable[[str], set[str]] | None = None,
+    log: bool = True,
+) -> dict[str, int]:
+    """Layer 5: flag stocks whose recent news coverage is dominated by a
+    different domain than their tagged industry (e.g. SOFI tagged 'banking'
+    but every recent headline is about crypto).
+
+    Both injection points default to no-op so Layer 5 is safe to enable in
+    `run_orchestrator(layers=…)` without crashing — the wrapper simply
+    skips every symbol when the data layer isn't available:
+        headlines_fetch_fn(symbol)    -> list[str]   (default: returns [])
+        industry_domains_fn(symbol)   -> set[str]    (default: returns set())
+
+    Tests pass real stubs to exercise the drift detection.
+    """
+    from src.freshness.news_drift import detect_news_drift
+    from src.news.aggregate import KeywordImpactRow
+
+    if headlines_fetch_fn is None:
+        headlines_fetch_fn = lambda _sym: []
+    if industry_domains_fn is None:
+        industry_domains_fn = lambda _sym: set()
+
+    init_db()
+    conn = get_connection()
+    try:
+        # Pre-load keyword_impact + universe — Layer 5 needs both per call.
+        impact_rows: list[KeywordImpactRow] = []
+        for r in conn.execute(
+            "SELECT keyword, industry_code, target_stock, polarity, weight, domain "
+            "FROM keyword_impact"
+        ).fetchall():
+            impact_rows.append(KeywordImpactRow(
+                keyword=r["keyword"],
+                industry_code=r["industry_code"],
+                target_stock=r["target_stock"],
+                polarity=float(r["polarity"]),
+                weight=float(r["weight"]),
+                domain=r["domain"],
+            ))
+        keyword_set = {r.keyword.lower() for r in impact_rows}
+        universe = {r["symbol"] for r in conn.execute(
+            "SELECT symbol FROM stocks_universe"
+        ).fetchall()}
+
+        flagged = 0
+        skipped = 0
+        for sym in symbols:
+            headlines = headlines_fetch_fn(sym) or []
+            if not headlines:
+                skipped += 1
+                continue
+            current_domains = industry_domains_fn(sym) or set()
+            result = detect_news_drift(
+                sym, headlines,
+                impact_rows=impact_rows,
+                keyword_set=keyword_set,
+                universe=universe,
+                current_industry_domains=current_domains,
+            )
+            if result.drifted:
+                queue_for_review(sym, reason="news_tag_drift", conn=conn)
+                flagged += 1
+                if log:
+                    print(
+                        f"  [layer5] {sym} flagged: news dominated by "
+                        f"'{result.dominant_domain}' ({result.dominant_share:.0%})"
+                    )
+        return {"flagged": flagged, "skipped": skipped}
+    finally:
+        conn.close()
+
+
 def run_orchestrator(
     symbols: Iterable[str],
     *,
     layers: tuple[str, ...] = ("layer1", "layer2", "layer3"),
     hash_fetch_fn=None,
     filing_fetch_fn=None,
+    returns_fetch_fn=None,
+    headlines_fetch_fn=None,
+    industry_domains_fn=None,
     log: bool = True,
 ) -> dict[str, dict]:
     """Convenience: run multiple layers in sequence.
 
-    Layer 4 (correlation_drift) and Layer 5 (news_drift) are not wired here
-    because they require price data + news data layers that are also network-
-    gated. The user-facing orchestrator can compose them when those data
-    layers are available.
+    Default `layers` is ("layer1", "layer2", "layer3") for backwards
+    compatibility. Callers can opt into layer4 (correlation drift) and
+    layer5 (news drift) explicitly. Both layers safely no-op when their
+    upstream data layer (Tiingo / news fetcher / industry-domain map) is
+    unavailable, so it is harmless to include them in the default chain
+    once those data sources are wired.
     """
     out: dict[str, dict] = {}
     if "layer1" in layers:
@@ -249,4 +411,15 @@ def run_orchestrator(
         out["layer2"] = run_layer_2_hash_diff(symbols, fetch_fn=hash_fetch_fn, log=log)
     if "layer3" in layers:
         out["layer3"] = run_layer_3_filing_trigger(symbols, fetch_fn=filing_fetch_fn, log=log)
+    if "layer4" in layers:
+        out["layer4"] = run_layer_4_correlation_drift(
+            symbols, returns_fetch_fn=returns_fetch_fn, log=log,
+        )
+    if "layer5" in layers:
+        out["layer5"] = run_layer_5_news_drift(
+            symbols,
+            headlines_fetch_fn=headlines_fetch_fn,
+            industry_domains_fn=industry_domains_fn,
+            log=log,
+        )
     return out
