@@ -419,14 +419,36 @@ def get_deep_dive(
         except Exception:
             pass
 
+    fund: dict = {}
+    try:
+        fund = cache_get(f"market:fundamentals:{symbol}") or {}
+    except Exception:
+        fund = {}
+
     if not name or not sector or not industry:
+        name = name or fund.get("longName") or fund.get("shortName")
+        sector = sector or fund.get("sector")
+        industry = industry or fund.get("industry")
+
+    # Scale fundamentals — the cache stores them as strings (or None);
+    # parse to float and treat "0" / parse-fail as missing.
+    def _to_float(v) -> float | None:
+        if v is None or v == "" or v == "0":
+            return None
         try:
-            fund = cache_get(f"market:fundamentals:{symbol}") or {}
-            name = name or fund.get("longName") or fund.get("shortName")
-            sector = sector or fund.get("sector")
-            industry = industry or fund.get("industry")
-        except Exception:
-            pass
+            f = float(v)
+            return f if f != 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    market_cap = _to_float(fund.get("market_cap"))
+    revenue_ttm = _to_float(fund.get("revenue"))
+    net_income_ttm = _to_float(fund.get("net_income"))
+    # Fallback for caches written before net_income was added: revenue × profit_margin.
+    if net_income_ttm is None and revenue_ttm is not None:
+        margin = _to_float(fund.get("profit_margin"))
+        if margin is not None:
+            net_income_ttm = revenue_ttm * margin
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     payload = {
@@ -442,6 +464,9 @@ def get_deep_dive(
         "period_change": period_change,
         "summary": getattr(report, "summary", None),
         "sentiment_score": sentiment_score,
+        "market_cap": market_cap,
+        "revenue_ttm": revenue_ttm,
+        "net_income_ttm": net_income_ttm,
         "signals": signals,
         "signal_groups": grouped,
         "signal_counts": {

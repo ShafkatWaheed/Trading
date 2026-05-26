@@ -1,7 +1,8 @@
 "use client";
 
 import type { KpiCard } from "@/lib/api/types";
-import { Skeleton } from "@/components/ui/skeleton";
+import { MetricCardSkeleton } from "@/components/ui/skeleton";
+import { FadeIn } from "@/components/ui/fade-in";
 import {
   Landmark, Activity, Users, TrendingUp, Factory, DollarSign,
   type LucideIcon,
@@ -55,7 +56,7 @@ export function KpiGrid({ kpis, loading }: { kpis?: KpiCard[]; loading?: boolean
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-32" />
+          <MetricCardSkeleton key={i} align="left" />
         ))}
       </div>
     );
@@ -65,12 +66,12 @@ export function KpiGrid({ kpis, loading }: { kpis?: KpiCard[]; loading?: boolean
   }
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {kpis.map((k) => {
+      {kpis.map((k, i) => {
         const tone = toneStyle(k.tone);
         const Icon = (k.icon && ICONS[k.icon]) || Activity;
         return (
+          <FadeIn key={k.name} delay={i}>
           <div
-            key={k.name}
             className="group card relative p-5 flex flex-col gap-3 hover:border-bg-borderHi transition-colors overflow-hidden"
           >
             {/* Left tone stripe */}
@@ -103,6 +104,7 @@ export function KpiGrid({ kpis, loading }: { kpis?: KpiCard[]; loading?: boolean
               </p>
             )}
           </div>
+          </FadeIn>
         );
       })}
     </div>

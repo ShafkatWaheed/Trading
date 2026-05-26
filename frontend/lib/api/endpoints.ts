@@ -66,6 +66,8 @@ import type {
   DeepDiveBundle,
   StockInformation,
   EntityMatches,
+  Fundamentals,
+  CoHolders,
 } from "./types";
 
 export const marketApi = {
@@ -303,6 +305,14 @@ export const stocksApi = {
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/exec-changes`),
   entityMatches: (ticker: string) =>
     api.get<EntityMatches>(`/stocks/${encodeURIComponent(ticker)}/entity-matches`),
+  fundamentals: (ticker: string, force = false) =>
+    api.get<Fundamentals>(
+      `/stocks/${encodeURIComponent(ticker)}/fundamentals${force ? "?force=true" : ""}`
+    ),
+  coHolders: (ticker: string, force = false) =>
+    api.get<CoHolders>(
+      `/stocks/${encodeURIComponent(ticker)}/co-holders${force ? "?force=true" : ""}`
+    ),
 };
 
 export const earningsApi = {

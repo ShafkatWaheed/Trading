@@ -87,6 +87,7 @@ export type GeopoliticalEvent = {
 export type GeopoliticalPayload = {
   events: GeopoliticalEvent[];
   last_updated: string;
+  data_available?: boolean;
 };
 
 export type DisruptionTheme = {
@@ -288,6 +289,9 @@ export type DeepDive = {
   period_change?: PeriodChange | null;
   summary?: string | null;
   sentiment_score?: number | null;
+  market_cap?: number | null;
+  revenue_ttm?: number | null;
+  net_income_ttm?: number | null;
   signals: SignalRow[];
   signal_groups: Record<string, SignalRow[]>;
   signal_counts: SignalCounts;
@@ -1654,4 +1658,76 @@ export type EntityMatchDecision = {
 export type EntityMatches = {
   ticker: string;
   matches: EntityMatchDecision[];
+};
+
+
+// ── Fundamentals story card ────────────────────────────────────────
+
+export type FundamentalMetric = {
+  label: string;
+  value: number | null;
+  unit: string;
+};
+
+export type FundamentalPillar = {
+  name: "valuation" | "growth" | "profitability" | "health";
+  label: string;
+  score: number;       // 1-5
+  story: string;
+  metrics: FundamentalMetric[];
+};
+
+export type Fundamentals = {
+  symbol: string;
+  available: boolean;
+  error: string | null;
+  archetype: string | null;
+  lede: string | null;
+  overall_score: number | null;
+  pillars: FundamentalPillar[];
+  strengths: string[];
+  weaknesses: string[];
+  raw: Record<string, unknown>;
+  last_updated: string;
+  from_cache: boolean;
+};
+
+
+// ── Co-holders (institutional overlap) ─────────────────────────────
+
+export type CoHolderOverlapStock = {
+  symbol: string;
+  stock_name: string | null;
+  pct_portfolio: number | null;
+  value_usd: number | null;
+};
+
+export type CoHolderInstitution = {
+  cik: string;
+  name: string | null;
+  type: string | null;
+  value_usd: number | null;
+  pct_outstanding: number | null;
+  pct_portfolio: number | null;
+  as_of: string | null;
+  also_holds: CoHolderOverlapStock[];
+};
+
+export type CoHeldStock = {
+  symbol: string;
+  stock_name: string | null;
+  co_holder_count: number;
+  total_value_usd: number;
+  holders: string[];
+};
+
+export type CoHolders = {
+  symbol: string;
+  available: boolean;
+  lede: string;
+  holders: CoHolderInstitution[];
+  co_held: CoHeldStock[];
+  total_holders: number;
+  last_updated: string;
+  from_cache: boolean;
 };

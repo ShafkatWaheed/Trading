@@ -134,6 +134,7 @@ class MarketDataService:
             "eps_growth": str(info["earningsQuarterlyGrowth"]) if info.get("earningsQuarterlyGrowth") else None,
             "revenue": str(info["totalRevenue"]) if info.get("totalRevenue") else None,
             "revenue_growth": str(info["revenueGrowth"]) if info.get("revenueGrowth") else None,
+            "net_income": str(info["netIncomeToCommon"]) if info.get("netIncomeToCommon") else None,
             "profit_margin": str(info["profitMargins"]) if info.get("profitMargins") else None,
             "roe": str(info["returnOnEquity"]) if info.get("returnOnEquity") else None,
             "debt_to_equity": str(info["debtToEquity"]) if info.get("debtToEquity") else None,

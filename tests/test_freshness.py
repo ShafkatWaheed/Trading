@@ -140,7 +140,10 @@ def test_detect_hash_change_handles_no_summary():
 # ── Layer 3: filing trigger ──────────────────────────────────────
 
 
-def test_detect_new_filings_first_run_returns_all_watched():
+def test_detect_new_filings_first_run_returns_only_default_watched():
+    """Default watched set is narrow: 10-K + material 8-K. Routine quarterly
+    filings (10-Q, DEF 14A) and noisy 8-K items (7.01 Reg FD, 8.01 Other) are
+    intentionally ignored — they flood the queue without changing the graph."""
     init_db()
     conn = get_connection()
     try:
@@ -153,13 +156,68 @@ def test_detect_new_filings_first_run_returns_all_watched():
         return [
             {"form": "10-K", "filed_at": "2026-04-01"},
             {"form": "10-Q", "filed_at": "2026-02-15"},
-            {"form": "S-1", "filed_at": "2026-03-01"},   # NOT in watched set
+            {"form": "DEF 14A", "filed_at": "2026-03-20"},
+            {"form": "S-1", "filed_at": "2026-03-01"},
+            {"form": "8-K", "filed_at": "2026-03-10", "items": "1.01,2.03"},  # material
+            {"form": "8-K", "filed_at": "2026-03-12", "items": "7.01"},        # Reg FD — noise
         ]
 
     out = detect_new_filings("SYN_FILING", fetch_fn=fake_filings)
     forms = {f["form"] for f in out["new_filings"]}
-    # Only watched forms surface
+    # Only 10-K + the material 8-K survive
+    assert forms == {"10-K", "8-K"}
+    assert len(out["new_filings"]) == 2
+
+    # The material 8-K kept its items
+    material_8k = next(f for f in out["new_filings"] if f["form"] == "8-K")
+    assert "1.01" in (material_8k.get("items") or "")
+
+
+def test_detect_new_filings_can_be_widened_via_watched_param():
+    """Callers can opt back into noisy forms by passing an explicit `watched` set."""
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_FILING_WIDE'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fake_filings(sym):
+        return [
+            {"form": "10-K", "filed_at": "2026-04-01"},
+            {"form": "10-Q", "filed_at": "2026-02-15"},
+        ]
+
+    out = detect_new_filings(
+        "SYN_FILING_WIDE",
+        fetch_fn=fake_filings,
+        watched=frozenset({"10-K", "10-Q"}),
+    )
+    forms = {f["form"] for f in out["new_filings"]}
     assert forms == {"10-K", "10-Q"}
+
+
+def test_detect_new_filings_skips_8k_without_material_items():
+    """8-K filings with only noisy items (7.01 Reg FD, 8.01 Other) are skipped."""
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_8K_NOISE'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fake_filings(sym):
+        return [
+            {"form": "8-K", "filed_at": "2026-03-10", "items": "7.01"},
+            {"form": "8-K", "filed_at": "2026-03-11", "items": "8.01"},
+            {"form": "8-K", "filed_at": "2026-03-12", "items": ""},
+            {"form": "8-K", "filed_at": "2026-03-13"},   # no items at all
+        ]
+
+    out = detect_new_filings("SYN_8K_NOISE", fetch_fn=fake_filings)
+    assert out["new_filings"] == []
 
 
 def test_detect_new_filings_subsequent_call_has_no_new_unless_filings_post_check():
@@ -297,9 +355,14 @@ def test_queue_for_review_creates_or_updates_row():
 
 
 def test_acknowledge_re_extract_clears_queue():
+    """With a successful extractor, queue entry clears and state goes 'fresh'."""
     init_db()
     queue_for_review("SYN_Q2", reason="test")
-    out = acknowledge("SYN_Q2", action="re_extract")
+
+    def stub_extractor(symbol):
+        return {"symbol": symbol, "edges_written": 1}
+
+    out = acknowledge("SYN_Q2", action="re_extract", extractor_fn=stub_extractor)
     assert out["ok"] is True
     assert out["new_status"] == "fresh"
 
@@ -313,6 +376,77 @@ def test_acknowledge_re_extract_clears_queue():
     finally:
         conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_Q2'")
         conn.commit()
+        conn.close()
+
+
+def test_acknowledge_re_extract_invokes_extractor():
+    """re_extract must call the 10-K extractor, not just bump state."""
+    init_db()
+    queue_for_review("SYN_RE_INVOKE", reason="test")
+
+    calls: list[str] = []
+    def fake_extractor(symbol):
+        calls.append(symbol)
+        return {"symbol": symbol, "edges_written": 3}
+
+    out = acknowledge("SYN_RE_INVOKE", action="re_extract", extractor_fn=fake_extractor)
+    assert out["ok"] is True
+    assert calls == ["SYN_RE_INVOKE"]
+    assert out.get("edges_written") == 3
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_RE_INVOKE'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_acknowledge_re_extract_keeps_queue_entry_on_extractor_error():
+    """If the extractor fails, the symbol must REMAIN in needs_review for retry."""
+    init_db()
+    queue_for_review("SYN_RE_FAIL", reason="test")
+
+    def failing_extractor(symbol):
+        return {"symbol": symbol, "edges_written": 0, "error": "no_item_1a"}
+
+    out = acknowledge("SYN_RE_FAIL", action="re_extract", extractor_fn=failing_extractor)
+    assert out["ok"] is False
+    assert "no_item_1a" in (out.get("error") or "")
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT status, trigger_reason FROM edge_freshness WHERE symbol='SYN_RE_FAIL'"
+        ).fetchone()
+        # Still flagged for review so the user can retry
+        assert row["status"] == "needs_review"
+        assert row["trigger_reason"] == "test"
+    finally:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_RE_FAIL'")
+        conn.commit()
+        conn.close()
+
+
+def test_acknowledge_skip_30d_does_not_invoke_extractor():
+    """skip_30d and pin_current must NOT call the extractor — only re_extract does."""
+    init_db()
+    queue_for_review("SYN_SKIP", reason="test")
+
+    calls: list[str] = []
+    def fake_extractor(symbol):
+        calls.append(symbol)
+        return {"edges_written": 0}
+
+    acknowledge("SYN_SKIP", action="skip_30d", extractor_fn=fake_extractor)
+    acknowledge("SYN_SKIP", action="pin_current", extractor_fn=fake_extractor)
+    assert calls == []
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM edge_freshness WHERE symbol='SYN_SKIP'")
+        conn.commit()
+    finally:
         conn.close()
 
 
@@ -414,9 +548,20 @@ def test_freshness_queue_endpoint_returns_flagged_only(client):
         conn.close()
 
 
-def test_freshness_acknowledge_endpoint(client):
+def test_freshness_acknowledge_endpoint(client, monkeypatch):
+    """End-to-end: HTTP POST → service → orchestrator → (mocked) extractor.
+
+    The real 10-K extractor would hit SEC EDGAR + Claude for SYN_API_ACK, which
+    has no filing. Stub it here so the test isolates the request → state path.
+    """
     init_db()
     queue_for_review("SYN_API_ACK", reason="api_test")
+
+    def stub_process(symbol, **kwargs):
+        return {"symbol": symbol, "edges_written": 0}
+
+    monkeypatch.setattr("src.data.sec_10k_extractor.process_symbol", stub_process)
+
     r = client.post(
         "/freshness/acknowledge",
         json={"symbol": "SYN_API_ACK", "action": "re_extract"},

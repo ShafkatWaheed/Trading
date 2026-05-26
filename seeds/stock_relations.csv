@@ -119,3 +119,69 @@ NVDA,VRT,complement,0.45,1.0,"GPU clusters drive datacenter cooling demand",
 NVDA,GEV,complement,0.40,1.0,"GPU clusters drive grid power demand",
 NVDA,ETN,complement,0.45,1.0,"GPU clusters drive electrical equipment demand",
 NVDA,CCJ,complement,0.30,1.0,"GPU clusters drive nuclear PPA demand",2nd-derivative
+
+# ═══ Wave 1 sector-influence backfill: fill 3 empty sectors ═════════════
+# Added 2026-05-25 to close the Tier A supply-chain spine for Financials,
+# Consumer Defensive, and Basic Materials (previously 0% coverage).
+
+# ─── Financials: card networks → top merchants ─────────────────────────
+V,COST,customer,0.85,1.0,"Costco's exclusive U.S. credit network partner since 2016 (multi-year contract)",
+V,AMZN,customer,0.65,1.0,"Amazon is a top global Visa-network merchant by absolute volume",
+V,WMT,customer,0.55,1.0,"Walmart processes large Visa-branded credit + debit volume",
+MA,AMZN,customer,0.55,1.0,"Amazon major Mastercard-accepting merchant",
+MA,WMT,customer,0.55,1.0,"Walmart accepts Mastercard at scale",
+AXP,MAR,customer,0.75,1.0,"Marriott Bonvoy is a flagship AXP co-brand partnership",
+
+# ─── Financials: banks issue cards on the networks ─────────────────────
+JPM,V,supplier,0.75,1.0,"Chase issues Visa-branded consumer + business cards — Visa network is critical infrastructure",
+BAC,V,supplier,0.55,1.0,"Bank of America major Visa-network credit card issuer",
+WFC,V,supplier,0.45,1.0,"Wells Fargo consumer cards on Visa network",
+C,MA,supplier,0.55,1.0,"Citi credit card portfolio prominent on Mastercard network",
+
+# ─── Financials: exchanges + data → broker-dealers + asset mgrs ────────
+CME,JPM,customer,0.55,1.0,"JPMorgan a major CME clearing + execution member",
+CME,GS,customer,0.55,1.0,"Goldman Sachs routes futures execution through CME",
+CME,MS,customer,0.45,1.0,"Morgan Stanley uses CME futures markets",
+ICE,BLK,customer,0.55,1.0,"BlackRock iShares ETFs rely on ICE listings + ICE Clear",
+ICE,GS,customer,0.45,1.0,"Goldman uses ICE for fixed-income + commodities trading",
+SPGI,BLK,customer,0.85,1.0,"S&P indices (S&P 500) underlie BlackRock's largest iShares ETFs — licensing relationship",
+SPGI,BX,customer,0.55,1.0,"Blackstone consumes S&P credit ratings + market data",
+SPGI,V,customer,0.35,1.0,"S&P rates Visa + V is a 500 constituent",
+
+# ─── Financials: primary insurers → reinsurance ────────────────────────
+AIG,BRK-B,customer,0.45,1.0,"AIG cedes catastrophe + life-block exposure to Berkshire Hathaway Re",
+MET,BRK-B,customer,0.45,1.0,"MetLife uses BRK Re for large life-block transactions",
+TRV,BRK-B,customer,0.45,1.0,"Travelers cedes P&C catastrophe exposure to BRK Re",
+
+# ─── Consumer Defensive: retailers ↔ CPG (retailer is buyer) ───────────
+WMT,PG,supplier,0.85,1.0,"P&G is one of Walmart's largest CPG suppliers — top-vendor relationship",
+WMT,KO,supplier,0.85,1.0,"Coca-Cola is a top beverage supplier to Walmart",
+WMT,PEP,supplier,0.75,1.0,"PepsiCo major Walmart beverage + snacks vendor",
+WMT,CL,supplier,0.55,1.0,"Colgate-Palmolive household-care vendor at Walmart",
+WMT,MDLZ,supplier,0.55,1.0,"Mondelez (Oreo, Cadbury, Ritz) major WMT vendor",
+COST,PG,supplier,0.65,1.0,"P&G Kirkland-adjacent + branded volume at Costco",
+COST,KO,supplier,0.55,1.0,"Costco bottled-beverage + Coke partnership",
+COST,PEP,supplier,0.55,1.0,"PepsiCo beverages + snacks at Costco",
+
+# ─── Basic Materials: industrial gases → semiconductor + energy ────────
+LIN,INTC,customer,0.65,1.0,"Linde supplies industrial + ultra-high-purity electronic gases to Intel fabs",
+LIN,TSM,customer,0.55,1.0,"Linde supplies process gases to TSMC fab operations (incl. Arizona)",
+LIN,XOM,customer,0.45,1.0,"Industrial gases for refining + chemicals operations",
+
+# ─── Basic Materials: copper → EV / electrification ────────────────────
+FCX,TSLA,customer,0.55,1.0,"Tesla EV programs expand copper demand — Freeport major US producer",
+FCX,GEV,customer,0.45,1.0,"GE Vernova grid + wind equipment requires copper conductors",
+
+# ─── Basic Materials: steel → industrials + autos ──────────────────────
+NUE,CAT,customer,0.45,1.0,"Caterpillar equipment chassis + components consume Nucor-grade steel",
+NUE,F,customer,0.35,1.0,"Ford auto body + chassis steel sourcing includes Nucor",
+NUE,GM,customer,0.35,1.0,"GM steel procurement includes Nucor",
+
+# ─── Basic Materials: paints / coatings → OEMs ─────────────────────────
+SHW,F,customer,0.45,1.0,"Sherwin-Williams Industrial Coatings supplies Ford OEM paint",
+SHW,GM,customer,0.35,1.0,"Sherwin-Williams supplies GM industrial coatings",
+SHW,DE,customer,0.35,1.0,"Deere ag-equipment OEM coatings supplied by SHW",
+
+# ─── Basic Materials: Ecolab → food + lodging ──────────────────────────
+ECL,MAR,customer,0.55,1.0,"Marriott uses Ecolab cleaning + sanitation services across properties",
+ECL,KO,customer,0.45,1.0,"Coca-Cola bottling plants use Ecolab water treatment + sanitation",

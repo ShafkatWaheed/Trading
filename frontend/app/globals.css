@@ -2,8 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Web fonts ─────────────────────────────────────────────────── */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+/* Fonts are loaded via next/font in app/layout.tsx so they're preloaded
+ * with no FOUT/FOIT — see --font-sans, --font-display, --font-mono. */
 
 @layer base {
   :root {
@@ -34,18 +34,48 @@
   body {
     background-image:
       radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.05) 0%, transparent 60%),
-      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(139, 92, 246, 0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(59, 130, 246, 0.03) 0%, transparent 60%),
       radial-gradient(ellipse 50% 30% at 0% 100%, rgba(34, 197, 94, 0.025) 0%, transparent 60%);
     background-attachment: fixed;
     min-height: 100vh;
+    position: relative;
   }
 
-  /* Headings */
+  /* Material grain — inline SVG noise at ~2% opacity. Sits above the
+   * background gradients but below all content (pointer-events:none).
+   * Stops the surface feeling "digital flat" without adding any draw cost
+   * after the SVG is parsed once. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.025;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    background-size: 200px 200px;
+  }
+
+  /* Ensure layout content sits above the grain overlay. */
+  body > * { position: relative; z-index: 1; }
+
+  /* Headings — display face (IBM Plex Sans) for distinct typographic identity */
   h1, h2, h3, h4 {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -0.022em;
     font-weight: 600;
   }
   h1 { font-weight: 700; }
+
+  /* Tabular numbers should also use the mono face when we ask for them */
+  .tabular-nums {
+    font-feature-settings: "tnum" 1;
+  }
+  .font-numeric {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-feature-settings: "tnum" 1, "ss01" 1;
+  }
 
   /* Tabular numbers everywhere they make sense */
   .tabular-nums { font-variant-numeric: tabular-nums; }
@@ -116,9 +146,11 @@
   }
 
   .card-glow-blue   { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18) inset, 0 8px 24px -8px rgba(59, 130, 246, 0.28); }
-  .card-glow-violet { box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.18) inset, 0 8px 24px -8px rgba(139, 92, 246, 0.28); }
   .card-glow-green  { box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18)  inset, 0 8px 24px -8px rgba(34, 197, 94, 0.28); }
+  .card-glow-red    { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18)  inset, 0 8px 24px -8px rgba(239, 68, 68, 0.28); }
   .card-glow-amber  { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18) inset, 0 8px 24px -8px rgba(245, 158, 11, 0.28); }
+  /* Legacy alias — collapses to blue. */
+  .card-glow-violet { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18) inset, 0 8px 24px -8px rgba(59, 130, 246, 0.28); }
 
   /* Section divider */
   .section-divider {
@@ -146,9 +178,10 @@
   .badge-red     { background: rgba(239, 68, 68, 0.10);  color: #f87171; border-color: rgba(239, 68, 68, 0.30); }
   .badge-amber   { background: rgba(245, 158, 11, 0.10); color: #f59e0b; border-color: rgba(245, 158, 11, 0.30); }
   .badge-blue    { background: rgba(59, 130, 246, 0.10); color: #3b82f6; border-color: rgba(59, 130, 246, 0.30); }
-  .badge-violet  { background: rgba(139, 92, 246, 0.10); color: #8b5cf6; border-color: rgba(139, 92, 246, 0.30); }
-  .badge-cyan    { background: rgba(6, 182, 212, 0.10);  color: #06b6d4; border-color: rgba(6, 182, 212, 0.30); }
-  .badge-pink    { background: rgba(236, 72, 153, 0.10); color: #ec4899; border-color: rgba(236, 72, 153, 0.30); }
+  /* Aliased to the 4-color palette. */
+  .badge-violet  { background: rgba(59, 130, 246, 0.10); color: #3b82f6; border-color: rgba(59, 130, 246, 0.30); }
+  .badge-cyan    { background: rgba(59, 130, 246, 0.10); color: #3b82f6; border-color: rgba(59, 130, 246, 0.30); }
+  .badge-pink    { background: rgba(245, 158, 11, 0.10); color: #f59e0b; border-color: rgba(245, 158, 11, 0.30); }
   .badge-zinc    { background: rgba(63, 63, 70, 0.50);   color: #a1a1aa; border-color: #27272a; }
 
   /* ── Buttons ────────────────────────────────────────────────── */
@@ -259,9 +292,42 @@
   .animate-in {
     animation: fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
+  /* Lifted-rise variant — more travel, used on hero/section content */
+  .animate-rise {
+    animation: fade-rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
   @keyframes fade-in {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* First-load delight — bloom in the brand mark + lift the main content.
+   * Applied via a session-gated <AppIntro> wrapper so it fires once per visit.
+   * Selectors are scoped to .intro-active so this never runs on soft navigation. */
+  .animate-bloom,
+  .intro-active .intro-brand {
+    animation: bloom-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .animate-rise-delayed,
+  .intro-active .intro-rise {
+    animation: fade-rise 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: 220ms;
+  }
+  @keyframes bloom-in {
+    0%   { opacity: 0; transform: scale(0.85); filter: blur(6px); }
+    60%  { opacity: 1; filter: blur(0); }
+    100% { opacity: 1; transform: scale(1);    filter: blur(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-in,
+    .animate-rise,
+    .animate-bloom,
+    .animate-rise-delayed { animation: none; }
   }
 }
 

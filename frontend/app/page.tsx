@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Activity, Calendar, Globe, Sparkles, ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { FreshnessPill } from "@/components/ui/freshness-pill";
 import { RegimeCard } from "@/components/market/regime-card";
 import { KpiGrid } from "@/components/market/kpi-grid";
 import { YieldCurveCard } from "@/components/market/yield-curve-card";
@@ -51,20 +52,26 @@ export default function MarketPulsePage() {
         subtitle="Understand the market regime before picking stocks."
         accent="text-accent-blue"
         iconBg="bg-accent-blue/10"
+        trailing={<FreshnessPill iso={data?.last_updated} />}
       />
 
       <div className="space-y-6">
         <SimulationReplay step="market_pulse" accent="blue" />
 
         {/* ── 01 · TODAY'S TAKEAWAY (hero) ─────────────────────────────── */}
-        <SectionHeader index={1} label="Today's takeaway" subtitle="3-second read · what does the market favor today" id="takeaway" />
+        <SectionHeader index={1} label="Today's takeaway" subtitle="3-second read · what does the market favor today" id="takeaway" accent="blue" />
 
         <MarketTakeaway />
 
         <LiveIndicesStrip />
 
         {isLoading && !data ? (
-          <Skeleton className="h-32" />
+          <div className="card p-6 space-y-3">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-8 w-2/3" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-5/6" />
+          </div>
         ) : error ? (
           <div className="card p-6 border-l-4 border-accent-red/40">
             <p className="text-accent-redSoft">Failed to load market pulse.</p>
@@ -75,7 +82,7 @@ export default function MarketPulsePage() {
         ) : null}
 
         {/* ── 02 · MACRO BACKDROP ──────────────────────────────────────── */}
-        <SectionHeader index={2} label="Macro backdrop" subtitle="Fed · rates · volatility · yield curve" id="macro" />
+        <SectionHeader index={2} label="Macro backdrop" subtitle="Fed · rates · volatility · yield curve" id="macro" accent="amber" />
 
         <section>
           <KpiGrid kpis={data?.kpis} loading={isLoading && !data} />
@@ -88,18 +95,18 @@ export default function MarketPulsePage() {
         )}
 
         {/* ── 03 · MARKET INTERNALS ────────────────────────────────────── */}
-        <SectionHeader index={3} label="Market internals" subtitle="breadth · top movers · what's actually moving" id="internals" />
+        <SectionHeader index={3} label="Market internals" subtitle="breadth · top movers · what's actually moving" id="internals" accent="green" />
 
         <BreadthCard />
         <TopMovers />
 
         {/* ── 04 · WHAT'S HAPPENING ────────────────────────────────────── */}
-        <SectionHeader index={4} label="What's happening" subtitle="top headlines · sentiment" id="news" />
+        <SectionHeader index={4} label="What's happening" subtitle="top headlines · sentiment" id="news" accent="blue" />
 
         <MarketNews />
 
         {/* ── 05 · WHERE MONEY IS GOING ────────────────────────────────── */}
-        <SectionHeader index={5} label="Where money is going" subtitle="sector flows · disruptive themes" id="flows" />
+        <SectionHeader index={5} label="Where money is going" subtitle="sector flows · disruptive themes" id="flows" accent="green" />
 
         <section>
           <div className="flex items-center justify-end mb-2">
@@ -121,7 +128,7 @@ export default function MarketPulsePage() {
         )}
 
         {/* ── 06 · UPCOMING CATALYSTS ──────────────────────────────────── */}
-        <SectionHeader index={6} label="Upcoming catalysts" subtitle="economic calendar · geopolitical risk" id="catalysts" />
+        <SectionHeader index={6} label="Upcoming catalysts" subtitle="economic calendar · geopolitical risk" id="catalysts" accent="red" />
 
         <NextCatalystPill
           nextEvent={calendar.data?.next_event}
@@ -130,13 +137,17 @@ export default function MarketPulsePage() {
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <EconomicCalendar events={calendar.data?.events} loading={calendar.isLoading} />
-          <GeopoliticalRisks events={geo.data?.events} loading={geo.isLoading} />
+          <GeopoliticalRisks
+            events={geo.data?.events}
+            loading={geo.isLoading}
+            dataAvailable={geo.data?.data_available}
+          />
         </section>
 
         {/* ── 07 · TRADING IMPLICATIONS ────────────────────────────────── */}
         {data?.implications && data.implications.length > 0 && (
           <>
-            <SectionHeader index={7} label="Trading implications" subtitle="what to do with this regime" id="implications" />
+            <SectionHeader index={7} label="Trading implications" subtitle="what to do with this regime" id="implications" accent="amber" />
             <ImplicationsList items={data.implications} />
           </>
         )}

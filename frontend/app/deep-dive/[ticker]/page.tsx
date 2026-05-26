@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowLeft, Search, RefreshCw, Database, Zap } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { FreshnessPill } from "@/components/ui/freshness-pill";
 import { TickerSearchInput } from "@/components/ui/ticker-search-input";
 import { stocksApi } from "@/lib/api/endpoints";
 import { VerdictBanner } from "@/components/deep-dive/verdict-banner";
@@ -23,6 +24,9 @@ import { TldrBanner } from "@/components/deep-dive/tldr-banner";
 import { AnalystConsensus } from "@/components/deep-dive/analyst-consensus";
 import { PeerValuationStrip } from "@/components/deep-dive/peer-valuation-strip";
 import { SmartMoneyCard } from "@/components/deep-dive/smart-money";
+import { FundamentalsCard } from "@/components/deep-dive/fundamentals-card";
+import { CoHoldersCard } from "@/components/deep-dive/co-holders-card";
+import { NeighborhoodCard } from "@/components/deep-dive/neighborhood-card";
 import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
@@ -84,6 +88,7 @@ export default function DeepDiveTickerPage() {
         subtitle="Full analysis with trade plan, signal breakdown, and timing notes."
         accent="text-accent-violet"
         iconBg="bg-accent-violet/10"
+        trailing={<FreshnessPill iso={data?.last_updated} />}
       />
 
       <div className="mb-4 flex items-center gap-3 flex-wrap">
@@ -271,32 +276,43 @@ export default function DeepDiveTickerPage() {
           </div>
 
           {/* ── 04 · WHAT PROS ARE DOING ───────────────────────────────── */}
-          <SectionHeader index={4} label="What pros are doing" subtitle="smart money + Wall Street consensus" id="pros" />
+          <SectionHeader index={4} label="What pros are doing" subtitle="smart money · institutional overlap · Wall Street consensus" id="pros" />
 
           <SmartMoneyCard symbol={data.symbol} />
+          <CoHoldersCard symbol={data.symbol} />
           <AnalystConsensus symbol={data.symbol} />
 
-          {/* ── 05 · IS THE PRICE RIGHT ────────────────────────────────── */}
-          <SectionHeader index={5} label="Is the price right" subtitle="bubble score · vibes premium · peers" id="valuation" />
+          {/* ── 05 · THE BUSINESS ──────────────────────────────────────── */}
+          <SectionHeader index={5} label="The business" subtitle="four-pillar quality story · growth · profit · health" id="business" />
+
+          <FundamentalsCard symbol={data.symbol} />
+
+          {/* ── 06 · HOW IT CONNECTS ───────────────────────────────────── */}
+          <SectionHeader index={6} label="How it connects" subtitle="peers · suppliers · customers · substitutes" id="graph" />
+
+          <NeighborhoodCard symbol={data.symbol} />
+          <PeerValuationStrip symbol={data.symbol} />
+
+          {/* ── 07 · IS THE PRICE RIGHT ────────────────────────────────── */}
+          <SectionHeader index={7} label="Is the price right" subtitle="bubble score · vibes premium · catalysts" id="valuation" />
 
           <BubbleScoreCard symbol={data.symbol} />
-          <PeerValuationStrip symbol={data.symbol} />
           <FdaCatalystsCard ticker={data.symbol} />
           <BacklogCard ticker={data.symbol} />
           <LitigationCard ticker={data.symbol} />
           <PatentEventsCard ticker={data.symbol} />
           <ExecChangesCard ticker={data.symbol} />
 
-          {/* ── 06 · BULL vs BEAR ──────────────────────────────────────── */}
-          <SectionHeader index={6} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
+          {/* ── 08 · BULL vs BEAR ──────────────────────────────────────── */}
+          <SectionHeader index={8} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <BullNarrative symbol={data.symbol} />
             <RiskNarrative symbol={data.symbol} />
           </div>
 
-          {/* ── 07 · HOW TO EXECUTE ────────────────────────────────────── */}
-          <SectionHeader index={7} label="How to execute" subtitle="trade plan · sizing · signals" id="setup" />
+          {/* ── 09 · HOW TO EXECUTE ────────────────────────────────────── */}
+          <SectionHeader index={9} label="How to execute" subtitle="trade plan · sizing · signals" id="setup" />
 
           {data.trade_plan && <TradePlanRich plan={data.trade_plan} />}
           {data.trade_plan && <PositionSizing plan={data.trade_plan} />}
@@ -317,8 +333,8 @@ export default function DeepDiveTickerPage() {
 
           <SignalGroups groups={data.signal_groups} symbol={data.symbol} />
 
-          {/* ── 08 · REFERENCE ─────────────────────────────────────────── */}
-          <SectionHeader index={8} label="Reference" subtitle="earnings history · transcript explainer" id="reference" />
+          {/* ── 10 · REFERENCE ─────────────────────────────────────────── */}
+          <SectionHeader index={10} label="Reference" subtitle="earnings history · transcript explainer" id="reference" />
 
           {data.earnings.length > 0 && <EarningsTable rows={data.earnings} />}
           <EarningsExplainer symbol={data.symbol} />

@@ -2,7 +2,9 @@
 
 import type { DeepDive } from "@/lib/api/types";
 import { MetricCard } from "@/components/ui/metric-card";
+import { FadeIn } from "@/components/ui/fade-in";
 import { TrendingUp, TrendingDown, Shield, Activity, MessageSquare } from "lucide-react";
+import { formatCompactUSD } from "@/lib/utils";
 
 function confTone(conf: string): "green" | "amber" | "red" | "neutral" {
   const c = conf.toLowerCase();
@@ -29,47 +31,92 @@ export function KpiGridDeepDive({ data }: { data: DeepDive }) {
   const positive = periodChg > 0;
   const negative = periodChg < 0;
 
+  const hasFundamentals =
+    data.market_cap != null || data.revenue_ttm != null || data.net_income_ttm != null;
+
+  const netIncomeTone: "green" | "red" | "neutral" =
+    data.net_income_ttm == null ? "neutral" : data.net_income_ttm < 0 ? "red" : "green";
+
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <MetricCard
-        align="center"
-        label="Price"
-        icon={positive ? <TrendingUp size={11} className="text-accent-greenSoft" /> : negative ? <TrendingDown size={11} className="text-accent-redSoft" /> : null}
-        value={data.price != null ? `$${data.price.toFixed(2)}` : "—"}
-        hint={
-          data.period_change && periodChg !== 0
-            ? `${positive ? "↑" : negative ? "↓" : ""} ${periodChg >= 0 ? "+" : ""}${periodChg.toFixed(1)}% over ${data.period}`
-            : "Last close"
-        }
-      />
-      <MetricCard
-        align="center"
-        label="Confidence"
-        icon={<Activity size={11} />}
-        value={data.confidence}
-        tone={confTone(data.confidence)}
-        hint="Signal alignment"
-      />
-      <MetricCard
-        align="center"
-        label="Risk Level"
-        icon={<Shield size={11} />}
-        value={`${data.risk_rating}/5`}
-        tone={riskTone(data.risk_rating)}
-        hint={`${data.risk_label} risk`}
-      />
-      <MetricCard
-        align="center"
-        label="Sentiment"
-        icon={<MessageSquare size={11} />}
-        value={
-          data.sentiment_score != null
-            ? `${data.sentiment_score > 0 ? "+" : ""}${data.sentiment_score.toFixed(2)}`
-            : "—"
-        }
-        tone={sentTone(data.sentiment_score)}
-        hint="News mood"
-      />
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <FadeIn delay={0}>
+          <MetricCard
+            align="center"
+            label="Price"
+            icon={positive ? <TrendingUp size={11} className="text-accent-greenSoft" /> : negative ? <TrendingDown size={11} className="text-accent-redSoft" /> : null}
+            value={data.price != null ? `$${data.price.toFixed(2)}` : "—"}
+            hint={
+              data.period_change && periodChg !== 0
+                ? `${positive ? "↑" : negative ? "↓" : ""} ${periodChg >= 0 ? "+" : ""}${periodChg.toFixed(1)}% over ${data.period}`
+                : "Last close"
+            }
+          />
+        </FadeIn>
+        <FadeIn delay={1}>
+          <MetricCard
+            align="center"
+            label="Confidence"
+            icon={<Activity size={11} />}
+            value={data.confidence}
+            tone={confTone(data.confidence)}
+            hint="Signal alignment"
+          />
+        </FadeIn>
+        <FadeIn delay={2}>
+          <MetricCard
+            align="center"
+            label="Risk Level"
+            icon={<Shield size={11} />}
+            value={`${data.risk_rating}/5`}
+            tone={riskTone(data.risk_rating)}
+            hint={`${data.risk_label} risk`}
+          />
+        </FadeIn>
+        <FadeIn delay={3}>
+          <MetricCard
+            align="center"
+            label="Sentiment"
+            icon={<MessageSquare size={11} />}
+            value={
+              data.sentiment_score != null
+                ? `${data.sentiment_score > 0 ? "+" : ""}${data.sentiment_score.toFixed(2)}`
+                : "—"
+            }
+            tone={sentTone(data.sentiment_score)}
+            hint="News mood"
+          />
+        </FadeIn>
+      </div>
+      {hasFundamentals && (
+        <div className="flex flex-wrap gap-3">
+          <FadeIn delay={4} className="flex-1 min-w-[180px]">
+            <MetricCard
+              align="center"
+              label="Market Cap"
+              value={formatCompactUSD(data.market_cap)}
+              hint="Total equity value"
+            />
+          </FadeIn>
+          <FadeIn delay={5} className="flex-1 min-w-[180px]">
+            <MetricCard
+              align="center"
+              label="Revenue (TTM)"
+              value={formatCompactUSD(data.revenue_ttm)}
+              hint="Trailing 12 months"
+            />
+          </FadeIn>
+          <FadeIn delay={6} className="flex-1 min-w-[180px]">
+            <MetricCard
+              align="center"
+              label="Net Income (TTM)"
+              value={formatCompactUSD(data.net_income_ttm)}
+              tone={netIncomeTone}
+              hint="Trailing 12 months"
+            />
+          </FadeIn>
+        </div>
+      )}
     </div>
   );
 }

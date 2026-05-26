@@ -70,16 +70,22 @@ class _ApiSpec:
 
 
 _API_SPECS: tuple[_ApiSpec, ...] = (
-    _ApiSpec("alphavantage", "Alpha Vantage",  60, 5),     # free tier: 5/min
-    _ApiSpec("polygon",      "Polygon.io",     60, 5),     # free tier: 5/min
-    _ApiSpec("sec_edgar",    "SEC EDGAR",       1, 10),    # 10/sec hard limit
-    _ApiSpec("yahoo",        "Yahoo Finance",  60, None),  # no published limit
-    _ApiSpec("tavily",       "Tavily",         60, None),  # plan-dependent
-    _ApiSpec("exa",          "Exa",            60, None),  # plan-dependent
-    _ApiSpec("congress",     "Capitol Trades", 60, None),  # scraper, no published limit
-    _ApiSpec("finnhub",      "Finnhub",        60, 60),    # free tier: 60/min
-    _ApiSpec("tiingo",       "Tiingo",      86_400, 1000), # free tier: 1k/day
-    _ApiSpec("fred",         "FRED",           60, None),  # no published limit
+    _ApiSpec("alphavantage",     "Alpha Vantage",    60, 5),     # free tier: 5/min
+    _ApiSpec("polygon",          "Polygon.io",       60, 5),     # free tier: 5/min
+    _ApiSpec("sec_edgar",        "SEC EDGAR",         1, 10),    # 10/sec hard limit
+    _ApiSpec("yahoo",            "Yahoo Finance",    60, None),  # no published limit
+    _ApiSpec("tavily",           "Tavily",           60, None),  # plan-dependent
+    _ApiSpec("exa",              "Exa",              60, None),  # plan-dependent
+    _ApiSpec("congress",         "Capitol Trades",   60, None),  # scraper, no published limit
+    _ApiSpec("finnhub",          "Finnhub",          60, 60),    # free tier: 60/min
+    _ApiSpec("tiingo",           "Tiingo",       86_400, 1000),  # free tier: 1k/day
+    _ApiSpec("fred",             "FRED",             60, None),  # no published limit
+    _ApiSpec("gdelt",            "GDELT DOC 2.0",    60, None),  # no key, no published limit
+    _ApiSpec("google_news_rss",  "Google News RSS",  60, None),  # no key, no published limit
+    _ApiSpec("openfda",          "openFDA",          60, 240),   # anonymous: 240/min
+    _ApiSpec("fda_orange_book",  "FDA Orange Book",  60, None),  # static dataset
+    _ApiSpec("itc_edis",         "ITC EDIS",         60, None),  # no published limit
+    _ApiSpec("usaspending",      "USAspending.gov",  60, None),  # no published limit
 )
 
 

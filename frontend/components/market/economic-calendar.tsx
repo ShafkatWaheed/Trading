@@ -2,7 +2,7 @@
 
 import type { CalendarEvent } from "@/lib/api/types";
 import { AlertTriangle, Calendar as CalendarIcon } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +38,7 @@ function daysLabel(d: number) {
 }
 
 export function EconomicCalendar({ events, loading }: { events?: CalendarEvent[]; loading?: boolean }) {
-  if (loading) return <Skeleton className="h-72" />;
+  if (loading) return <ListSkeleton count={4} />;
 
   if (!events || events.length === 0) {
     return (

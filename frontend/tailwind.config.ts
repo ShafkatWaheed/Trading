@@ -20,23 +20,30 @@ const config: Config = {
           borderHi: "#34343a",  // emphasized border
           divider: "#1d1d22",
         },
+        // Narrowed 4-color palette. The legacy violet/cyan/pink class names are
+        // preserved as ALIASES so existing call sites keep compiling — they now
+        // resolve to the 4 approved colors. New code should prefer the 4 names.
         accent: {
-          green: "#22c55e",
+          // ── Approved palette ────────────────────────────────────────
+          green: "#22c55e",       // gains, positive financials
           greenSoft: "#4ade80",
           greenMuted: "#16a34a",
-          red: "#ef4444",
+          red: "#ef4444",         // losses, errors
           redSoft: "#f87171",
           redMuted: "#dc2626",
-          amber: "#f59e0b",
+          amber: "#f59e0b",       // warnings, caution, highlight
           amberSoft: "#fbbf24",
-          blue: "#3b82f6",
+          blue: "#3b82f6",        // brand / informational / neutral active
           blueSoft: "#60a5fa",
-          violet: "#8b5cf6",
-          violetSoft: "#a78bfa",
-          cyan: "#06b6d4",
-          cyanSoft: "#22d3ee",
-          pink: "#ec4899",
-          pinkSoft: "#f472b6",
+          // ── Aliases (legacy → palette) ──────────────────────────────
+          // violet / cyan both collapse to blue (the "info" family).
+          violet: "#3b82f6",
+          violetSoft: "#60a5fa",
+          cyan: "#3b82f6",
+          cyanSoft: "#60a5fa",
+          // pink → amber (warm decorative accent).
+          pink: "#f59e0b",
+          pinkSoft: "#fbbf24",
         },
         text: {
           primary: "#fafafa",
@@ -47,14 +54,17 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
+          "var(--font-sans)",
           "InterVariable", "Inter",
           "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "sans-serif",
         ],
         mono: [
-          "JetBrains Mono", "ui-monospace", "Menlo", "monospace",
+          "var(--font-mono)",
+          "IBM Plex Mono", "JetBrains Mono", "ui-monospace", "Menlo", "monospace",
         ],
         display: [
-          "InterVariable", "Inter",
+          "var(--font-display)",
+          "IBM Plex Sans",
           "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "sans-serif",
         ],
       },

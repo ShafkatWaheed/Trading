@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Callable, Iterable
 
 from src.freshness.decay import is_stale
 from src.freshness.hash_diff import detect_hash_change
@@ -58,13 +58,20 @@ def acknowledge(
     *,
     action: str,
     conn: sqlite3.Connection | None = None,
+    extractor_fn: Callable[[str], dict] | None = None,
 ) -> dict:
     """User action on a queue entry.
 
     Actions:
-        re_extract — clears the queue entry (fresh) and bumps last_extracted_at
-        skip_30d   — clears with status='aging' and re-flags after 30 days (caller's job)
-        pin_current — clears with status='fresh' permanently (until next trigger)
+        re_extract  — invoke the SEC 10-K extractor for `symbol`. On success,
+                      mark fresh and bump last_extracted_at. On extractor error,
+                      LEAVE the queue entry in needs_review so the user can retry.
+        skip_30d    — set status='aging'; caller is expected to re-flag after 30d
+        pin_current — set status='fresh' permanently (until next trigger fires)
+
+    `extractor_fn` is the injection point: defaults to
+    `src.data.sec_10k_extractor.process_symbol` (lazy import to avoid a circular
+    dependency at module load time). Tests pass a stub.
     """
     init_db()
     own_conn = conn is None
@@ -72,8 +79,44 @@ def acknowledge(
         conn = get_connection()
     try:
         if action == "re_extract":
+            if extractor_fn is None:
+                # Lazy import: orchestrator → extractor → (downstream) would otherwise
+                # create a cycle through src.data at import time.
+                from src.data.sec_10k_extractor import process_symbol as extractor_fn  # type: ignore
+
+            extraction_result = extractor_fn(symbol) or {}
+            err = extraction_result.get("error")
+            if err:
+                # Leave the queue entry alone; user can retry.
+                return {
+                    "symbol": symbol,
+                    "ok": False,
+                    "error": err,
+                    "edges_written": extraction_result.get("edges_written", 0),
+                }
             new_status = "fresh"
             extracted_at = _now()
+            edges_written = extraction_result.get("edges_written", 0)
+
+            conn.execute(
+                """
+                UPDATE edge_freshness
+                SET status = ?,
+                    trigger_reason = NULL,
+                    flagged_at = NULL,
+                    last_extracted_at = COALESCE(?, last_extracted_at)
+                WHERE symbol = ?
+                """,
+                (new_status, extracted_at, symbol),
+            )
+            conn.commit()
+            return {
+                "symbol": symbol,
+                "ok": True,
+                "new_status": new_status,
+                "edges_written": edges_written,
+            }
+
         elif action == "skip_30d":
             new_status = "aging"
             extracted_at = None

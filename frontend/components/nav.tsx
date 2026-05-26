@@ -21,12 +21,11 @@ const PRIMARY = [
 ];
 
 const SECONDARY = [
+  { href: "/graph",           label: "Graph",          icon: Network,   blurb: "Health, refresh controls, review queue — combined" },
   { href: "/track-record",    label: "Track Record",   icon: LineChart, blurb: "How often is the AI right — graded vs. real moves" },
   { href: "/context-search",  label: "Context Search", icon: Search,    blurb: "Free-text scenario → ranked stocks via the graph" },
   { href: "/universe",        label: "Universe",       icon: Network,   blurb: "Tracked stock universe" },
   { href: "/news-impact",     label: "News Impact",    icon: Newspaper, blurb: "Cross-stock news propagation" },
-  { href: "/edge-freshness",  label: "Edge Freshness", icon: Eye,       blurb: "Data freshness queue" },
-  { href: "/refresh",         label: "Refresh Graph",  icon: RefreshCw, blurb: "Manual pipeline refresh + quality" },
   { href: "/data-sources",    label: "Data Sources",   icon: Radio,     blurb: "Connected feeds + rate limits" },
 ];
 
@@ -73,16 +72,16 @@ function MarketStatusPill() {
 
 function BrandMark() {
   return (
-    <Link href="/" className="flex items-center gap-2.5 group shrink-0" aria-label="Trading — home">
+    <Link href="/" className="flex items-center gap-2.5 group shrink-0 intro-brand" aria-label="Trading — home">
       <svg
         width="26" height="26" viewBox="0 0 26 26"
-        className="text-accent-blue group-hover:text-accent-violet transition-colors"
+        className="text-accent-blue group-hover:text-accent-blueSoft transition-colors"
         aria-hidden
       >
         <defs>
           <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%"   stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#60a5fa" />
           </linearGradient>
         </defs>
         <rect x="1" y="1" width="24" height="24" rx="6" fill="url(#brandGrad)" opacity="0.18" />

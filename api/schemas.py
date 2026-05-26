@@ -99,6 +99,7 @@ class GeopoliticalEvent(BaseModel):
 class GeopoliticalResponse(BaseModel):
     events: list[GeopoliticalEvent]
     last_updated: str
+    data_available: bool = True
 
 
 # ── Disruption Themes ─────────────────────────────────────────────
@@ -317,6 +318,9 @@ class DeepDiveResponse(BaseModel):
     period_change: PeriodChange | None = None
     summary: str | None = None
     sentiment_score: float | None = None
+    market_cap: float | None = None
+    revenue_ttm: float | None = None
+    net_income_ttm: float | None = None
     signals: list[SignalRow]
     signal_groups: dict[str, list[SignalRow]] = {}
     signal_counts: SignalCounts
@@ -1773,3 +1777,75 @@ class EntityMatchDecisionResponse(BaseModel):
 class EntityMatchesResponse(BaseModel):
     ticker: str
     matches: list[EntityMatchDecisionResponse]
+
+
+# ── Fundamentals story card ────────────────────────────────────────
+
+
+class FundamentalMetric(BaseModel):
+    label: str
+    value: float | None = None
+    unit: str = ""
+
+
+class FundamentalPillar(BaseModel):
+    name: str           # 'valuation' | 'growth' | 'profitability' | 'health'
+    label: str          # display name
+    score: int          # 1-5
+    story: str
+    metrics: list[FundamentalMetric] = []
+
+
+class FundamentalsResponse(BaseModel):
+    symbol: str
+    available: bool
+    error: str | None = None
+    archetype: str | None = None     # short label e.g. "Cash Cow"
+    lede: str | None = None          # one-sentence opener
+    overall_score: int | None = None # 1-5
+    pillars: list[FundamentalPillar] = []
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    raw: dict[str, Any] = {}
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Co-holders (institutional overlap) ─────────────────────────────
+
+
+class CoHolderOverlapStock(BaseModel):
+    symbol: str
+    stock_name: str | None = None
+    pct_portfolio: float | None = None
+    value_usd: float | None = None
+
+
+class CoHolderInstitution(BaseModel):
+    cik: str
+    name: str | None = None
+    type: str | None = None
+    value_usd: float | None = None
+    pct_outstanding: float | None = None
+    pct_portfolio: float | None = None
+    as_of: str | None = None
+    also_holds: list[CoHolderOverlapStock] = []
+
+
+class CoHeldStock(BaseModel):
+    symbol: str
+    stock_name: str | None = None
+    co_holder_count: int = 0
+    total_value_usd: float = 0.0
+    holders: list[str] = []
+
+
+class CoHoldersResponse(BaseModel):
+    symbol: str
+    available: bool
+    lede: str
+    holders: list[CoHolderInstitution] = []
+    co_held: list[CoHeldStock] = []
+    total_holders: int = 0
+    last_updated: str
+    from_cache: bool = False

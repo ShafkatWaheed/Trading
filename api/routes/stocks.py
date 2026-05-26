@@ -6,18 +6,18 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.schemas import (
     AnalystConsensusResponse, BenchmarksResponse, BubbleScoreResponse,
-    BullNarrativeResponse, CatalystCalendarResponse, DeepDiveBundleResponse,
-    DeepDiveResponse, EntityMatchesResponse, NewsFeedResponse,
-    PeerValuationResponse, RecommendationResponse, RiskNarrativeResponse,
-    SignalEvidenceResponse, SmartMoneyResponse, StockInformationResponse,
-    StockSearchResult,
+    BullNarrativeResponse, CatalystCalendarResponse, CoHoldersResponse,
+    DeepDiveBundleResponse, DeepDiveResponse, EntityMatchesResponse,
+    FundamentalsResponse, NewsFeedResponse, PeerValuationResponse,
+    RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
+    SmartMoneyResponse, StockInformationResponse, StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
-    bull_narrative_service, catalyst_calendar_service, deep_dive_service,
-    discover_service, news_feed_service, peer_valuation_service,
-    recommendation_service, risk_narrative_service, signal_evidence_service,
-    smart_money_service,
+    bull_narrative_service, catalyst_calendar_service, co_holders_service,
+    deep_dive_service, discover_service, fundamentals_service,
+    news_feed_service, peer_valuation_service, recommendation_service,
+    risk_narrative_service, signal_evidence_service, smart_money_service,
 )
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
@@ -309,3 +309,31 @@ def get_entity_matches(ticker: str) -> dict:
     """Wave 2 debug card: show how each data source resolved its names to this ticker."""
     from api.services.entity_matches_service import get_matches_for_ticker
     return get_matches_for_ticker(ticker.upper())
+
+
+@router.get("/{ticker}/fundamentals", response_model=FundamentalsResponse)
+def fundamentals(
+    ticker: str,
+    force: bool = Query(False, description="Bypass the 12h cache and refetch"),
+) -> dict:
+    """Four-pillar business quality story (valuation · growth · profitability · health)."""
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return fundamentals_service.get_fundamentals(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fundamentals failed: {e}")
+
+
+@router.get("/{ticker}/co-holders", response_model=CoHoldersResponse)
+def co_holders(
+    ticker: str,
+    force: bool = Query(False, description="Bypass the 6h cache"),
+) -> dict:
+    """Top institutional holders + the other stocks they overlap on (interconnection)."""
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return co_holders_service.get_co_holders(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Co-holders failed: {e}")

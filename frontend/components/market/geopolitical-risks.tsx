@@ -1,8 +1,8 @@
 "use client";
 
 import type { GeopoliticalEvent } from "@/lib/api/types";
-import { Globe, ExternalLink, ChevronDown, ShieldCheck } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Globe, ExternalLink, ChevronDown, ShieldCheck, AlertTriangle } from "lucide-react";
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -93,10 +93,31 @@ function EventCard({ e }: { e: GeopoliticalEvent }) {
   );
 }
 
-export function GeopoliticalRisks({ events, loading }: { events?: GeopoliticalEvent[]; loading?: boolean }) {
-  if (loading) return <Skeleton className="h-72" />;
+export function GeopoliticalRisks({
+  events,
+  loading,
+  dataAvailable,
+}: {
+  events?: GeopoliticalEvent[];
+  loading?: boolean;
+  dataAvailable?: boolean;
+}) {
+  if (loading) return <ListSkeleton count={4} />;
 
   if (!events || events.length === 0) {
+    if (dataAvailable === false) {
+      return (
+        <div className="card p-6 border-l-4 border-accent-amber/40 flex items-center gap-3">
+          <AlertTriangle size={20} className="text-accent-amber" />
+          <div>
+            <div className="text-sm font-semibold text-accent-amber">Data temporarily unavailable</div>
+            <p className="text-text-muted text-xs mt-0.5">
+              News providers (Tavily / Exa) are unreachable or out of quota. Retrying shortly.
+            </p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="card p-6 border-l-4 border-accent-green/40 flex items-center gap-3">
         <ShieldCheck size={20} className="text-accent-greenSoft" />
