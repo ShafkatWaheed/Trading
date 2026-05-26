@@ -68,6 +68,10 @@ def parse_peer_csv(path: Path | str) -> list[dict]:
             "similarity": max(0.0, min(1.0, similarity)),
             "overlap_dimensions": _coerce(raw.get("overlap_dimensions")),
             "notes": _coerce(raw.get("notes")),
+            # Optional temporal bounds — backwards-compatible (DictReader
+            # treats missing columns as None on older rows).
+            "effective_from": _coerce(raw.get("effective_from")),
+            "effective_to":   _coerce(raw.get("effective_to")),
         })
     return out
 
@@ -85,23 +89,29 @@ def _insert_or_update(
     similarity: float,
     overlap_dimensions: str | None,
     notes: str | None,
+    effective_from: str | None = None,
+    effective_to: str | None = None,
 ) -> None:
     """Upsert one (from_sym, to_sym) row. Conflict update keeps newest values."""
     conn.execute(
         """
         INSERT INTO stock_peers
-            (from_symbol, to_symbol, similarity, overlap_dimensions, source, confidence, evidence)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (from_symbol, to_symbol, similarity, overlap_dimensions,
+             source, confidence, evidence, effective_from, effective_to)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(from_symbol, to_symbol) DO UPDATE SET
             similarity = excluded.similarity,
             overlap_dimensions = excluded.overlap_dimensions,
             source = excluded.source,
             confidence = excluded.confidence,
-            evidence = excluded.evidence
+            evidence = excluded.evidence,
+            effective_from = excluded.effective_from,
+            effective_to = excluded.effective_to
         """,
         (
             from_sym, to_sym, similarity, overlap_dimensions,
             SEED_SOURCE_HAND, SEED_CONFIDENCE_HIGH, notes,
+            effective_from, effective_to,
         ),
     )
 
@@ -155,6 +165,8 @@ def load_tier_a_peers(
                 similarity=r["similarity"],
                 overlap_dimensions=r["overlap_dimensions"],
                 notes=r["notes"],
+                effective_from=r.get("effective_from"),
+                effective_to=r.get("effective_to"),
             )
             inserted += 1
             if bidirectional:
@@ -165,6 +177,8 @@ def load_tier_a_peers(
                     similarity=r["similarity"],
                     overlap_dimensions=r["overlap_dimensions"],
                     notes=r["notes"],
+                    effective_from=r.get("effective_from"),
+                    effective_to=r.get("effective_to"),
                 )
                 inserted += 1
 

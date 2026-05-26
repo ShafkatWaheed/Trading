@@ -387,7 +387,7 @@ def run_layer_5_news_drift(
 def run_orchestrator(
     symbols: Iterable[str],
     *,
-    layers: tuple[str, ...] = ("layer1", "layer2", "layer3"),
+    layers: tuple[str, ...] = ("layer1", "layer2", "layer3", "layer4", "layer5"),
     hash_fetch_fn=None,
     filing_fetch_fn=None,
     returns_fetch_fn=None,
@@ -397,12 +397,19 @@ def run_orchestrator(
 ) -> dict[str, dict]:
     """Convenience: run multiple layers in sequence.
 
-    Default `layers` is ("layer1", "layer2", "layer3") for backwards
-    compatibility. Callers can opt into layer4 (correlation drift) and
-    layer5 (news drift) explicitly. Both layers safely no-op when their
-    upstream data layer (Tiingo / news fetcher / industry-domain map) is
-    unavailable, so it is harmless to include them in the default chain
-    once those data sources are wired.
+    All five layers are in the default chain. Each layer's wrapper is
+    designed to be a CLEAN NO-OP when its upstream data source is missing:
+
+      * layer2 / layer3   skip per-symbol on fetch error
+      * layer4            skips per-symbol when returns_fetch_fn returns []
+                          (default `_default_returns_fetch` returns [] when
+                          Tiingo isn't configured)
+      * layer5            skips per-symbol when headlines_fetch_fn returns []
+                          (default is the no-op `lambda _: []`)
+
+    So enabling layers 4+5 in the default chain is safe: in environments
+    where the data sources aren't wired, they cost only an empty per-symbol
+    pass; nothing crashes.
     """
     out: dict[str, dict] = {}
     if "layer1" in layers:

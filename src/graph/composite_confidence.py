@@ -4,8 +4,7 @@ Each edge in stock_relations is supported by zero or more independent
 evidence channels. The composite confidence is a 0..1 score that increases
 with the number and quality of channels.
 
-Channels currently considered (cheap — derived from columns already on the
-row, no extra queries):
+Channels:
 
   * `hand_seed`     — `evidence LIKE 'seed:hand%'`.  Manually curated +
                       audited by a human; strongest single signal.
@@ -20,13 +19,16 @@ row, no extra queries):
                       otherwise-weak edge gains confidence when it's been
                       re-verified recently.
                       Contribution: 0.10
+  * `etf_co_holding`— Count of ETFs holding both ends of the edge. Cheap +
+                      local (no network — loaded from data/index_cache).
+                      Contribution: 0.04 per ETF, capped at 0.15 (4+ ETFs).
+  * `pair_correlation` — 60-day Pearson r between the two symbols' daily
+                      returns. Caller supplies it via an injectable fetcher.
+                      Contribution: |r|>=0.5 → 0.15; |r|>=0.3 → 0.08; else 0.
 
-Future channels (additive — call sites will pass them in once the data
-layers mature):
+Future channel (still unwired — needs news ingestion):
 
   * `news_co_mention`     — N articles in last 90d mentioning both sides
-  * `return_correlation`  — 60-day Pearson r > 0.3 with appropriate sign
-  * `etf_co_holding`      — held in the same ETF basket
 
 Combined score is clamped to [0, 1]. The function is pure — call sites
 batch-update rows from a single SELECT.
@@ -42,6 +44,12 @@ DISCLOSED_PCT_BASE     = 0.40   # at >=30% concentration
 TENK_NAMED_WEIGHT      = 0.20
 RECENT_VERIFIED_WEIGHT = 0.10
 RECENT_WINDOW_DAYS     = 540
+ETF_CO_HOLDING_PER     = 0.04
+ETF_CO_HOLDING_CAP     = 0.15   # 4 ETFs maxes out the channel
+CORRELATION_HIGH       = 0.50   # |r| >= 0.50 → strong corr
+CORRELATION_MEDIUM     = 0.30   # |r| >= 0.30 → medium corr
+CORRELATION_HIGH_WEIGHT   = 0.15
+CORRELATION_MEDIUM_WEIGHT = 0.08
 
 
 def _pct_channel_score(concentration_pct: float | None) -> float:
@@ -79,14 +87,46 @@ def _recent_channel_score(last_verified_at: str | None, *, now: datetime | None 
     return 0.0
 
 
+def _etf_channel_score(etf_co_holding_count: int | None) -> float:
+    """Each shared ETF contributes 0.04, capped at 0.15 (4+ ETFs)."""
+    if not etf_co_holding_count or etf_co_holding_count <= 0:
+        return 0.0
+    return min(etf_co_holding_count * ETF_CO_HOLDING_PER, ETF_CO_HOLDING_CAP)
+
+
+def _correlation_channel_score(pair_correlation: float | None) -> float:
+    """Map |r| to a channel contribution.
+
+    Caller supplies the Pearson r; we use its absolute value so substitute
+    edges (negative correlation expected) get credit too.
+    """
+    if pair_correlation is None:
+        return 0.0
+    try:
+        r = abs(float(pair_correlation))
+    except (TypeError, ValueError):
+        return 0.0
+    if r >= CORRELATION_HIGH:
+        return CORRELATION_HIGH_WEIGHT
+    if r >= CORRELATION_MEDIUM:
+        return CORRELATION_MEDIUM_WEIGHT
+    return 0.0
+
+
 def composite_confidence_score(
     *,
     evidence: str | None,
     concentration_pct: float | None,
     last_verified_at: str | None,
+    etf_co_holding_count: int | None = None,
+    pair_correlation: float | None = None,
     now: datetime | None = None,
 ) -> float:
-    """Score an edge from its column values. Pure function — easy to test."""
+    """Score an edge from its column values + optional cross-channel signals.
+
+    Pure function — easy to test. Caller passes channel inputs they have;
+    omitted channels contribute 0.
+    """
     score = 0.0
     ev = (evidence or "").lower()
 
@@ -97,6 +137,8 @@ def composite_confidence_score(
 
     score += _pct_channel_score(concentration_pct)
     score += _recent_channel_score(last_verified_at, now=now)
+    score += _etf_channel_score(etf_co_holding_count)
+    score += _correlation_channel_score(pair_correlation)
 
     if score > 1.0:
         score = 1.0
@@ -105,11 +147,33 @@ def composite_confidence_score(
     return round(score, 3)
 
 
-def recompute_for_all(conn) -> dict:
+def _etf_co_holding_count(
+    a: str, b: str, etf_holdings: dict[str, set[str]] | None,
+) -> int:
+    """How many ETFs hold both `a` and `b`."""
+    if not etf_holdings:
+        return 0
+    return sum(1 for syms in etf_holdings.values() if a in syms and b in syms)
+
+
+def recompute_for_all(
+    conn,
+    *,
+    etf_holdings: dict[str, set[str]] | None = None,
+    correlation_fn=None,
+) -> dict:
     """Walk every stock_relations row and write composite_confidence.
 
-    Returns {"updated": N}. Idempotent: a re-run on unchanged data yields
-    the same values.
+    `etf_holdings` (e.g. from `src.data.index_loader.load_all_cached()`):
+        {index_name: set(tickers)}.  Provide to enable the ETF co-holding
+        channel; pass None to skip (channel scores 0).
+
+    `correlation_fn(a, b) -> float | None`:
+        Pearson r between A and B's recent returns. Provide to enable the
+        return-correlation channel; pass None to skip. Should swallow
+        network errors and return None — wrapper does the same just in case.
+
+    Returns {"updated": N}. Idempotent.
     """
     rows = conn.execute(
         "SELECT from_symbol, to_symbol, relation_type, evidence, "
@@ -118,15 +182,26 @@ def recompute_for_all(conn) -> dict:
     ).fetchall()
     updated = 0
     for r in rows:
+        a, b = r["from_symbol"], r["to_symbol"]
+        etf_count = _etf_co_holding_count(a, b, etf_holdings)
+        corr: float | None = None
+        if correlation_fn is not None:
+            try:
+                corr = correlation_fn(a, b)
+            except Exception:
+                corr = None
+
         score = composite_confidence_score(
             evidence=r["evidence"],
             concentration_pct=r["concentration_pct"],
             last_verified_at=r["last_verified_at"],
+            etf_co_holding_count=etf_count,
+            pair_correlation=corr,
         )
         conn.execute(
             "UPDATE stock_relations SET composite_confidence = ? "
             "WHERE from_symbol = ? AND to_symbol = ? AND relation_type = ?",
-            (score, r["from_symbol"], r["to_symbol"], r["relation_type"]),
+            (score, a, b, r["relation_type"]),
         )
         updated += 1
     conn.commit()

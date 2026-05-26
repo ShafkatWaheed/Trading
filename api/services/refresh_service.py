@@ -94,9 +94,20 @@ def _run_freshness() -> dict:
 
 def _run_composite_confidence() -> dict:
     from src.graph.composite_confidence import recompute_for_all
+    from src.data.index_loader import load_all_cached
+
+    # ETF holdings come from data/index_cache/ — pure local read, no network.
+    try:
+        etf_holdings = load_all_cached()
+    except Exception:
+        etf_holdings = None
+
+    # Return-correlation channel stays off by default — would otherwise hit
+    # Tiingo once per pair (344 edges × 2 fetches), exceeding the free-tier
+    # rate budget. Wire it explicitly via a backfill script when ready.
     conn = get_connection()
     try:
-        return recompute_for_all(conn)
+        return recompute_for_all(conn, etf_holdings=etf_holdings, correlation_fn=None)
     finally:
         conn.close()
 

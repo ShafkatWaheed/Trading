@@ -122,3 +122,165 @@ def test_recompute_for_all_writes_score_per_row():
         assert row["composite_confidence"] == 0.5
     finally:
         conn.close()
+
+
+# ── new channels: ETF co-holding + return correlation ───────────
+
+
+def test_etf_co_holding_adds_capped_contribution():
+    """Each shared ETF adds 0.04, up to a cap of 0.15 (4 ETFs)."""
+    # 0 shared → no contribution
+    s0 = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        etf_co_holding_count=0,
+    )
+    s1 = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        etf_co_holding_count=1,
+    )
+    s4 = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        etf_co_holding_count=4,
+    )
+    s10 = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        etf_co_holding_count=10,
+    )
+    assert abs(s1 - s0 - 0.04) < 0.001
+    # Cap at 0.15: 4 ETFs * 0.04 = 0.16 → clamped to 0.15
+    assert abs(s4 - s0 - 0.15) < 0.001
+    # More ETFs don't push past the cap
+    assert s10 == s4
+
+
+def test_pair_correlation_uses_absolute_value():
+    """A strong negative correlation (substitute edge) gets the same channel
+    weight as a strong positive correlation."""
+    pos = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        pair_correlation=0.70,
+    )
+    neg = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        pair_correlation=-0.70,
+    )
+    weak = composite_confidence_score(
+        evidence="10k_mined: x", concentration_pct=None, last_verified_at=None,
+        pair_correlation=0.10,
+    )
+    assert pos == neg
+    # |r|=0.70 ≥ 0.50 → high-correlation weight = 0.15
+    assert abs(pos - 0.20 - 0.15) < 0.001
+    # |r|=0.10 → 0 contribution
+    assert weak == 0.20
+
+
+def test_correlation_threshold_tiers():
+    """Three tiers: |r|>=0.5 → 0.15, |r|>=0.3 → 0.08, below → 0."""
+    base_kwargs = dict(evidence="10k_mined: x", concentration_pct=None, last_verified_at=None)
+    base = composite_confidence_score(**base_kwargs)
+    high = composite_confidence_score(**base_kwargs, pair_correlation=0.55)
+    medium = composite_confidence_score(**base_kwargs, pair_correlation=0.35)
+    low = composite_confidence_score(**base_kwargs, pair_correlation=0.20)
+    assert abs(high - base - 0.15) < 0.001
+    assert abs(medium - base - 0.08) < 0.001
+    assert low == base
+
+
+def test_full_stack_all_channels_can_reach_one():
+    """Hand-seed + 30%+ disclosed + recent + 4 ETFs + r>=0.5 should hit cap."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 5, 26, tzinfo=timezone.utc)
+    recent = (now - timedelta(days=10)).isoformat()
+    s = composite_confidence_score(
+        evidence="seed:hand | x",
+        concentration_pct=40,
+        last_verified_at=recent,
+        etf_co_holding_count=4,
+        pair_correlation=0.6,
+        now=now,
+    )
+    # 0.50 + 0.40 + 0.10 + 0.15 + 0.15 = 1.30 → clamped to 1.0
+    assert s == 1.0
+
+
+def test_recompute_for_all_uses_etf_holdings_when_provided():
+    """If etf_holdings is passed, edges whose endpoints co-appear get bumped."""
+    from src.data.universe_loader import load_tier_a
+    from src.data.relations_seed_loader import load_spine
+    from src.graph.composite_confidence import recompute_for_all
+
+    init_db()
+    load_tier_a()
+    load_spine()
+    conn = get_connection()
+    try:
+        # Synthetic ETF basket: NVDA + TSM held together in 2 funds → +0.08
+        etfs = {
+            "etf_a": {"NVDA", "TSM", "MSFT"},
+            "etf_b": {"NVDA", "TSM"},
+        }
+        recompute_for_all(conn, etf_holdings=etfs)
+        row = conn.execute(
+            "SELECT composite_confidence FROM stock_relations "
+            "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
+        ).fetchone()
+        # hand_seed 0.50 + 2 ETFs (0.08) = 0.58
+        assert row is not None
+        assert abs(row["composite_confidence"] - 0.58) < 0.001
+    finally:
+        conn.close()
+
+
+def test_recompute_for_all_uses_correlation_fn_when_provided():
+    """If correlation_fn is passed, edges with |r|>=0.30 get bumped."""
+    from src.data.universe_loader import load_tier_a
+    from src.data.relations_seed_loader import load_spine
+    from src.graph.composite_confidence import recompute_for_all
+
+    init_db()
+    load_tier_a()
+    load_spine()
+    conn = get_connection()
+    try:
+        # Synthetic correlation: NVDA↔TSM strongly correlated
+        def corr_fn(a, b):
+            if {a, b} == {"NVDA", "TSM"}:
+                return 0.80
+            return None
+
+        recompute_for_all(conn, correlation_fn=corr_fn)
+        row = conn.execute(
+            "SELECT composite_confidence FROM stock_relations "
+            "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
+        ).fetchone()
+        # hand_seed 0.50 + corr 0.15 = 0.65
+        assert row is not None
+        assert abs(row["composite_confidence"] - 0.65) < 0.001
+    finally:
+        conn.close()
+
+
+def test_correlation_fn_exceptions_are_swallowed():
+    """A flaky correlation fetcher must not crash the backfill."""
+    from src.data.universe_loader import load_tier_a
+    from src.data.relations_seed_loader import load_spine
+    from src.graph.composite_confidence import recompute_for_all
+
+    init_db()
+    load_tier_a()
+    load_spine()
+    conn = get_connection()
+    try:
+        def angry_corr_fn(a, b):
+            raise RuntimeError("simulated network failure")
+        out = recompute_for_all(conn, correlation_fn=angry_corr_fn)
+        assert out["updated"] >= 1
+        # Hand-seeded row still scored — just with no correlation contribution
+        row = conn.execute(
+            "SELECT composite_confidence FROM stock_relations "
+            "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
+        ).fetchone()
+        assert row["composite_confidence"] == 0.5
+    finally:
+        conn.close()
