@@ -325,10 +325,11 @@ def _write_relations_from_extraction(
                 INSERT INTO stock_relations
                     (from_symbol, to_symbol, relation_type,
                      strength, polarity, evidence,
-                     concentration_pct, source_filing_date, last_verified_at)
-                VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?)
+                     concentration_pct, source_filing_date, last_verified_at,
+                     effective_from)
+                VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?, ?)
                 ON CONFLICT(from_symbol, to_symbol, relation_type) DO UPDATE SET
-                    -- Never overwrite the hand-loaded spine — keep its strength + evidence.
+                    -- Never overwrite the hand-loaded spine — keep its strength + evidence + dates.
                     strength = CASE
                         WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.strength
                         ELSE MAX(stock_relations.strength, excluded.strength) END,
@@ -342,12 +343,22 @@ def _write_relations_from_extraction(
                     source_filing_date = CASE
                         WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.source_filing_date
                         ELSE COALESCE(excluded.source_filing_date, stock_relations.source_filing_date) END,
-                    last_verified_at = excluded.last_verified_at
+                    last_verified_at = excluded.last_verified_at,
+                    -- effective_from: take the EARLIEST known start so backtests reach
+                    -- as far back as the data supports. Hand seed (NULL) means "always
+                    -- valid" so we don't overwrite NULL with a later filing date.
+                    effective_from = CASE
+                        WHEN stock_relations.evidence LIKE 'seed:hand%' THEN stock_relations.effective_from
+                        WHEN stock_relations.effective_from IS NULL THEN stock_relations.effective_from
+                        WHEN excluded.effective_from IS NULL THEN stock_relations.effective_from
+                        WHEN excluded.effective_from < stock_relations.effective_from THEN excluded.effective_from
+                        ELSE stock_relations.effective_from END
                 """,
                 (
                     symbol, target, relation_type,
                     strength, f"10k_mined: {evidence_text}",
                     concentration_pct, filing_date, now_iso,
+                    filing_date,   # effective_from = filing_date for new 10k_mined edges
                 ),
             )
             written += 1

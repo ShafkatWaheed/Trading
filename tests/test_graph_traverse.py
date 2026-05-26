@@ -261,3 +261,112 @@ def test_expand_finds_inverse_supplier_for_msft():
     via the inverse (NVDA, MSFT, customer) row."""
     out = expand({"MSFT"}, hops=1, edge_types=["supplier"])
     assert "NVDA" in out
+
+
+# ── Temporal filtering (effective_from / effective_to) ───────────
+
+
+def test_neighborhood_with_as_of_excludes_future_dated_edges():
+    """An edge with effective_from > as_of should be invisible.
+
+    Insert a synthetic 10k_mined-style row with effective_from='2025-06-01'.
+    Queries with as_of < that date must NOT see it; queries on/after must."""
+    from src.utils.db import get_connection
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_T1','B','test')"
+        )
+        conn.execute(
+            "INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_T2','B','test')"
+        )
+        conn.execute(
+            "INSERT INTO stock_relations "
+            "(from_symbol, to_symbol, relation_type, strength, polarity, evidence, "
+            " effective_from) "
+            "VALUES ('SYN_T1','SYN_T2','customer',0.65,1.0,'10k_mined: synthetic test', "
+            " '2025-06-01')"
+        )
+        conn.commit()
+
+        # Before effective_from → edge invisible
+        early = neighborhood("SYN_T1", as_of="2025-01-01", conn=conn)
+        assert "SYN_T2" not in [e.to_symbol for e in early["customers"]]
+
+        # On/after effective_from → edge visible
+        later = neighborhood("SYN_T1", as_of="2025-06-15", conn=conn)
+        assert "SYN_T2" in [e.to_symbol for e in later["customers"]]
+
+        # No as_of → edge always visible
+        always = neighborhood("SYN_T1", conn=conn)
+        assert "SYN_T2" in [e.to_symbol for e in always["customers"]]
+    finally:
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_T1' OR to_symbol='SYN_T1'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_T1','SYN_T2')")
+        conn.commit()
+        conn.close()
+
+
+def test_neighborhood_with_as_of_excludes_expired_edges():
+    """An edge with effective_to <= as_of should be invisible. Models e.g.
+    AAPL→INTC supplier (which ended in 2020)."""
+    from src.utils.db import get_connection
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_X1','B','test')")
+        conn.execute("INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_X2','B','test')")
+        conn.execute(
+            "INSERT INTO stock_relations "
+            "(from_symbol, to_symbol, relation_type, strength, polarity, evidence, "
+            " effective_from, effective_to) "
+            "VALUES ('SYN_X1','SYN_X2','supplier',0.65,1.0,'10k_mined: ended', "
+            " '2018-01-01','2020-12-31')"
+        )
+        conn.commit()
+
+        # Within window → visible
+        during = neighborhood("SYN_X1", as_of="2019-06-01", conn=conn)
+        assert "SYN_X2" in [e.to_symbol for e in during["suppliers"]]
+
+        # After effective_to → invisible
+        after = neighborhood("SYN_X1", as_of="2024-01-01", conn=conn)
+        assert "SYN_X2" not in [e.to_symbol for e in after["suppliers"]]
+    finally:
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_X1' OR to_symbol='SYN_X1'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_X1','SYN_X2')")
+        conn.commit()
+        conn.close()
+
+
+def test_neighborhood_without_as_of_returns_all_edges():
+    """Default behavior (no as_of) must be unchanged — all hand-seeded edges
+    (which have NULL effective_from / _to) still appear."""
+    # NVDA has TSM as a hand-seeded supplier with NULL temporal bounds.
+    out = neighborhood("NVDA")
+    assert "TSM" in [e.to_symbol for e in out["suppliers"]]
+
+
+def test_expand_with_as_of_propagates_filter():
+    """expand() must respect as_of for multi-hop relation traversal."""
+    from src.utils.db import get_connection
+    conn = get_connection()
+    try:
+        for s in ("SYN_E1", "SYN_E2"):
+            conn.execute(f"INSERT INTO stocks_universe (symbol, tier, source) VALUES ('{s}','B','test')")
+        conn.execute(
+            "INSERT INTO stock_relations "
+            "(from_symbol, to_symbol, relation_type, strength, polarity, evidence, effective_from) "
+            "VALUES ('SYN_E1','SYN_E2','supplier',0.65,1.0,'10k_mined','2025-06-01')"
+        )
+        conn.commit()
+
+        early = expand({"SYN_E1"}, hops=1, edge_types=["supplier"], as_of="2025-01-01", conn=conn)
+        assert "SYN_E2" not in early
+
+        later = expand({"SYN_E1"}, hops=1, edge_types=["supplier"], as_of="2025-06-15", conn=conn)
+        assert "SYN_E2" in later
+    finally:
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_E1' OR to_symbol='SYN_E1'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_E1','SYN_E2')")
+        conn.commit()
+        conn.close()

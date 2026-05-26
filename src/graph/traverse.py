@@ -103,6 +103,7 @@ def _relations_of(
     symbol: str,
     *,
     relation_types: Iterable[str] | None = None,
+    as_of: str | None = None,
 ) -> list[Edge]:
     """All stock_relations edges touching `symbol`, filtered by type.
 
@@ -114,10 +115,26 @@ def _relations_of(
 
     This makes traversal symmetric over a one-row-per-relationship storage:
     we don't need to write mirror rows, the reader sees both directions.
+
+    `as_of` (ISO 8601 date): point-in-time filter. When set, an edge is
+    returned only if it was in effect at that date — i.e.
+        (effective_from IS NULL OR effective_from <= as_of)
+        AND (effective_to IS NULL OR effective_to > as_of)
+    NULL bounds mean "always valid" / "still in effect" — the default for
+    every hand-seeded edge. Required by CLAUDE.md's no-lookahead rule.
     """
     # When the caller filters by edge_type, we must also pull rows whose stored
     # type flips to the requested one. e.g. "give me suppliers of X" requires
     # both (from_symbol=X, type=supplier) AND (to_symbol=X, type=customer).
+    temporal_clause = ""
+    temporal_params: list = []
+    if as_of is not None:
+        temporal_clause = (
+            " AND (effective_from IS NULL OR effective_from <= ?)"
+            " AND (effective_to IS NULL OR effective_to > ?)"
+        )
+        temporal_params = [as_of, as_of]
+
     if relation_types:
         forward_types = {t for t in relation_types}
         inverse_types = {_flip(t) for t in relation_types}
@@ -128,15 +145,17 @@ def _relations_of(
             FROM stock_relations
             WHERE (from_symbol = ? OR to_symbol = ?)
               AND relation_type IN ({ph})
+              {temporal_clause}
         """
-        params = [symbol, symbol, *types_to_match]
+        params = [symbol, symbol, *types_to_match, *temporal_params]
     else:
-        sql = """
+        sql = f"""
             SELECT from_symbol, to_symbol, relation_type, strength, polarity, evidence
             FROM stock_relations
-            WHERE from_symbol = ? OR to_symbol = ?
+            WHERE (from_symbol = ? OR to_symbol = ?)
+              {temporal_clause}
         """
-        params = [symbol, symbol]
+        params = [symbol, symbol, *temporal_params]
 
     rows = conn.execute(sql, params).fetchall()
 
@@ -197,6 +216,7 @@ def expand(
     hops: int = 1,
     edge_types: Iterable[str] | None = None,
     starting_polarity: dict[str, float] | None = None,
+    as_of: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict[str, GraphResult]:
     """Walk the graph BFS-style up to `hops` hops from `seed`.
@@ -209,6 +229,10 @@ def expand(
         starting_polarity: optional per-seed polarity carrier (e.g. for news
             impact: a stock surfaced by a +keyword carries +1; by a -keyword
             carries -1). Defaults to +1 for every seed.
+        as_of: ISO 8601 date — point-in-time filter for relation edges. Peer
+            edges (stock_peers) are NOT filtered today; only stock_relations
+            edges respect this. NULL effective_from/_to bounds mean "always
+            valid" and pass any as_of. Required by CLAUDE.md no-lookahead rule.
 
     Returns:
         Dict {symbol: GraphResult}. Seed symbols included with hop=0.
@@ -250,7 +274,7 @@ def expand(
                     edges.extend(_peers_of(conn, sym))
                 relation_subset = types & {"supplier", "customer", "substitute", "complement"}
                 if relation_subset:
-                    edges.extend(_relations_of(conn, sym, relation_types=relation_subset))
+                    edges.extend(_relations_of(conn, sym, relation_types=relation_subset, as_of=as_of))
 
                 for edge in edges:
                     target = edge.to_symbol
@@ -306,9 +330,14 @@ def expand(
 def neighborhood(
     symbol: str,
     *,
+    as_of: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict[str, list[Edge]]:
     """Convenience: 1-hop expansion split by direction.
+
+    `as_of` (ISO 8601 date) filters relation edges to those in effect at
+    that date — see `_relations_of` for the rule. Peer edges are not yet
+    temporally bounded.
 
     Returns:
         {
@@ -326,7 +355,7 @@ def neighborhood(
     sym = symbol.upper()
     try:
         peers = _peers_of(conn, sym)
-        rels = _relations_of(conn, sym)
+        rels = _relations_of(conn, sym, as_of=as_of)
         return {
             "suppliers":   [e for e in rels if e.edge_type == "supplier"],
             "customers":   [e for e in rels if e.edge_type == "customer"],

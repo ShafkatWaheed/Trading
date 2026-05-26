@@ -254,6 +254,8 @@ def init_db() -> None:
             concentration_pct REAL,             -- disclosed customer concentration % (10..100) if 10-K quantified it
             source_filing_date TEXT,            -- filing date the % was extracted from (ISO 8601)
             last_verified_at TEXT,              -- last refresh timestamp (ISO 8601)
+            effective_from TEXT,                -- ISO 8601 date the edge started (NULL = always valid)
+            effective_to TEXT,                  -- ISO 8601 date the edge ended (NULL = still in effect)
             PRIMARY KEY (from_symbol, to_symbol, relation_type)
         );
         CREATE INDEX IF NOT EXISTS idx_stock_relations_from ON stock_relations(from_symbol);
