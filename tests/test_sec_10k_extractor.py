@@ -514,3 +514,97 @@ def test_hand_seed_strength_and_pct_are_preserved():
         assert after["concentration_pct"] is None
     finally:
         conn.close()
+
+
+def test_process_symbol_persists_filing_date_from_3tuple_fetcher():
+    """End-to-end: a 3-tuple fetch_fn (item_1a, url, filing_date) threads
+    filing_date through to the stock_relations row."""
+    init_db()
+    load_tier_a()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM stocks_universe WHERE symbol='SYN_FD'")
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_FD'")
+        conn.execute("DELETE FROM tenk_jobs WHERE symbol='SYN_FD'")
+        conn.execute(
+            "INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_FD','B','test')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fake_fetch(sym):
+        return ("Item 1A: We depend on TSM.", "https://example/10k", "2024-03-15")
+
+    def fake_extract(prompt, **kw):
+        return {
+            "suppliers": [
+                {"symbol": "TSM", "name": "TSMC", "revenue_pct": None,
+                 "evidence": "named only"},
+            ],
+            "customers": [],
+            "joint_ventures": [],
+        }
+
+    out = process_symbol("SYN_FD", fetch_fn=fake_fetch, extract_fn=fake_extract)
+    assert out["edges_written"] == 1
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT source_filing_date, last_verified_at FROM stock_relations "
+            "WHERE from_symbol='SYN_FD' AND to_symbol='TSM'"
+        ).fetchone()
+        assert row["source_filing_date"] == "2024-03-15"
+        assert row["last_verified_at"] is not None
+    finally:
+        conn.execute("DELETE FROM tenk_jobs WHERE symbol='SYN_FD'")
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_FD'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol='SYN_FD'")
+        conn.commit()
+        conn.close()
+
+
+def test_process_symbol_tolerates_legacy_2tuple_fetcher():
+    """Older mocks that return (item_1a, filing_url) — without filing_date —
+    must still work; filing_date persists as NULL on the row."""
+    init_db()
+    load_tier_a()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM stocks_universe WHERE symbol='SYN_FD2'")
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_FD2'")
+        conn.execute("DELETE FROM tenk_jobs WHERE symbol='SYN_FD2'")
+        conn.execute(
+            "INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_FD2','B','test')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def legacy_fetch(sym):
+        return ("Item 1A: text.", "https://example/10k")
+
+    def fake_extract(prompt, **kw):
+        return {
+            "suppliers": [{"symbol": "TSM", "name": "TSMC", "evidence": "x"}],
+            "customers": [], "joint_ventures": [],
+        }
+
+    out = process_symbol("SYN_FD2", fetch_fn=legacy_fetch, extract_fn=fake_extract)
+    assert out["edges_written"] == 1
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT source_filing_date, last_verified_at FROM stock_relations "
+            "WHERE from_symbol='SYN_FD2' AND to_symbol='TSM'"
+        ).fetchone()
+        assert row["source_filing_date"] is None
+        assert row["last_verified_at"] is not None
+    finally:
+        conn.execute("DELETE FROM tenk_jobs WHERE symbol='SYN_FD2'")
+        conn.execute("DELETE FROM stock_relations WHERE from_symbol='SYN_FD2'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol='SYN_FD2'")
+        conn.commit()
+        conn.close()

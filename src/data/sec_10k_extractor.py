@@ -139,11 +139,14 @@ def extract_item_1a(filing_text: str) -> str | None:
     return text[start:end].strip() or None
 
 
-def fetch_latest_10k_text(symbol: str) -> tuple[str | None, str | None]:
-    """Returns (item_1a_text, filing_url). Either may be None on failure.
+def fetch_latest_10k_text(
+    symbol: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Returns (item_1a_text, filing_url, filing_date).
 
-    Uses the existing SECEdgarProvider for CIK lookup + httpx for the filing
-    download. Strips HTML and isolates Item 1A.
+    `filing_date` is the SEC `filingDate` field (ISO 8601 YYYY-MM-DD). Any
+    element may be None on failure. Uses the existing SECEdgarProvider for
+    CIK lookup + httpx for the filing download.
     """
     from src.data.sec_edgar import SECEdgarProvider
 
@@ -151,9 +154,9 @@ def fetch_latest_10k_text(symbol: str) -> tuple[str | None, str | None]:
     try:
         cik = provider._get_cik(symbol)
     except Exception:
-        return None, None
+        return None, None, None
     if not cik:
-        return None, None
+        return None, None, None
 
     cik_padded = cik.zfill(10)
     submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
@@ -162,34 +165,37 @@ def fetch_latest_10k_text(symbol: str) -> tuple[str | None, str | None]:
         resp.raise_for_status()
         data = resp.json()
     except Exception:
-        return None, None
+        return None, None, None
 
     # Find the latest 10-K from recent filings
     recent = data.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
     primary_docs = recent.get("primaryDocument", [])
+    filing_dates = recent.get("filingDate", [])
 
-    filing_url = None
+    filing_url: str | None = None
+    filing_date: str | None = None
     for i, form in enumerate(forms):
         if form == "10-K":
             acc = accessions[i].replace("-", "")
             doc = primary_docs[i]
             filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{doc}"
+            filing_date = filing_dates[i] if i < len(filing_dates) else None
             break
 
     if not filing_url:
-        return None, None
+        return None, None, None
 
     try:
         resp = httpx.get(filing_url, headers=SEC_HEADERS, timeout=60)
         resp.raise_for_status()
         plain = _strip_html(resp.text)
     except Exception:
-        return None, filing_url
+        return None, filing_url, filing_date
 
     item_1a = extract_item_1a(plain)
-    return item_1a, filing_url
+    return item_1a, filing_url, filing_date
 
 
 # ── job state helpers ────────────────────────────────────────────
@@ -379,8 +385,14 @@ def process_symbol(
     conn.commit()
 
     try:
-        # 1. Fetch
-        item_1a, filing_url = fetch_fn(symbol)
+        # 1. Fetch — tolerate 2-tuple (legacy mocks) or 3-tuple (current) returns.
+        fetch_result = fetch_fn(symbol)
+        if isinstance(fetch_result, tuple) and len(fetch_result) == 3:
+            item_1a, filing_url, filing_date = fetch_result
+        else:
+            item_1a, filing_url = fetch_result  # type: ignore[misc]
+            filing_date = None
+
         if not item_1a:
             _mark(conn, symbol, status="failed",
                   filing_url=filing_url,
@@ -405,6 +417,7 @@ def process_symbol(
         }
         n = _write_relations_from_extraction(
             conn, symbol=symbol, parsed=parsed, valid_universe=universe,
+            filing_date=filing_date,
         )
         _mark(conn, symbol, status="done", filing_url=filing_url, edges_written=n)
         conn.commit()
