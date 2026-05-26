@@ -102,12 +102,44 @@ def _run_composite_confidence() -> dict:
     except Exception:
         etf_holdings = None
 
-    # Return-correlation channel stays off by default — would otherwise hit
-    # Tiingo once per pair (344 edges × 2 fetches), exceeding the free-tier
-    # rate budget. Wire it explicitly via a backfill script when ready.
+    # Return-correlation + news-co-mention channels stay off by default in
+    # this kind — they cost network. Run the dedicated backfill kinds
+    # (correlation_backfill, news_co_mention_backfill) to populate them.
     conn = get_connection()
     try:
         return recompute_for_all(conn, etf_holdings=etf_holdings, correlation_fn=None)
+    finally:
+        conn.close()
+
+
+def _run_correlation_backfill() -> dict:
+    """Refresh kind: fetch returns + populate correlation channel."""
+    # Reuse the script's `main` so the refresh kind and the CLI stay in sync.
+    from scripts.backfill_correlation_channel import main as _backfill
+    _backfill()  # logs to stdout; refresh_jobs.result_json gets the summary below
+    # Quick summary for the result panel
+    conn = get_connection()
+    try:
+        rows_with_corr = conn.execute(
+            "SELECT COUNT(*) FROM stock_relations WHERE composite_confidence >= 0.6"
+        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM stock_relations").fetchone()[0]
+        return {"high_confidence_edges": rows_with_corr, "total_edges": total}
+    finally:
+        conn.close()
+
+
+def _run_news_co_mention_backfill() -> dict:
+    """Refresh kind: fetch recent news per symbol + populate news channel."""
+    from scripts.backfill_news_co_mention_channel import main as _backfill
+    _backfill()
+    conn = get_connection()
+    try:
+        with_news = conn.execute(
+            "SELECT COUNT(*) FROM stock_relations WHERE composite_confidence >= 0.6"
+        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM stock_relations").fetchone()[0]
+        return {"high_confidence_edges": with_news, "total_edges": total}
     finally:
         conn.close()
 
@@ -176,6 +208,19 @@ def _prog_composite_confidence() -> tuple[int, int]:
     return done, total
 
 
+def _prog_correlation_backfill() -> tuple[int, int]:
+    """Approximate: edges scoring at-or-above the correlation-boosted threshold."""
+    done = _count(
+        "SELECT COUNT(*) FROM stock_relations WHERE composite_confidence IS NOT NULL"
+    )
+    total = _count("SELECT COUNT(*) FROM stock_relations")
+    return done, total
+
+
+def _prog_news_co_mention_backfill() -> tuple[int, int]:
+    return _prog_correlation_backfill()
+
+
 KIND_REGISTRY: dict[str, tuple[Callable[[], dict], Callable[[], tuple[int, int]], str]] = {
     "universe":      (_run_universe,    _prog_universe,    "Pull S&P/R1k/R2k ETF holdings and upsert stocks_universe."),
     "industries":    (_run_industries,  _prog_industries,  "Pull yfinance industry tag for every untagged stock."),
@@ -186,7 +231,11 @@ KIND_REGISTRY: dict[str, tuple[Callable[[], dict], Callable[[], tuple[int, int]]
     "13f_overlap":   (_run_13f_overlap, _prog_13f_overlap, "Re-materialise common-institutional-holder edges."),
     "freshness":     (_run_freshness,   _prog_freshness,   "Run 5-layer freshness orchestrator and queue drift."),
     "composite_confidence": (_run_composite_confidence, _prog_composite_confidence,
-                             "Recompute composite_confidence for every edge from its evidence channels."),
+                             "Recompute composite_confidence for every edge (hand seed + 10-K + recent + ETF channels; no network)."),
+    "correlation_backfill": (_run_correlation_backfill, _prog_correlation_backfill,
+                             "Fetch 60-day returns per symbol (Tiingo, cached) and add the return-correlation channel to composite_confidence."),
+    "news_co_mention_backfill": (_run_news_co_mention_backfill, _prog_news_co_mention_backfill,
+                                 "Fetch recent news per symbol (Tavily/Exa/RSS, cached) and add the news-co-mention channel to composite_confidence."),
 }
 
 

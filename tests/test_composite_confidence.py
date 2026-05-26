@@ -8,6 +8,7 @@ from src.data.relations_seed_loader import load_spine
 from src.data.universe_loader import load_tier_a
 from src.graph.composite_confidence import (
     composite_confidence_score,
+    count_news_co_mentions,
     recompute_for_all,
 )
 from src.utils.db import get_connection, init_db
@@ -281,6 +282,99 @@ def test_correlation_fn_exceptions_are_swallowed():
             "SELECT composite_confidence FROM stock_relations "
             "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
         ).fetchone()
+        assert row["composite_confidence"] == 0.5
+    finally:
+        conn.close()
+
+
+# ── news co-mention channel ─────────────────────────────────────
+
+
+def test_count_news_co_mentions_finds_ticker_in_title():
+    articles = [
+        {"title": "Apple results lift sentiment; MSFT also strong", "content_snippet": ""},
+        {"title": "Tech rally", "content_snippet": "AAPL up but TSM held back."},
+        {"title": "Unrelated story", "content_snippet": "Banking news."},
+    ]
+    # AAPL articles mentioning TSM
+    assert count_news_co_mentions("AAPL", "TSM", articles_for_target=articles) == 1
+
+
+def test_count_news_co_mentions_uses_aliases():
+    """If the article uses the company name instead of the ticker, aliases catch it."""
+    articles = [
+        {"title": "Microsoft signs deal with Apple", "content_snippet": ""},
+    ]
+    n = count_news_co_mentions(
+        "AAPL", "MSFT",
+        articles_for_target=articles,
+        other_aliases=["Microsoft"],
+    )
+    assert n == 1
+
+
+def test_count_news_co_mentions_empty_articles_returns_zero():
+    assert count_news_co_mentions("AAPL", "MSFT", articles_for_target=[]) == 0
+
+
+def test_news_channel_score_tiers():
+    """3 tiers: 6+ → 0.10; 3-5 → 0.06; 1-2 → 0.03; 0 → 0."""
+    base_kwargs = dict(evidence="10k_mined: x", concentration_pct=None, last_verified_at=None)
+    base = composite_confidence_score(**base_kwargs)
+    s1 = composite_confidence_score(**base_kwargs, news_co_mention_count=1)
+    s4 = composite_confidence_score(**base_kwargs, news_co_mention_count=4)
+    s10 = composite_confidence_score(**base_kwargs, news_co_mention_count=10)
+    assert abs(s1 - base - 0.03) < 0.001
+    assert abs(s4 - base - 0.06) < 0.001
+    assert abs(s10 - base - 0.10) < 0.001
+
+
+def test_recompute_for_all_uses_news_co_mention_fn():
+    """If news_co_mention_fn returns a count, that channel contributes."""
+    from src.data.universe_loader import load_tier_a
+    from src.data.relations_seed_loader import load_spine
+    from src.graph.composite_confidence import recompute_for_all
+
+    init_db()
+    load_tier_a()
+    load_spine()
+    conn = get_connection()
+    try:
+        def news_fn(a, b):
+            if {a, b} == {"NVDA", "TSM"}:
+                return 7   # → high-tier 0.10 contribution
+            return 0
+        recompute_for_all(conn, news_co_mention_fn=news_fn)
+        row = conn.execute(
+            "SELECT composite_confidence FROM stock_relations "
+            "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
+        ).fetchone()
+        # hand_seed 0.50 + news 0.10 = 0.60
+        assert row is not None
+        assert abs(row["composite_confidence"] - 0.60) < 0.001
+    finally:
+        conn.close()
+
+
+def test_news_co_mention_fn_exceptions_are_swallowed():
+    from src.data.universe_loader import load_tier_a
+    from src.data.relations_seed_loader import load_spine
+    from src.graph.composite_confidence import recompute_for_all
+
+    init_db()
+    load_tier_a()
+    load_spine()
+    conn = get_connection()
+    try:
+        def angry(a, b):
+            raise RuntimeError("simulated tavily 429")
+        out = recompute_for_all(conn, news_co_mention_fn=angry)
+        assert out["updated"] >= 1
+        row = conn.execute(
+            "SELECT composite_confidence FROM stock_relations "
+            "WHERE from_symbol='NVDA' AND to_symbol='TSM' AND relation_type='supplier'"
+        ).fetchone()
+        # No channels lit beyond hand_seed → 0.5
         assert row["composite_confidence"] == 0.5
     finally:
         conn.close()

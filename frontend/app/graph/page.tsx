@@ -42,6 +42,7 @@ import {
   ArrowRight,
   Zap,
   Square,
+  Newspaper,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -89,7 +90,9 @@ const KIND_META: Record<
   tenk_mining:  { title: "10-K supply chain",    icon: FileText,   accent: "text-accent-green",  eta: "1-2 hr" },
   "13f_overlap":{ title: "13F overlap edges",    icon: Building2,  accent: "text-accent-violet", eta: "<1s" },
   freshness:    { title: "Freshness scan",       icon: Eye,        accent: "text-accent-cyan",   eta: "minutes" },
-  composite_confidence: { title: "Composite confidence", icon: Zap, accent: "text-accent-amber", eta: "<5s" },
+  composite_confidence: { title: "Composite confidence (cheap)", icon: Zap, accent: "text-accent-amber", eta: "<5s" },
+  correlation_backfill: { title: "Correlation channel (Tiingo)", icon: Square, accent: "text-accent-blue", eta: "5-10 min" },
+  news_co_mention_backfill: { title: "News co-mention (Tavily/RSS)", icon: Newspaper, accent: "text-accent-pink", eta: "5-15 min" },
 };
 
 // ── freshness queue metadata ─────────────────────────────────────────

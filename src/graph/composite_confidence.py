@@ -50,6 +50,11 @@ CORRELATION_HIGH       = 0.50   # |r| >= 0.50 → strong corr
 CORRELATION_MEDIUM     = 0.30   # |r| >= 0.30 → medium corr
 CORRELATION_HIGH_WEIGHT   = 0.15
 CORRELATION_MEDIUM_WEIGHT = 0.08
+NEWS_CO_MENTION_HIGH   = 6      # 6+ co-mentions in last 90d → strong signal
+NEWS_CO_MENTION_MED    = 3      # 3..5 → medium
+NEWS_CO_MENTION_HIGH_WEIGHT = 0.10
+NEWS_CO_MENTION_MED_WEIGHT  = 0.06
+NEWS_CO_MENTION_LOW_WEIGHT  = 0.03    # 1..2 → small signal (could be noise)
 
 
 def _pct_channel_score(concentration_pct: float | None) -> float:
@@ -113,6 +118,46 @@ def _correlation_channel_score(pair_correlation: float | None) -> float:
     return 0.0
 
 
+def _news_channel_score(news_co_mention_count: int | None) -> float:
+    """3 tiers based on how many recent articles mention both endpoints."""
+    if not news_co_mention_count or news_co_mention_count <= 0:
+        return 0.0
+    if news_co_mention_count >= NEWS_CO_MENTION_HIGH:
+        return NEWS_CO_MENTION_HIGH_WEIGHT
+    if news_co_mention_count >= NEWS_CO_MENTION_MED:
+        return NEWS_CO_MENTION_MED_WEIGHT
+    return NEWS_CO_MENTION_LOW_WEIGHT
+
+
+def count_news_co_mentions(
+    target: str,
+    other: str,
+    *,
+    articles_for_target: list[dict],
+    other_aliases: list[str] | None = None,
+) -> int:
+    """How many of `target`'s recent articles also mention `other`?
+
+    Pure function — caller supplies pre-fetched articles (cached news avoids
+    network in the hot path). Match is case-insensitive against `title` +
+    `content_snippet`; `other_aliases` adds company names beyond the bare
+    ticker (e.g. ['Microsoft', 'MSFT.US'] for MSFT).
+    """
+    if not articles_for_target:
+        return 0
+    needles = {other.lower()}
+    if other_aliases:
+        for alias in other_aliases:
+            if alias:
+                needles.add(alias.lower())
+    count = 0
+    for art in articles_for_target:
+        text = ((art.get("title") or "") + " " + (art.get("content_snippet") or "")).lower()
+        if any(n in text for n in needles):
+            count += 1
+    return count
+
+
 def composite_confidence_score(
     *,
     evidence: str | None,
@@ -120,6 +165,7 @@ def composite_confidence_score(
     last_verified_at: str | None,
     etf_co_holding_count: int | None = None,
     pair_correlation: float | None = None,
+    news_co_mention_count: int | None = None,
     now: datetime | None = None,
 ) -> float:
     """Score an edge from its column values + optional cross-channel signals.
@@ -139,6 +185,7 @@ def composite_confidence_score(
     score += _recent_channel_score(last_verified_at, now=now)
     score += _etf_channel_score(etf_co_holding_count)
     score += _correlation_channel_score(pair_correlation)
+    score += _news_channel_score(news_co_mention_count)
 
     if score > 1.0:
         score = 1.0
@@ -161,6 +208,7 @@ def recompute_for_all(
     *,
     etf_holdings: dict[str, set[str]] | None = None,
     correlation_fn=None,
+    news_co_mention_fn=None,
 ) -> dict:
     """Walk every stock_relations row and write composite_confidence.
 
@@ -170,8 +218,11 @@ def recompute_for_all(
 
     `correlation_fn(a, b) -> float | None`:
         Pearson r between A and B's recent returns. Provide to enable the
-        return-correlation channel; pass None to skip. Should swallow
-        network errors and return None — wrapper does the same just in case.
+        return-correlation channel; pass None to skip. Exceptions swallowed.
+
+    `news_co_mention_fn(a, b) -> int | None`:
+        Count of recent articles mentioning both. Provide to enable the
+        news-co-mention channel; pass None to skip. Exceptions swallowed.
 
     Returns {"updated": N}. Idempotent.
     """
@@ -190,6 +241,12 @@ def recompute_for_all(
                 corr = correlation_fn(a, b)
             except Exception:
                 corr = None
+        news_count: int | None = None
+        if news_co_mention_fn is not None:
+            try:
+                news_count = news_co_mention_fn(a, b)
+            except Exception:
+                news_count = None
 
         score = composite_confidence_score(
             evidence=r["evidence"],
@@ -197,6 +254,7 @@ def recompute_for_all(
             last_verified_at=r["last_verified_at"],
             etf_co_holding_count=etf_count,
             pair_correlation=corr,
+            news_co_mention_count=news_count,
         )
         conn.execute(
             "UPDATE stock_relations SET composite_confidence = ? "
