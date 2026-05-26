@@ -35,16 +35,43 @@ import {
   Clock,
   Pin,
   Network,
+  Compass,
+  TrendingDown,
+  TrendingUp,
+  Search,
+  ArrowRight,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { freshnessApi, refreshApi } from "@/lib/api/endpoints";
+import { freshnessApi, graphApi, refreshApi } from "@/lib/api/endpoints";
 import type {
+  ActiveTheme,
+  DiscoverImpactResponse,
   FreshnessQueueRow,
   RefreshJob,
   RefreshKindMeta,
+  RelevanceScoreItem,
 } from "@/lib/api/types";
 import { cn, formatRelativeTime } from "@/lib/utils";
+
+// Curated commodity dropdown — covers the most-actionable trader themes.
+// (32 commodities exist in the DB; this short list keeps the form focused.)
+const COMMODITY_OPTIONS: { code: string; label: string }[] = [
+  { code: "crude_oil",   label: "Crude Oil (WTI)" },
+  { code: "brent_oil",   label: "Crude Oil (Brent)" },
+  { code: "natural_gas", label: "Natural Gas" },
+  { code: "gasoline",    label: "Gasoline" },
+  { code: "uranium",     label: "Uranium" },
+  { code: "copper",      label: "Copper" },
+  { code: "gold",        label: "Gold" },
+  { code: "silver",      label: "Silver" },
+  { code: "steel",       label: "Steel" },
+  { code: "aluminum",    label: "Aluminum" },
+  { code: "lithium",     label: "Lithium" },
+  { code: "corn",        label: "Corn" },
+  { code: "wheat",       label: "Wheat" },
+  { code: "coffee",      label: "Coffee" },
+];
 
 // ── refresh kind metadata ────────────────────────────────────────────
 
@@ -434,6 +461,217 @@ function ReviewQueue() {
   );
 }
 
+// ── Discovery: trader-grade "what's impacted?" ───────────────────────
+
+type DiscoverMode = "stock" | "commodity";
+
+function ScoreBar({ score }: { score: number }) {
+  const pct = Math.min(100, Math.abs(score) * 100);
+  const tone = score >= 0 ? "bg-accent-green" : "bg-accent-red";
+  return (
+    <div className="h-1 w-16 bg-bg-card2 rounded overflow-hidden shrink-0">
+      <div className={cn("h-full transition-[width] duration-300", tone)} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function ResultRow({ row }: { row: RelevanceScoreItem }) {
+  const pos = row.score >= 0;
+  return (
+    <div className="card p-2.5 flex items-center gap-3">
+      <Link
+        href={`/neighborhood/${encodeURIComponent(row.symbol)}`}
+        className="font-mono text-[13px] font-semibold tabular-nums hover:text-accent-violet w-[64px] shrink-0"
+      >
+        {row.symbol}
+      </Link>
+      <span
+        className={cn(
+          "text-[11px] font-mono tabular-nums w-[52px] shrink-0",
+          pos ? "text-accent-green" : "text-accent-red",
+        )}
+      >
+        {pos ? "+" : ""}{row.score.toFixed(2)}
+      </span>
+      <ScoreBar score={row.score} />
+      <div className="text-[11px] text-text-secondary flex-1 min-w-0 truncate" title={row.reasons.join(" · ")}>
+        {row.reasons.length > 0 ? row.reasons.join(" · ") : "—"}
+      </div>
+    </div>
+  );
+}
+
+function DiscoverImpact() {
+  const [mode, setMode] = useState<DiscoverMode>("stock");
+  const [stockInput, setStockInput] = useState("NVDA");
+  const [commodity, setCommodity] = useState("crude_oil");
+  const [direction, setDirection] = useState<"up" | "down">("down");
+  const [intensity, setIntensity] = useState(1.0);
+  const [result, setResult] = useState<DiscoverImpactResponse | null>(null);
+
+  const discover = useMutation({
+    mutationFn: () => {
+      const theme: ActiveTheme =
+        mode === "stock"
+          ? { target_stock: stockInput.trim().toUpperCase(), direction, intensity }
+          : { commodity_code: commodity, direction, intensity };
+      return graphApi.discoverImpact({
+        active_themes: [theme],
+        limit: 25,
+        bullish_only: false,
+      });
+    },
+    onSuccess: (r) => setResult(r),
+  });
+
+  const reflectedTheme = useMemo(() => {
+    if (mode === "stock") {
+      return `${stockInput.trim().toUpperCase() || "—"} ${direction === "up" ? "↑" : "↓"} · intensity ${intensity.toFixed(1)}`;
+    }
+    const label = COMMODITY_OPTIONS.find((c) => c.code === commodity)?.label ?? commodity;
+    return `${label} ${direction === "up" ? "↑" : "↓"} · intensity ${intensity.toFixed(1)}`;
+  }, [mode, stockInput, commodity, direction, intensity]);
+
+  return (
+    <section className="card p-4 mb-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Compass size={16} className="text-accent-blue" strokeWidth={2.2} />
+        <h2 className="text-[14px] font-semibold">Discover impact</h2>
+        <span className="text-[11px] text-text-muted">
+          — propose a shock, see who's hit (or helped) through the graph
+        </span>
+      </div>
+
+      {/* Mode tabs */}
+      <div className="inline-flex rounded-md border border-bg-border bg-bg-card2 p-0.5 mb-3">
+        {(["stock", "commodity"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={cn(
+              "px-3 py-1 text-[11px] font-medium rounded transition-colors",
+              mode === m
+                ? "bg-accent-blue/15 text-accent-blue"
+                : "text-text-secondary hover:text-text-primary",
+            )}
+          >
+            {m === "stock" ? "Stock shock" : "Commodity shock"}
+          </button>
+        ))}
+      </div>
+
+      {/* Input row */}
+      <div className="flex items-end gap-2 flex-wrap mb-3">
+        {mode === "stock" ? (
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-text-muted block mb-1">Symbol</label>
+            <input
+              value={stockInput}
+              onChange={(e) => setStockInput(e.target.value.toUpperCase())}
+              placeholder="NVDA"
+              className="bg-bg-card2 border border-bg-border rounded-md px-2.5 py-1.5 text-[13px] font-mono w-[110px] focus:outline-none focus:border-accent-blue/50"
+            />
+          </div>
+        ) : (
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-text-muted block mb-1">Commodity</label>
+            <select
+              value={commodity}
+              onChange={(e) => setCommodity(e.target.value)}
+              className="bg-bg-card2 border border-bg-border rounded-md px-2.5 py-1.5 text-[13px] w-[180px] focus:outline-none focus:border-accent-blue/50"
+            >
+              {COMMODITY_OPTIONS.map((c) => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label className="text-[10px] uppercase tracking-wider text-text-muted block mb-1">Direction</label>
+          <div className="inline-flex rounded-md border border-bg-border bg-bg-card2 p-0.5">
+            <button
+              onClick={() => setDirection("up")}
+              className={cn(
+                "px-2.5 py-1 text-[11px] font-medium rounded inline-flex items-center gap-1 transition-colors",
+                direction === "up"
+                  ? "bg-accent-green/15 text-accent-green"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              <TrendingUp size={11} /> Up
+            </button>
+            <button
+              onClick={() => setDirection("down")}
+              className={cn(
+                "px-2.5 py-1 text-[11px] font-medium rounded inline-flex items-center gap-1 transition-colors",
+                direction === "down"
+                  ? "bg-accent-red/15 text-accent-red"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              <TrendingDown size={11} /> Down
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[10px] uppercase tracking-wider text-text-muted block mb-1">
+            Intensity <span className="font-mono">{intensity.toFixed(1)}</span>
+          </label>
+          <input
+            type="range"
+            min={0.2} max={1.5} step={0.1}
+            value={intensity}
+            onChange={(e) => setIntensity(parseFloat(e.target.value))}
+            className="w-[120px] h-[28px] accent-accent-blue"
+          />
+        </div>
+
+        <button
+          onClick={() => discover.mutate()}
+          disabled={discover.isPending || (mode === "stock" && !stockInput.trim())}
+          className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue border-accent-blue/30 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Search size={11} className={discover.isPending ? "animate-spin" : ""} />
+          {discover.isPending ? "Searching…" : "See impact"}
+          {!discover.isPending && <ArrowRight size={11} />}
+        </button>
+      </div>
+
+      {/* Results */}
+      {result && (
+        <div>
+          <div className="text-[11px] text-text-muted mb-2">
+            <span className="font-mono text-text-secondary">{reflectedTheme}</span>
+            {" · "}
+            {result.relevance.length === 0
+              ? "no stocks reached above the relevance threshold"
+              : `${result.relevance.length} of ${result.total.toLocaleString()} affected (ranked by |score|)`}
+          </div>
+          <div className="space-y-1.5">
+            {result.relevance.slice(0, 25).map((row) => (
+              <ResultRow key={row.symbol} row={row} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {discover.isError && (
+        <div className="text-[11px] text-accent-redSoft bg-accent-red/10 rounded p-2 mt-2">
+          Failed to compute relevance. Make sure the API is running on :8000.
+        </div>
+      )}
+
+      {!result && !discover.isPending && (
+        <div className="text-[11px] text-text-muted italic">
+          Pick a stock or commodity, set direction + intensity, then click <span className="text-text-secondary">See impact</span>.
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────
 
 export default function GraphPage() {
@@ -463,6 +701,9 @@ export default function GraphPage() {
         accent="text-accent-blue"
         iconBg="bg-accent-blue/10"
       />
+
+      {/* 0. discovery — trader-grade "what's impacted?" surface */}
+      <DiscoverImpact />
 
       {/* 1. health strip */}
       <HealthStrip />

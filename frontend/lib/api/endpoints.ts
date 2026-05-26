@@ -68,6 +68,8 @@ import type {
   EntityMatches,
   Fundamentals,
   CoHolders,
+  DiscoverImpactRequest,
+  DiscoverImpactResponse,
 } from "./types";
 
 export const marketApi = {
@@ -450,6 +452,8 @@ export const graphApi = {
     api.get<InstitutionHoldingsResponse>(
       `/graph/institution/${encodeURIComponent(cik)}/holdings?max_results=${max_results}`
     ),
+  discoverImpact: (req: DiscoverImpactRequest) =>
+    api.post<DiscoverImpactResponse>("/graph/relevance", req),
 };
 
 export const freshnessApi = {

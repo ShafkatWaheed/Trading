@@ -1001,6 +1001,35 @@ export type NeighborhoodResponse = {
   complements: NeighborEdge[];
 };
 
+// ── /graph/relevance — trader-grade impact discovery ─────────────────
+
+export type ActiveTheme = {
+  commodity_code?: string | null;
+  direction?: "up" | "down";
+  target_stock?: string | null;
+  intensity?: number;
+};
+
+export type DiscoverImpactRequest = {
+  active_themes: ActiveTheme[];
+  tier?: string[] | null;
+  bullish_only?: boolean;
+  limit?: number;
+};
+
+export type RelevanceScoreItem = {
+  symbol: string;
+  score: number;       // signed: positive = beneficiary, negative = hurt
+  magnitude: number;   // |score|, 0..1
+  reasons: string[];   // path traces + commodity rationales
+};
+
+export type DiscoverImpactResponse = {
+  active_themes: ActiveTheme[];
+  relevance: RelevanceScoreItem[];
+  total: number;
+};
+
 
 // ── Phase 7A: Ownership ──────────────────────────────────────────
 

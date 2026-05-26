@@ -84,11 +84,15 @@ def relevance_for_universe(
             if commodity_moves else {}
         )
 
-        # 2) Run direct-stock graph expansion for target_stock themes
+        # 2) Run direct-stock graph expansion for target_stock themes.
+        # `direction` flips the seed's sign so a "down" shock to NVDA produces
+        # negative scores for everything that moves with NVDA. Without this,
+        # the score is always positive regardless of direction.
         stock_seeds: dict[str, float] = {}
         for theme in active_themes:
             if theme.target_stock:
-                stock_seeds[theme.target_stock.upper()] = theme.intensity
+                sign = -1.0 if theme.direction == "down" else 1.0
+                stock_seeds[theme.target_stock.upper()] = sign * theme.intensity
         graph_hits: dict[str, traverse.GraphResult] = {}
         if stock_seeds:
             graph_hits = traverse.expand(

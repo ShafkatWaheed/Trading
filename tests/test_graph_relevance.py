@@ -85,6 +85,29 @@ def test_target_stock_seed_appears_in_results():
     assert {"TSM", "MSFT", "AVGO"} & set(out.keys())
 
 
+def test_target_stock_direction_flips_scores():
+    """direction='down' must flip score signs vs direction='up' for the same shock.
+
+    Without this, the discovery UI shows positive (green) scores even when the
+    user proposes a 'down' shock — incorrect for traders.
+    """
+    up   = relevance_for_universe([ActiveTheme(target_stock="NVDA", direction="up",   intensity=1.0)])
+    down = relevance_for_universe([ActiveTheme(target_stock="NVDA", direction="down", intensity=1.0)])
+
+    # Pick a few non-seed neighbors that are present in both
+    common = set(up.keys()) & set(down.keys()) - {"NVDA"}
+    assert len(common) >= 3, f"need ≥3 common non-seed neighbors; got {common}"
+
+    for sym in common:
+        # Magnitude unchanged
+        assert abs(up[sym].score) == abs(down[sym].score), f"{sym}: magnitude differs"
+        # Sign opposite
+        if up[sym].score != 0:
+            assert up[sym].score * down[sym].score < 0, (
+                f"{sym}: up={up[sym].score} down={down[sym].score} — signs should be opposite"
+            )
+
+
 def test_multiple_themes_compose():
     """Oil up AND uranium up — XOM (oil) and CCJ (uranium) should both surface."""
     themes = [
