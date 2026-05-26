@@ -27,6 +27,7 @@ class RelevanceRequest(BaseModel):
     tier: list[str] | None = None
     bullish_only: bool = False
     limit: int = Field(50, ge=1, le=500)
+    as_of: str | None = None      # ISO 8601 date; None = include historical edges
 
 
 @router.post("/relevance")
@@ -36,4 +37,5 @@ def compute_relevance(req: RelevanceRequest) -> dict:
         tier=req.tier,
         bullish_only=req.bullish_only,
         limit=req.limit,
+        as_of=req.as_of,
     )

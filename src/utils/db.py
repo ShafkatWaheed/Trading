@@ -237,6 +237,8 @@ def init_db() -> None:
             confidence TEXT NOT NULL,           -- 'high' | 'medium' | 'low'
             as_of TEXT NOT NULL DEFAULT (datetime('now')),
             evidence TEXT,
+            effective_from TEXT,                -- ISO 8601 date the peer relationship started (NULL = always valid)
+            effective_to TEXT,                  -- ISO 8601 date it ended (NULL = still in effect)
             PRIMARY KEY (from_symbol, to_symbol)
         );
         CREATE INDEX IF NOT EXISTS idx_stock_peers_from ON stock_peers(from_symbol);

@@ -57,12 +57,18 @@ def relevance_for_universe(
     *,
     tier: list[str] | None = None,
     expand_hops: int = 1,
+    as_of: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict[str, RelevanceScore]:
     """Compute relevance scores for every stock in the universe (or tier slice).
 
     Returns a dict keyed by symbol. Stocks with zero relevance are omitted
     so the caller only sees actually-affected names.
+
+    `as_of` (ISO 8601 date): point-in-time filter applied to the graph
+    traversal — see `src.graph.traverse.expand`. Default None = include
+    every edge regardless of temporal bounds (use for historical queries).
+    For trader UI defaults, pass today's date.
     """
     if not active_themes:
         return {}
@@ -100,6 +106,7 @@ def relevance_for_universe(
                 hops=expand_hops,
                 edge_types=["peer", "supplier", "customer", "complement"],
                 starting_polarity=stock_seeds,
+                as_of=as_of,
                 conn=conn,
             )
 

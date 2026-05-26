@@ -424,9 +424,41 @@ function ReviewQueue() {
     );
   }
 
+  const runBulkReExtract = async () => {
+    if (bulk.running) return;
+    const targets = filtered.map((r) => r.symbol);
+    if (targets.length === 0) return;
+    const ok = window.confirm(
+      `Re-extract ${targets.length} stock${targets.length === 1 ? "" : "s"}?` +
+      `\n\nEach one runs the SEC 10-K extractor + a Claude call via the local ` +
+      `CLI (~5–15s per symbol). You can cancel mid-run.`,
+    );
+    if (!ok) return;
+
+    cancelRef.current = false;
+    setBulk({ running: true, done: 0, total: targets.length, errors: 0 });
+
+    let done = 0;
+    let errors = 0;
+    for (const symbol of targets) {
+      if (cancelRef.current) break;
+      setBulk((b) => ({ ...b, currentSymbol: symbol }));
+      try {
+        await freshnessApi.acknowledge(symbol, "re_extract");
+      } catch {
+        errors += 1;
+      }
+      done += 1;
+      setBulk({ running: true, done, total: targets.length, errors, currentSymbol: symbol });
+    }
+
+    setBulk({ running: false, done, total: targets.length, errors });
+    qcRoot.invalidateQueries({ queryKey: ["freshness", "queue"] });
+  };
+
   return (
     <div>
-      {/* Filter chips */}
+      {/* Filter chips + bulk-action button */}
       <div className="flex items-center gap-1.5 flex-wrap mb-2.5">
         <button
           onClick={() => setReasonFilter("all")}
@@ -453,6 +485,48 @@ function ReviewQueue() {
             {reason} · {count}
           </button>
         ))}
+
+        {/* Bulk re-extract — acts on the filtered subset so users can scope first */}
+        <div className="ml-auto flex items-center gap-2">
+          {bulk.running ? (
+            <>
+              <span className="text-[10px] text-text-muted tabular-nums">
+                {bulk.done}/{bulk.total}
+                {bulk.errors > 0 && (
+                  <span className="text-accent-redSoft ml-1">· {bulk.errors} err</span>
+                )}
+                {bulk.currentSymbol && (
+                  <span className="text-text-secondary ml-1">· {bulk.currentSymbol}</span>
+                )}
+              </span>
+              <button
+                onClick={() => { cancelRef.current = true; }}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-accent-red/30 bg-accent-red/10 text-accent-redSoft hover:bg-accent-red/20"
+              >
+                <Square size={10} /> Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {bulk.total > 0 && bulk.done === bulk.total && (
+                <span className="text-[10px] text-text-muted">
+                  done · {bulk.done - bulk.errors} ok
+                  {bulk.errors > 0 && (
+                    <span className="text-accent-redSoft ml-1">· {bulk.errors} err</span>
+                  )}
+                </span>
+              )}
+              <button
+                onClick={runBulkReExtract}
+                disabled={filtered.length === 0}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-accent-green/30 bg-accent-green/10 text-accent-greenSoft hover:bg-accent-green/20 disabled:opacity-50"
+                title="Run the 10-K extractor on every stock matching the current filter"
+              >
+                <Zap size={10} /> Re-extract all ({filtered.length})
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1.5">
@@ -529,10 +603,15 @@ function DiscoverImpact() {
         mode === "stock"
           ? { target_stock: stockInput.trim().toUpperCase(), direction, intensity }
           : { commodity_code: commodity, direction, intensity };
+      // Default to today so historical-only edges (e.g. AAPL↔INTC, AXP↔COST)
+      // don't pollute current-state queries. Backtest tools should pass an
+      // older date explicitly.
+      const today = new Date().toISOString().slice(0, 10);
       return graphApi.discoverImpact({
         active_themes: [theme],
         limit: 25,
         bullish_only: false,
+        as_of: today,
       });
     },
     onSuccess: (r) => setResult(r),

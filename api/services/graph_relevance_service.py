@@ -17,6 +17,7 @@ def compute_relevance(
     tier: list[str] | None = None,
     bullish_only: bool = False,
     limit: int = 50,
+    as_of: str | None = None,
 ) -> dict:
     """Compute and rank graph relevance for a set of active themes.
 
@@ -25,6 +26,8 @@ def compute_relevance(
         tier: optional tier filter (e.g. ['A','B']).
         bullish_only: skip stocks with negative scores.
         limit: cap results.
+        as_of: ISO date — point-in-time filter on graph edges. None = include
+            historical edges (use for back-testing); pass today for live UI.
     """
     themes = []
     for raw in active_themes:
@@ -34,7 +37,7 @@ def compute_relevance(
             target_stock=raw.get("target_stock"),
             intensity=float(raw.get("intensity", 1.0)),
         ))
-    scores = relevance_for_universe(themes, tier=tier)
+    scores = relevance_for_universe(themes, tier=tier, as_of=as_of)
     ranked = top_n(scores, n=limit, bullish_only=bullish_only)
 
     return {

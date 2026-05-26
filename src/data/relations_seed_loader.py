@@ -84,6 +84,10 @@ def parse_relations_csv(path: Path | str = DEFAULT_SEED_PATH) -> list[dict]:
             "polarity": max(-1.0, min(1.0, polarity)),
             "evidence": _coerce(raw.get("evidence")),
             "notes": _coerce(raw.get("notes")),
+            # Optional temporal bounds — backwards-compatible with CSVs that
+            # don't declare these columns at all. Both NULL ⇒ always valid.
+            "effective_from": _coerce(raw.get("effective_from")),
+            "effective_to":   _coerce(raw.get("effective_to")),
         })
     return rows
 
@@ -133,12 +137,15 @@ def load_spine(
                 conn.execute(
                     """
                     INSERT INTO stock_relations
-                        (from_symbol, to_symbol, relation_type, strength, polarity, evidence)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (from_symbol, to_symbol, relation_type, strength, polarity,
+                         evidence, effective_from, effective_to)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(from_symbol, to_symbol, relation_type) DO UPDATE SET
                         strength = excluded.strength,
                         polarity = excluded.polarity,
-                        evidence = excluded.evidence
+                        evidence = excluded.evidence,
+                        effective_from = excluded.effective_from,
+                        effective_to = excluded.effective_to
                     """,
                     (
                         r["from_symbol"],
@@ -147,6 +154,8 @@ def load_spine(
                         r["strength"],
                         r["polarity"],
                         evidence_tag,
+                        r.get("effective_from"),
+                        r.get("effective_to"),
                     ),
                 )
                 inserted += 1

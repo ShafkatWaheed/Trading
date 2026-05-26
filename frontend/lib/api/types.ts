@@ -1015,6 +1015,7 @@ export type DiscoverImpactRequest = {
   tier?: string[] | null;
   bullish_only?: boolean;
   limit?: number;
+  as_of?: string | null;   // ISO 8601 date; null = include historical edges
 };
 
 export type RelevanceScoreItem = {
@@ -1200,6 +1201,7 @@ export type NewsFeed = {
   neutral_count: number;
   net_sentiment: "bullish" | "bearish" | "mixed" | "no coverage" | string;
   net_score: number;
+  source_warning?: string | null;
   last_updated: string;
   from_cache?: boolean;
 };

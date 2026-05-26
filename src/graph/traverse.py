@@ -62,16 +62,35 @@ class GraphResult:
 # ── DB lookups ────────────────────────────────────────────────────
 
 
-def _peers_of(conn: sqlite3.Connection, symbol: str) -> list[Edge]:
-    """All peer edges from `symbol`."""
-    rows = conn.execute(
+def _peers_of(
+    conn: sqlite3.Connection,
+    symbol: str,
+    *,
+    as_of: str | None = None,
+) -> list[Edge]:
+    """All peer edges from `symbol`.
+
+    `as_of` (ISO 8601 date): point-in-time filter — see `_relations_of` for
+    the rule. Peer edges with NULL effective_from / _to pass any as_of.
+    """
+    if as_of is None:
+        sql = """
+            SELECT to_symbol, similarity, source, confidence, evidence
+            FROM stock_peers
+            WHERE from_symbol = ?
         """
-        SELECT to_symbol, similarity, source, confidence, evidence
-        FROM stock_peers
-        WHERE from_symbol = ?
-        """,
-        (symbol,),
-    ).fetchall()
+        params: tuple = (symbol,)
+    else:
+        sql = """
+            SELECT to_symbol, similarity, source, confidence, evidence
+            FROM stock_peers
+            WHERE from_symbol = ?
+              AND (effective_from IS NULL OR effective_from <= ?)
+              AND (effective_to IS NULL OR effective_to > ?)
+        """
+        params = (symbol, as_of, as_of)
+
+    rows = conn.execute(sql, params).fetchall()
     return [
         Edge(
             from_symbol=symbol,
@@ -229,10 +248,10 @@ def expand(
         starting_polarity: optional per-seed polarity carrier (e.g. for news
             impact: a stock surfaced by a +keyword carries +1; by a -keyword
             carries -1). Defaults to +1 for every seed.
-        as_of: ISO 8601 date — point-in-time filter for relation edges. Peer
-            edges (stock_peers) are NOT filtered today; only stock_relations
-            edges respect this. NULL effective_from/_to bounds mean "always
-            valid" and pass any as_of. Required by CLAUDE.md no-lookahead rule.
+        as_of: ISO 8601 date — point-in-time filter. Applies to BOTH peer
+            edges and relation edges. NULL effective_from/_to bounds mean
+            "always valid" and pass any as_of. Required by CLAUDE.md
+            no-lookahead rule.
 
     Returns:
         Dict {symbol: GraphResult}. Seed symbols included with hop=0.
@@ -271,7 +290,7 @@ def expand(
             for sym, pol_in, str_in in frontier:
                 edges: list[Edge] = []
                 if "peer" in types:
-                    edges.extend(_peers_of(conn, sym))
+                    edges.extend(_peers_of(conn, sym, as_of=as_of))
                 relation_subset = types & {"supplier", "customer", "substitute", "complement"}
                 if relation_subset:
                     edges.extend(_relations_of(conn, sym, relation_types=relation_subset, as_of=as_of))
@@ -335,9 +354,9 @@ def neighborhood(
 ) -> dict[str, list[Edge]]:
     """Convenience: 1-hop expansion split by direction.
 
-    `as_of` (ISO 8601 date) filters relation edges to those in effect at
-    that date — see `_relations_of` for the rule. Peer edges are not yet
-    temporally bounded.
+    `as_of` (ISO 8601 date) filters BOTH peer and relation edges to those
+    in effect at that date — see `_relations_of` for the rule. NULL bounds
+    pass any as_of (the default for all hand-seeded edges).
 
     Returns:
         {
@@ -354,7 +373,7 @@ def neighborhood(
         conn = get_connection()
     sym = symbol.upper()
     try:
-        peers = _peers_of(conn, sym)
+        peers = _peers_of(conn, sym, as_of=as_of)
         rels = _relations_of(conn, sym, as_of=as_of)
         return {
             "suppliers":   [e for e in rels if e.edge_type == "supplier"],

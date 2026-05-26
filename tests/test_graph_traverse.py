@@ -370,3 +370,33 @@ def test_expand_with_as_of_propagates_filter():
         conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_E1','SYN_E2')")
         conn.commit()
         conn.close()
+
+
+def test_neighborhood_peer_edge_respects_as_of():
+    """Peer edges with effective_from in the future must be invisible to as_of
+    before that date. Mirrors the relation-edge behavior on stock_peers."""
+    from src.utils.db import get_connection
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_P1','B','test')")
+        conn.execute("INSERT INTO stocks_universe (symbol, tier, source) VALUES ('SYN_P2','B','test')")
+        conn.execute(
+            "INSERT INTO stock_peers "
+            "(from_symbol, to_symbol, similarity, source, confidence, evidence, effective_from) "
+            "VALUES ('SYN_P1','SYN_P2',0.7,'test','high','synthetic peer','2025-06-01')"
+        )
+        conn.commit()
+
+        early = neighborhood("SYN_P1", as_of="2025-01-01", conn=conn)
+        assert "SYN_P2" not in [e.to_symbol for e in early["peers"]]
+
+        later = neighborhood("SYN_P1", as_of="2025-06-15", conn=conn)
+        assert "SYN_P2" in [e.to_symbol for e in later["peers"]]
+
+        always = neighborhood("SYN_P1", conn=conn)
+        assert "SYN_P2" in [e.to_symbol for e in always["peers"]]
+    finally:
+        conn.execute("DELETE FROM stock_peers WHERE from_symbol='SYN_P1' OR to_symbol='SYN_P1'")
+        conn.execute("DELETE FROM stocks_universe WHERE symbol IN ('SYN_P1','SYN_P2')")
+        conn.commit()
+        conn.close()

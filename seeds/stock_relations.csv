@@ -1,4 +1,4 @@
-from_symbol,to_symbol,relation_type,strength,polarity,evidence,notes
+from_symbol,to_symbol,relation_type,strength,polarity,evidence,notes,effective_from,effective_to
 # Hand-curated supply-chain spine for the Tier A universe.
 # Convention: from_symbol is the SUBJECT of the edge; to_symbol is the related party.
 #   (NVDA, TSM, "supplier")  ⇒ NVDA's supplier is TSM      (NVDA depends on TSM)
@@ -185,3 +185,15 @@ SHW,DE,customer,0.35,1.0,"Deere ag-equipment OEM coatings supplied by SHW",
 # ─── Basic Materials: Ecolab → food + lodging ──────────────────────────
 ECL,MAR,customer,0.55,1.0,"Marriott uses Ecolab cleaning + sanitation services across properties",
 ECL,KO,customer,0.45,1.0,"Coca-Cola bottling plants use Ecolab water treatment + sanitation",
+
+# ═══ Historical-only edges (effective_to set) ══════════════════════════
+# These edges existed at one point but no longer apply. Backtest queries
+# with as_of=<earlier> will pick them up; current-day queries won't.
+# Column layout for these rows: extra trailing fields effective_from + effective_to.
+# (The other rows in this CSV omit those columns and the loader treats them as NULL.)
+
+AAPL,INTC,supplier,0.85,1.0,"Intel x86 chips powered Macs from 2006 until Apple Silicon transition","ended 2020-11-10 with M1 launch",2006-01-10,2020-11-10
+AXP,COST,customer,0.85,1.0,"American Express exclusive U.S. credit network at Costco — partnership ended 2016","V/COST replaced it",1999-01-01,2016-06-19
+NVDA,INTC,complement,0.45,1.0,"Pre-AMD-era: NVDA GPU paired with INTC CPU in DC workloads","AMD EPYC has taken majority share in AI servers post-2022",2010-01-01,2022-12-31
+F,GOOG,complement,0.30,1.0,"Ford partnered with Google for in-vehicle Android Automotive — diluted with Volkswagen/Cariad shift",partnership scaled down 2023,2021-02-01,2023-12-31
+NFLX,DIS,customer,0.45,1.0,"Netflix licensed Disney content until DIS+ launch","ended 2019 with content pull",2008-01-01,2019-11-12

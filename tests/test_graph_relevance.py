@@ -256,3 +256,20 @@ def test_endpoint_tier_filter(client):
         },
     )
     assert r.status_code == 200
+
+
+def test_relevance_for_universe_respects_as_of():
+    """Historical-only AAPL→INTC supplier edge must drop from a target-stock
+    AAPL search when as_of >= effective_to, and appear when as_of < effective_to."""
+    # 2019 (within window) → INTC should be in the impact set
+    early = relevance_for_universe(
+        [ActiveTheme(target_stock="AAPL", direction="up", intensity=1.0)],
+        as_of="2019-06-01",
+    )
+    # 2024 (after end_to=2020-11-10) → INTC should NOT
+    late = relevance_for_universe(
+        [ActiveTheme(target_stock="AAPL", direction="up", intensity=1.0)],
+        as_of="2024-01-01",
+    )
+    assert "INTC" in early
+    assert "INTC" not in late
