@@ -30,7 +30,12 @@ export function RiskNarrative({ symbol }: Props) {
     queryFn: () => stocksApi.riskNarrative(symbol),
     staleTime: 2 * 60 * 60 * 1000,
     enabled: Boolean(symbol),
+    // Auto-poll while the backend is still computing. The route returns
+    // status="computing" instantly on cache miss + kicks generation in
+    // the background; we re-query every 8s until status="ready".
+    refetchInterval: (q) => (q.state.data?.status === "computing" ? 8000 : false),
   });
+  const isComputing = data?.status === "computing";
 
   return (
     <section className="card p-6 border-l-4 border-accent-red/40">
@@ -55,7 +60,7 @@ export function RiskNarrative({ symbol }: Props) {
         </button>
       </div>
 
-      {isLoading && (
+      {(isLoading || isComputing) && (
         <div className="space-y-3">
           {SECTIONS.map((s) => (
             <div key={s.key}>
@@ -64,7 +69,9 @@ export function RiskNarrative({ symbol }: Props) {
             </div>
           ))}
           <p className="text-[10px] text-text-muted mt-2">
-            Claude is writing the downside narrative — first run is ~15s, then cached for 24h.
+            {isComputing
+              ? "Claude is writing the downside narrative in the background — polling every 8s."
+              : "Claude is writing the downside narrative — first run is ~15s, then cached for 24h."}
           </p>
         </div>
       )}
@@ -79,7 +86,7 @@ export function RiskNarrative({ symbol }: Props) {
         <p className="text-accent-amber text-sm">{data.error}</p>
       )}
 
-      {data && !data.error && !isLoading && (
+      {data && !data.error && !isLoading && !isComputing && (
         <div className="space-y-4">
           {SECTIONS.map((s) => {
             const text = (data as Sections)[s.key];

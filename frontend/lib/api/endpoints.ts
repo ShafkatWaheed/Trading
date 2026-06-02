@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type {
+  Brief,
   MarketPulse,
   DiscoverPayload,
   DeepDive,
@@ -68,6 +69,9 @@ import type {
   EntityMatches,
   Fundamentals,
   CoHolders,
+  OptionsFlow,
+  EstimateRevisions,
+  MacroFit,
   DiscoverImpactRequest,
   DiscoverImpactResponse,
 } from "./types";
@@ -315,6 +319,18 @@ export const stocksApi = {
     api.get<CoHolders>(
       `/stocks/${encodeURIComponent(ticker)}/co-holders${force ? "?force=true" : ""}`
     ),
+  optionsFlow: (ticker: string, force = false) =>
+    api.get<OptionsFlow>(
+      `/stocks/${encodeURIComponent(ticker)}/options-flow${force ? "?force=true" : ""}`
+    ),
+  estimateRevisions: (ticker: string, force = false) =>
+    api.get<EstimateRevisions>(
+      `/stocks/${encodeURIComponent(ticker)}/estimate-revisions${force ? "?force=true" : ""}`
+    ),
+  macroFit: (ticker: string, force = false) =>
+    api.get<MacroFit>(
+      `/stocks/${encodeURIComponent(ticker)}/macro-fit${force ? "?force=true" : ""}`
+    ),
 };
 
 export const earningsApi = {
@@ -502,4 +518,67 @@ export const trackRecordApi = {
     return api.get<TopWinsLosses>(`/ai/decisions/top?${params.toString()}`);
   },
   evaluateNow: () => api.post<EvaluatorRun>("/ai/decisions/evaluate-now", {}),
+};
+
+
+export const briefApi = {
+  // First page-load triggers a Claude call (~5-10s) — bypass the dev proxy
+  // in local dev so we don't hit its 60s ceiling on slow LLM responses.
+  get: async (opts?: { force?: boolean }): Promise<Brief> => {
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const qs = opts?.force ? "?force=true" : "";
+    const url = isLocalDev ? `http://localhost:8000/brief${qs}` : `/api/brief${qs}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as Brief;
+  },
+};
+
+
+export const journalApi = {
+  positions: (opts?: { status?: "open" | "closed"; symbol?: string; limit?: number }) => {
+    const p = new URLSearchParams();
+    if (opts?.status) p.set("status", opts.status);
+    if (opts?.symbol) p.set("symbol", opts.symbol);
+    if (opts?.limit !== undefined) p.set("limit", String(opts.limit));
+    const qs = p.toString();
+    return api.get<import("./types").JournalPositionsResponse>(
+      `/journal/positions${qs ? "?" + qs : ""}`
+    );
+  },
+  open: (body: import("./types").JournalOpenRequest) =>
+    api.post<import("./types").JournalPosition>("/journal/positions", body),
+  close: (positionId: number, body: import("./types").JournalCloseRequest) =>
+    api.post<import("./types").JournalPosition>(
+      `/journal/positions/${positionId}/close`,
+      body
+    ),
+  holdings: () => api.get<import("./types").JournalHoldingsResponse>("/journal/holdings"),
+  stats: () => api.get<import("./types").JournalStats>("/journal/stats"),
+  // Gap finder runs Claude w/ web tools — first call may take 60-180s.
+  // Bypass the Next.js dev proxy in dev because the proxy drops >60s.
+  gapFinder: async (force = false): Promise<import("./types").GapFinderResponse> => {
+    const path = `/journal/gap-finder${force ? "?force=true" : ""}`;
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev ? `http://localhost:8000${path}` : `/api${path}`;
+    const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as import("./types").GapFinderResponse;
+  },
+};
+
+
+export const flowsApi = {
+  smartMoneyTape: (window: 90 | 180 | 365 = 180) =>
+    api.get<import("./types").SectorTapeResponse>(`/smart-money/sector-tape?window=${window}`),
+  congressTape: (window: 90 | 180 | 365 = 180) =>
+    api.get<import("./types").SectorTapeResponse>(`/congress/sector-tape?window=${window}`),
 };

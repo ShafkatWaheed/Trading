@@ -1,0 +1,100 @@
+from_symbol,to_symbol,similarity,overlap_dimensions,notes
+# Priority hand-seed for high-cap names the original tier_a_peers.csv missed.
+# Loaded via `load_tier_a_peers(path=...)` with wipe_existing=False.
+# Same shape as tier_a_peers.csv. Edges are directional — loader writes the
+# reverse pair so neighbor queries from either side work.
+# Lines starting with # are skipped by the loader.
+
+# ─── Berkshire Hathaway (BRK.A / BRK.B) ─────────────────────────────────
+BRK.B,JPM,0.45,"financial services holding,insurance,banking",Berkshire's insurance + financial subs overlap with universal banks
+BRK.B,MMM,0.40,"industrial conglomerate,manufacturing",industrial sub portfolio overlap
+BRK.B,GE,0.45,"industrial conglomerate,aerospace,energy",Burlington Northern + Berkshire Energy overlap with GE Vernova
+BRK.B,KO,0.35,"large equity holding",Berkshire's largest single-stock position is KO
+BRK.B,V,0.30,"financial services holding",Berkshire's American Express stake creates competitive overlap
+
+# ─── Big banks not previously seeded ────────────────────────────────────
+JPM,BAC,0.85,"money center bank,deposits,investment banking,credit cards",core US universal bank duopoly with WFC and C
+JPM,WFC,0.80,"money center bank,deposits,mortgage,wealth management",
+JPM,C,0.75,"money center bank,investment banking,global markets",
+JPM,GS,0.65,"investment banking,trading,wealth management",
+JPM,MS,0.65,"investment banking,wealth management",Morgan Stanley wealth biz directly competes with JPM Private Bank
+BAC,WFC,0.80,"money center bank,deposits,wealth management",
+GS,MS,0.85,"investment banking,trading,wealth management",closest peer pair on the Street
+
+# ─── Energy supermajors ─────────────────────────────────────────────────
+XOM,CVX,0.90,"integrated oil and gas,upstream,downstream,refining",US supermajor duopoly
+XOM,SHEL,0.85,"integrated oil and gas,LNG,upstream",Shell ADR — closest int'l peer
+XOM,BP,0.80,"integrated oil and gas,upstream,renewable transition",
+XOM,COP,0.65,"upstream oil and gas,shale,LNG",ConocoPhillips — pure upstream peer
+XOM,SLB,0.40,"oilfield services","supplier+customer relationship not pure peer but closely correlated"
+
+# ─── Consumer staples + restaurants ─────────────────────────────────────
+PG,KO,0.60,"consumer staples,brand portfolio,EM exposure",mega-cap staples bellwethers
+PG,UL,0.85,"consumer staples,personal care,home care",Unilever ADR — closest global peer
+PG,CL,0.85,"oral care,personal care,EM exposure",
+PG,KMB,0.85,"paper goods,personal care,consumer staples",
+KO,PEP,0.95,"beverages,snacks,brand portfolio",classic duopoly
+KO,MNST,0.60,"non-alcoholic beverages,energy drinks",Monster overlap on cold beverages
+
+# ─── Telecom & utilities ────────────────────────────────────────────────
+T,VZ,0.95,"wireless carrier,fiber,broadband,5G",US wireless duopoly with TMUS
+T,TMUS,0.85,"wireless carrier,5G,prepaid",
+VZ,TMUS,0.85,"wireless carrier,5G,broadband",
+NEE,DUK,0.85,"electric utility,regulated,renewables",largest US regulated utilities
+NEE,SO,0.80,"electric utility,regulated,nuclear",
+NEE,D,0.75,"electric utility,natural gas,regulated",Dominion peer
+
+# ─── Healthcare (pharma + insurers + devices) ───────────────────────────
+JNJ,PFE,0.85,"large cap pharma,vaccines,oncology",
+JNJ,MRK,0.85,"large cap pharma,oncology,vaccines",
+JNJ,ABBV,0.80,"large cap pharma,immunology,oncology",
+JNJ,BMY,0.75,"large cap pharma,oncology,cardiovascular",
+PFE,MRK,0.90,"large cap pharma,oncology,vaccines,research pipeline",
+UNH,CI,0.85,"managed care,health insurance,PBM",
+UNH,ELV,0.85,"managed care,health insurance,medicare advantage",Elevance peer
+UNH,HUM,0.85,"managed care,medicare advantage",
+UNH,CVS,0.80,"managed care,PBM,pharmacy,retail clinics",CVS Aetna comp
+ISRG,MDT,0.65,"medical devices,minimally invasive surgery",
+ISRG,SYK,0.70,"medical devices,robotic surgery,orthopedics",
+
+# ─── Payment networks ───────────────────────────────────────────────────
+V,MA,0.95,"payment network,credit card,interchange",duopoly
+V,PYPL,0.55,"digital payments,checkout",
+V,SQ,0.50,"payments,fintech,SMB acquiring",Block payments overlap
+
+# ─── Industrials (defense + airlines) ──────────────────────────────────
+LMT,RTX,0.85,"defense prime,aerospace,missiles",
+LMT,NOC,0.85,"defense prime,aerospace,space systems",
+LMT,GD,0.80,"defense prime,combat systems,IT services",
+RTX,BA,0.55,"aerospace,defense,commercial aircraft engines",
+DAL,UAL,0.90,"US legacy airline,international network",
+DAL,AAL,0.85,"US legacy airline,domestic network",
+DAL,LUV,0.65,"US airline,domestic network","Southwest LCC overlap"
+
+# ─── Real estate (REITs) ────────────────────────────────────────────────
+PLD,AMT,0.50,"REIT,large cap","biggest US REITs by mcap, different sub-sectors but tracked together"
+PLD,EQIX,0.45,"REIT,industrial vs data center","industrial logistics + data center REIT peers"
+AMT,CCI,0.90,"REIT,communications infrastructure,cell towers",
+AMT,SBAC,0.85,"REIT,cell towers",
+EQIX,DLR,0.90,"REIT,data center,colocation",
+O,VICI,0.65,"REIT,net lease,triple net",
+O,STAG,0.60,"REIT,net lease,industrial",
+
+# ─── Discount retail + e-commerce ────────────────────────────────────
+WMT,COST,0.85,"big box retail,membership warehouse,grocery",
+WMT,TGT,0.85,"big box retail,general merchandise,grocery",
+WMT,AMZN,0.55,"retail,e-commerce,grocery delivery",cross-channel competition
+COST,TGT,0.75,"big box retail,membership warehouse",
+HD,LOW,0.95,"home improvement retail,DIY,pro contractor",classic duopoly
+
+# ─── Insurance ─────────────────────────────────────────────────────────
+PGR,ALL,0.85,"personal lines insurance,auto,homeowners",
+PGR,TRV,0.75,"property and casualty insurance",
+MET,PRU,0.85,"life insurance,annuities,asset management",
+MET,AIG,0.70,"diversified insurance,P&C,life",
+
+# ─── Streaming + media ────────────────────────────────────────────────
+DIS,NFLX,0.65,"streaming,content,studios",DIS Disney+ vs Netflix
+DIS,CMCSA,0.75,"media conglomerate,studios,parks vs broadband",
+DIS,WBD,0.75,"media conglomerate,streaming,studios",
+NFLX,SPOT,0.45,"streaming,consumer subscription",

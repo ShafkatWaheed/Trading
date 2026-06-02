@@ -49,6 +49,12 @@ def _run_universe() -> dict:
     return refresh_universe_from_cache()
 
 
+def _run_nasdaq_listings() -> dict:
+    """Fetch NASDAQ official listings → populate Tier D for Capital Market names."""
+    from src.data.nasdaq_listings_loader import refresh_nasdaq_listings
+    return refresh_nasdaq_listings(force_fetch=True)
+
+
 def _run_industries() -> dict:
     from src.data.industry_loader import apply_yfinance_industries
     return apply_yfinance_industries(log=False)
@@ -77,6 +83,118 @@ def _run_tenk() -> dict:
 def _run_13f_overlap() -> dict:
     from src.graph.institutional_overlap import materialise_overlap_edges
     return materialise_overlap_edges()
+
+
+def _run_13f_holdings() -> dict:
+    """Refresh kind: pull the latest 13F-HR holdings from SEC EDGAR for every
+    institution currently in the DB. Persists to institution_holdings.
+
+    Only processes REAL CIKs (length ≤ 7 — SEC range). Synthetic placeholder
+    CIKs (8+ digits) are filtered out so we don't burn requests on fakes.
+    """
+    from src.data.sec_13f_loader import run_for_top
+    init_db()
+    conn = get_connection()
+    try:
+        # Count real institutions to choose a sensible top-N. SEC CIKs are
+        # at most 7 digits; anything longer is a synthetic seed value.
+        real_count = conn.execute(
+            "SELECT COUNT(*) FROM institutions WHERE LENGTH(cik) < 8"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    n = max(real_count, 50)   # process all real CIKs, with headroom
+    out = run_for_top(top=n, log=False)
+    # Append the post-run holdings count so the UI can show "now 2,036 rows"
+    conn = get_connection()
+    try:
+        out["total_holdings_after"] = conn.execute(
+            "SELECT COUNT(*) FROM institution_holdings"
+        ).fetchone()[0]
+        out["distinct_institutions_after"] = conn.execute(
+            "SELECT COUNT(DISTINCT cik) FROM institution_holdings"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return out
+
+
+def _run_relations_seed() -> dict:
+    """Refresh kind: reload the hand-curated stock_relations seed CSV.
+
+    Wipes existing `seed:hand` rows then re-inserts from the CSV. Idempotent.
+    Picks up any new substitute/complement pairs appended to the seed file.
+    """
+    from src.data.relations_seed_loader import load_spine
+    return load_spine()
+
+
+def _run_claude_relations() -> dict:
+    """Refresh kind: Claude-driven substitute + complement edge seeder.
+
+    For Tier A stocks with fewer than 2 substitute/complement edges, asks
+    Claude for 3-5 of each with reasoning. Validates + persists bidirectionally
+    with `evidence` prefixed `claude_batch:sub_comp`.
+    """
+    from src.data.claude_relations_seeder import run as run_seeder
+    return run_seeder(tier="A", batch_size=6, limit=120, workers=3)
+
+
+def _run_discover_ciks() -> dict:
+    """Refresh kind: query SEC EDGAR for verified CIKs of well-known
+    institutions and insert high-confidence matches into the `institutions`
+    table.
+
+    Idempotent — skips CIKs already present. Never invents values: only
+    "high" confidence matches from the discovery script are added.
+    """
+    from scripts.discover_real_ciks import _resolve_one, _DEFAULT_NAMES
+
+    init_db()
+    conn = get_connection()
+    try:
+        existing = {r["cik"] for r in conn.execute("SELECT cik FROM institutions")}
+        added = 0
+        skipped_existing = 0
+        low_confidence = 0
+        no_match = 0
+
+        for name in _DEFAULT_NAMES:
+            result = _resolve_one(name)
+            conf = result.get("confidence", "none")
+            cik = result.get("cik")
+            filer_name = result.get("filer_name") or name
+
+            if conf == "high":
+                if cik in existing:
+                    skipped_existing += 1
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO institutions (cik, name, type, total_aum)
+                    VALUES (?, ?, 'active_mgr', NULL)
+                    ON CONFLICT(cik) DO NOTHING
+                    """,
+                    (cik, filer_name),
+                )
+                added += 1
+                existing.add(cik)
+            elif conf in ("medium", "low"):
+                low_confidence += 1
+            else:
+                no_match += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "names_queried": len(_DEFAULT_NAMES),
+        "added_high_confidence": added,
+        "skipped_already_present": skipped_existing,
+        "skipped_low_confidence": low_confidence,
+        "skipped_no_match": no_match,
+    }
 
 
 def _run_freshness() -> dict:
@@ -155,6 +273,14 @@ def _prog_universe() -> tuple[int, int]:
     return n, max(n, 1)
 
 
+def _prog_nasdaq_listings() -> tuple[int, int]:
+    """Reports current Tier D count vs all symbols sourced from this loader.
+    Bar shows 100% as soon as the run finishes; useful as a "did it work" signal."""
+    done = _count("SELECT COUNT(*) FROM stocks_universe WHERE tier='D'")
+    total = _count("SELECT COUNT(*) FROM stocks_universe WHERE source='nasdaq_listings'")
+    return done, max(done, total, 1)
+
+
 def _prog_industries() -> tuple[int, int]:
     processed = _count("SELECT COUNT(DISTINCT symbol) FROM stock_industry")
     total = _count("SELECT COUNT(*) FROM stocks_universe")
@@ -191,6 +317,39 @@ def _prog_13f_overlap() -> tuple[int, int]:
     return 0, 0
 
 
+def _prog_13f_holdings() -> tuple[int, int]:
+    """Approximate: distinct CIKs in institution_holdings / total institutions."""
+    done = _count("SELECT COUNT(DISTINCT cik) FROM institution_holdings")
+    total = _count("SELECT COUNT(*) FROM institutions WHERE LENGTH(cik) < 8")
+    return done, total
+
+
+def _prog_discover_ciks() -> tuple[int, int]:
+    # No useful interim signal — discovery hits ~20 names sequentially.
+    return 0, 0
+
+
+def _prog_relations_seed() -> tuple[int, int]:
+    """Progress: hand-seeded sub+comp edges in DB."""
+    done = _count(
+        "SELECT COUNT(*) FROM stock_relations "
+        "WHERE relation_type IN ('substitute', 'complement') "
+        "AND evidence LIKE 'seed:hand%'"
+    )
+    # Target: rough cap of expected hand-seed size (~80 edges combined)
+    return done, max(done, 80)
+
+
+def _prog_claude_relations() -> tuple[int, int]:
+    """Progress: claude_batch sub+comp edges in DB."""
+    done = _count(
+        "SELECT COUNT(*) FROM stock_relations "
+        "WHERE relation_type IN ('substitute', 'complement') "
+        "AND evidence LIKE 'claude_batch%'"
+    )
+    return done, max(done, 500)
+
+
 def _prog_freshness() -> tuple[int, int]:
     # Layers 1-3 each touch every stock; sum of processed runs as a stand-in.
     processed = _count(
@@ -223,12 +382,22 @@ def _prog_news_co_mention_backfill() -> tuple[int, int]:
 
 KIND_REGISTRY: dict[str, tuple[Callable[[], dict], Callable[[], tuple[int, int]], str]] = {
     "universe":      (_run_universe,    _prog_universe,    "Pull S&P/R1k/R2k ETF holdings and upsert stocks_universe."),
+    "nasdaq_listings": (_run_nasdaq_listings, _prog_nasdaq_listings,
+                        "Pull NASDAQ official listings (Capital Market = Tier D micro/small caps)."),
     "industries":    (_run_industries,  _prog_industries,  "Pull yfinance industry tag for every untagged stock."),
     "conglomerate":  (_run_conglomerate, _prog_conglomerate, "Re-apply hand-curated conglomerate multi-tag overrides."),
     "peers":         (_run_peers,       _prog_peers,       "Rank Tier B/C peers per industry via Claude."),
     "causal":        (_run_causal,      _prog_causal,      "Extract commodity exposures for Tier A+B via Claude."),
     "tenk_mining":   (_run_tenk,        _prog_tenk,        "Mine Tier A 10-K Item 1A for named suppliers/customers."),
     "13f_overlap":   (_run_13f_overlap, _prog_13f_overlap, "Re-materialise common-institutional-holder edges."),
+    "13f_holdings":  (_run_13f_holdings, _prog_13f_holdings,
+                       "Pull the latest 13F-HR holdings from SEC EDGAR for every real institution in DB."),
+    "discover_ciks": (_run_discover_ciks, _prog_discover_ciks,
+                       "Discover real SEC CIKs for well-known funds via EDGAR; auto-add high-confidence matches to institutions."),
+    "relations_seed": (_run_relations_seed, _prog_relations_seed,
+                       "Reload hand-curated stock_relations seed CSV (supplier/customer/substitute/complement)."),
+    "claude_relations": (_run_claude_relations, _prog_claude_relations,
+                       "Claude-generate substitute + complement edges for Tier A stocks missing them."),
     "freshness":     (_run_freshness,   _prog_freshness,   "Run 5-layer freshness orchestrator and queue drift."),
     "composite_confidence": (_run_composite_confidence, _prog_composite_confidence,
                              "Recompute composite_confidence for every edge (hand seed + 10-K + recent + ETF channels; no network)."),

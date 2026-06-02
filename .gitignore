@@ -29,4 +29,8 @@ session_qr.*
 
 # Database backups (large binaries, never commit)
 *.backup
+*.bak
 trading.db.backup-*
+
+# Fetched data caches — regenerated on demand by the loaders
+cache/

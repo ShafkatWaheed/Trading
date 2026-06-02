@@ -104,11 +104,15 @@ def ask_claude_json(
     model: str = "haiku",
     timeout: int = 60,
     retries: int = 2,
+    allowed_tools: str = "",
 ) -> dict | list | None:
     """Invoke Claude expecting a JSON response. Parses + validates.
 
     Strategy: call `ask_claude`, attempt JSON extraction, parse. If parsing
     fails, retry up to `retries` more times with a stricter prompt suffix.
+
+    `allowed_tools` (e.g. "WebSearch,WebFetch") gives Claude the ability to
+    research before answering. Default "" is text-only — same as before.
 
     Returns the parsed dict/list, or None after all retries.
     """
@@ -117,7 +121,7 @@ def ask_claude_json(
     for attempt in range(retries + 1):
         # Add the strict-JSON suffix on retry attempts to nudge a clean response.
         full_prompt = prompt if attempt == 0 else (prompt + suffix)
-        raw = ask_claude(full_prompt, model=model, timeout=timeout)
+        raw = ask_claude(full_prompt, model=model, timeout=timeout, allowed_tools=allowed_tools)
         if not raw:
             continue
         block = _extract_json_block(raw)

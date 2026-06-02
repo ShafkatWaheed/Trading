@@ -1100,6 +1100,8 @@ export type RiskNarrative = {
   error?: string | null;
   raw?: string | null;
   from_cache?: boolean;
+  // "ready" — populated; "computing" — generation queued, poll again; null — treat as ready
+  status?: "ready" | "computing" | null;
 };
 
 export type BubbleScore = {
@@ -1141,6 +1143,7 @@ export type BullNarrative = {
   error?: string | null;
   raw?: string | null;
   from_cache?: boolean;
+  status?: "ready" | "computing" | null;
 };
 
 export type AnalystConsensus = {
@@ -1434,6 +1437,10 @@ export type SmartMoney = {
       committees: string[];
     }>;
     party_breakdown: Record<string, Record<string, number>>;
+    signal_score?: number;
+    signal_label?: "bullish" | "bearish" | "mixed" | "no_data" | string;
+    bipartisan?: boolean;
+    signal_factors?: string[];
     error?: string | null;
   };
   summary: string;
@@ -1761,4 +1768,360 @@ export type CoHolders = {
   total_holders: number;
   last_updated: string;
   from_cache: boolean;
+};
+
+
+// ── Options flow card ──────────────────────────────────────────────
+
+export type UnusualOptionsRow = {
+  contract_type: string;
+  strike: number | null;
+  expiration: string;
+  volume: number;
+  open_interest: number;
+  volume_oi_ratio: number | null;
+  premium: number | null;
+  sentiment: string;
+};
+
+export type OptionsFlow = {
+  symbol: string;
+  available: boolean;
+  reason: string | null;
+  signal: "bullish" | "bearish" | "neutral" | string;
+  score: number;
+  lede: string | null;
+  put_call_ratio: number | null;
+  iv_rank: number | null;
+  iv_avg_pct?: number | null;
+  iv_percentile: number | null;
+  max_pain: number | null;
+  underlying_price: number | null;
+  total_call_volume: number;
+  total_put_volume: number;
+  put_call_interpretation: string;
+  iv_interpretation: string;
+  unusual_activity_note: string;
+  factors: string[];
+  unusual_top: UnusualOptionsRow[];
+  data_source?: "polygon" | "yfinance" | string | null;
+  last_updated: string;
+  from_cache: boolean;
+};
+
+
+// ── Estimate revisions card ────────────────────────────────────────
+
+export type RatingAction = {
+  action: "upgrade" | "downgrade" | "initiation" | "reiteration" | "other" | string;
+  firm: string;
+  from_grade: string;
+  to_grade: string;
+  date: string;
+};
+
+export type EpsTrendQuarter = {
+  period: string | null;
+  eps_avg: number | null;
+};
+
+export type EpsTrend = {
+  next_period: string | null;
+  next_eps_avg: number | null;
+  next_eps_high: number | null;
+  next_eps_low: number | null;
+  analyst_count: number | null;
+  fy_path: EpsTrendQuarter[];
+  growth_pct: number | null;
+};
+
+export type PriceTargets = {
+  mean: number | null;
+  high: number | null;
+  low: number | null;
+  median: number | null;
+};
+
+export type EstimateRevisions = {
+  symbol: string;
+  available: boolean;
+  reason: string | null;
+  lede: string | null;
+  net_change_30d: number;
+  upgrades_30d: number;
+  downgrades_30d: number;
+  initiations_30d: number;
+  consensus: string | null;
+  consensus_shift: string | null;
+  eps_trend: EpsTrend | null;
+  recent_actions: RatingAction[];
+  price_targets?: PriceTargets | null;
+  analyst_count?: number | null;
+  source?: string | null;
+  last_updated: string;
+  from_cache: boolean;
+};
+
+
+// ── Macro fit card ─────────────────────────────────────────────────
+
+export type MacroSnapshotView = {
+  regime: string | null;
+  fed_funds_rate: number | null;
+  treasury_10y: number | null;
+  treasury_2y: number | null;
+  vix: number | null;
+  unemployment: number | null;
+  gdp_growth: number | null;
+  yield_curve_inverted: boolean;
+};
+
+export type MacroFit = {
+  symbol: string;
+  available: boolean;
+  reason: string | null;
+  regime: string | null;
+  regime_score: number;
+  regime_factors: string[];
+  sector: string | null;
+  sector_score: number;
+  sector_drivers: string[];
+  sector_note: string | null;
+  active_factors: string[];
+  verdict: "tailwind" | "mild_tailwind" | "neutral" | "mild_headwind" | "headwind" | string;
+  verdict_lede: string | null;
+  snapshot: MacroSnapshotView;
+  last_updated: string;
+  from_cache: boolean;
+};
+
+
+// ── Brief (story-driven daily brief, v3 — 3-bucket pipeline) ──────
+
+export type BriefBucket = "stable" | "promising" | "hype";
+
+export type BriefPickSnapshot = {
+  verdict?: string | null;
+  risk_rating?: number | null;
+  fundamental_score?: number | null;
+  fundamental_archetype?: string | null;
+  macro_verdict?: string | null;
+  bubble_score?: number | null;
+  bubble_label?: string | null;
+  price?: number | null;
+  change_pct?: number | null;
+  headline_metric?: string | null;
+};
+
+export type BriefPick = {
+  symbol: string;
+  name?: string | null;
+  bucket: BriefBucket;
+  angle?: string | null;
+  angle_label?: string | null;
+  chapter_headlines: string[];
+  reasoning: string[];
+  narrative: string;
+  why_now: string[];
+  snapshot: BriefPickSnapshot;
+};
+
+export type BriefInvestmentAngle = {
+  label: string;
+  rationale: string;
+};
+
+export type BriefMarketStory = {
+  headline: string;
+  paragraphs: string[];
+  investment_angles: BriefInvestmentAngle[];
+};
+
+export type BriefChapter = {
+  id: string;
+  headline: string;
+  source: "sector" | "disruption" | "geopolitical" | "claude" | string;
+};
+
+export type BriefLensConvergence = {
+  sector: string;
+  lenses: string[];
+  macro_alignment: "supports" | "fights" | "neutral" | string;
+  evidence: string;
+};
+
+export type BriefLens = {
+  query: string;
+  rationale: string;
+  convergence: BriefLensConvergence[];
+};
+
+export type BriefMeta = {
+  candidates_considered: number;
+  sectors_in_focus: string[];
+  themes_in_focus: string[];
+  pulse_period: string;
+  lens_fallback_used?: boolean;
+};
+
+export type Brief = {
+  generated_at: string;
+  regime: string;
+  regime_explanation: string;
+  market_story: BriefMarketStory;
+  chapters: BriefChapter[];
+  lens: BriefLens | null;
+  picks: BriefPick[];
+  closing: string;
+  meta: BriefMeta;
+};
+
+
+// ── Trade Journal + Gap Finder ───────────────────────────────────
+
+export type JournalPosition = {
+  id: number;
+  symbol: string;
+  direction: "long" | "short" | string;
+  entry_date?: string | null;
+  entry_price?: number | null;
+  exit_date?: string | null;
+  exit_price?: number | null;
+  shares?: number | null;
+  pnl?: number | null;
+  pnl_percent?: number | null;
+  report_verdict?: string;
+  thesis?: string;
+  notes?: string;
+  status: "open" | "closed" | string;
+  created_at: string;
+};
+
+export type JournalPositionsResponse = {
+  positions: JournalPosition[];
+  total: number;
+};
+
+export type JournalHolding = {
+  symbol: string;
+  shares: number;
+  avg_entry_price?: number | null;
+  total_cost?: number | null;
+  lots: number;
+  first_entry_date?: string | null;
+  latest_entry_date?: string | null;
+  latest_thesis: string;
+};
+
+export type JournalHoldingsResponse = {
+  holdings: JournalHolding[];
+  total_symbols: number;
+};
+
+export type JournalOpenRequest = {
+  symbol: string;
+  entry_price: number;
+  shares: number;
+  direction?: "long" | "short";
+  thesis?: string;
+  report_verdict?: string;
+};
+
+export type JournalCloseRequest = {
+  exit_price: number;
+  notes?: string;
+};
+
+export type JournalStats = {
+  total_trades: number;
+  open_trades: number;
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  total_pnl: number;
+  avg_win: number;
+  avg_loss: number;
+  expectancy: number;
+  best_trade: number;
+  worst_trade: number;
+  report_accuracy: Record<string, { trades: number; wins: number; win_rate: number }>;
+};
+
+export type GapFinderAction =
+  | "SELL_ALL" | "TRIM_50" | "TRIM_25" | "HOLD" | "BUY" | "ADD" | "PASS";
+
+export type GapFinderEvidence = {
+  symbol: string;
+  as_held?: Record<string, unknown>;
+  current?: Record<string, unknown>;
+  triggers?: string[];
+  triggers_for_buy?: string[];
+};
+
+export type GapFinderDecision = {
+  symbol: string;
+  action: GapFinderAction;
+  confidence: "low" | "medium" | "high" | string;
+  rationale: string;
+  key_factors: string[];
+  reevaluate_if: string[];
+  web_sources: string[];
+  evidence?: GapFinderEvidence;
+};
+
+export type GapFinderResponse = {
+  generated_at: string;
+  holdings_count: number;
+  candidates_considered: number;
+  sells: GapFinderDecision[];
+  holds: GapFinderDecision[];
+  buys: GapFinderDecision[];
+  meta: {
+    judged_by_claude: number;
+    auto_holds: number;
+    web_research_enabled: boolean;
+    model: string;
+  };
+  from_cache?: boolean;
+};
+
+
+// ── Sector flow tapes (13F + Congress) ─────────────────────────────
+
+export type SectorTapeSymbol = {
+  symbol: string;
+  delta_usd?: number | null;
+  filings?: number | null;
+  buys?: number | null;
+  sells?: number | null;
+  net?: number | null;
+  politicians?: number | null;
+};
+
+export type SectorTapeEntry = {
+  sector: string;
+  direction: string;
+  net_dollar_flow?: number | null;
+  adds_count?: number | null;
+  drops_count?: number | null;
+  top_added?: SectorTapeSymbol[];
+  top_trimmed?: SectorTapeSymbol[];
+  net_trades?: number | null;
+  buys_count?: number | null;
+  sells_count?: number | null;
+  unique_politicians?: number | null;
+  top_bought?: SectorTapeSymbol[];
+  top_sold?: SectorTapeSymbol[];
+};
+
+export type SectorTapeResponse = {
+  window_days: number;
+  as_of: string;
+  sectors: SectorTapeEntry[];
+  ciks_with_delta_data?: number | null;
+  ciks_total?: number | null;
+  symbols_scraped?: number | null;
+  coverage_note: string;
+  from_cache?: boolean;
 };

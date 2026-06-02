@@ -21,6 +21,8 @@ import { LiveIndicesStrip } from "@/components/market/live-indices-strip";
 import { BreadthCard } from "@/components/market/breadth-card";
 import { TopMovers } from "@/components/market/top-movers";
 import { MarketNews } from "@/components/market/market-news";
+import { SmartMoneyTape } from "@/components/market/smart-money-tape";
+import { CongressTape } from "@/components/market/congress-tape";
 import { SectionHeader } from "@/components/deep-dive/section-header";
 import { SimulationReplay } from "@/components/simulation-replay";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -72,13 +74,17 @@ export default function MarketPulsePage() {
             <Skeleton className="h-3 w-full" />
             <Skeleton className="h-3 w-5/6" />
           </div>
+        ) : data ? (
+          // Prefer fresh data over a stale React Query error. If the backend
+          // recovered (uvicorn restart, transient 500) the cached error stays
+          // until the next refetch — without this, the user sees the failure
+          // banner while data has actually loaded successfully.
+          <RegimeCard regime={data.regime} explanation={data.regime_explanation} />
         ) : error ? (
           <div className="card p-6 border-l-4 border-accent-red/40">
             <p className="text-accent-redSoft">Failed to load market pulse.</p>
             <p className="text-text-muted text-sm mt-1">{(error as Error).message}</p>
           </div>
-        ) : data ? (
-          <RegimeCard regime={data.regime} explanation={data.regime_explanation} />
         ) : null}
 
         {/* ── 02 · MACRO BACKDROP ──────────────────────────────────────── */}
@@ -126,6 +132,20 @@ export default function MarketPulsePage() {
             Built-in themes (configure TAVILY_API_KEY for live AI-derived themes)
           </p>
         )}
+
+        {/* ── 05.5 · INSTITUTIONAL & POLITICAL FLOWS ──────────────────── */}
+        <SectionHeader
+          index={5.5}
+          label="Institutional & political flows"
+          subtitle="13F net flow · STOCK Act trades"
+          id="informed-flows"
+          accent="amber"
+        />
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SmartMoneyTape />
+          <CongressTape />
+        </section>
 
         {/* ── 06 · UPCOMING CATALYSTS ──────────────────────────────────── */}
         <SectionHeader index={6} label="Upcoming catalysts" subtitle="economic calendar · geopolitical risk" id="catalysts" accent="red" />

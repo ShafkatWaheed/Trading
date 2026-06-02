@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Newspaper, ExternalLink } from "lucide-react";
+import { Newspaper, ExternalLink, AlertTriangle } from "lucide-react";
 import { stocksApi } from "@/lib/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -79,8 +79,21 @@ export function NewsFeed({ symbol }: Props) {
         </div>
       </div>
 
+      {data.source_warning && (
+        <div className="flex items-start gap-2 mb-3 p-2.5 rounded-md border border-accent-amber/30 bg-accent-amber/[0.05]">
+          <AlertTriangle size={12} className="text-accent-amber mt-0.5 shrink-0" />
+          <p className="text-[11px] text-text-secondary leading-relaxed">
+            {data.source_warning}
+          </p>
+        </div>
+      )}
+
       {items.length === 0 ? (
-        <p className="text-text-muted text-sm">No recent news found for {symbol}.</p>
+        <p className="text-text-muted text-sm">
+          {data.source_warning
+            ? `No recent news available for ${symbol} while paid providers cool down.`
+            : `No recent news found for ${symbol}.`}
+        </p>
       ) : (
         <ul className="space-y-2">
           {items.map((it, i) => (
@@ -117,7 +130,8 @@ export function NewsFeed({ symbol }: Props) {
       )}
 
       <p className="text-[10px] text-text-muted mt-3 pt-3 border-t border-bg-border">
-        Headlines via Tavily/Exa. Sentiment is rule-based on title + snippet keywords (not LLM).
+        Headlines via Tavily/Exa with Google News RSS as a free fallback.
+        Sentiment is rule-based on title + snippet keywords (not LLM).
       </p>
     </section>
   );

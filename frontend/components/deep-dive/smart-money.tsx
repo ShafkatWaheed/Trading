@@ -264,6 +264,44 @@ export function SmartMoneyCard({ symbol }: Props) {
             <p className="text-text-muted text-sm">No congressional trades disclosed in the last 180 days.</p>
           ) : (
             <>
+              {/* Signal verdict synthesized from congress_signal.analyze() */}
+              {con.signal_label && con.signal_label !== "no_data" && (
+                <div className={cn(
+                  "rounded-md p-3 mb-3 border-l-[3px] flex items-start gap-2",
+                  con.signal_label === "bullish"
+                    ? "bg-accent-green/[0.05] border-l-accent-green/60 border border-accent-green/20"
+                    : con.signal_label === "bearish"
+                      ? "bg-accent-red/[0.05] border-l-accent-red/60 border border-accent-red/20"
+                      : "bg-bg-card2 border-l-accent-amber/60 border border-accent-amber/20"
+                )}>
+                  <Landmark size={12} className={cn(
+                    "mt-0.5 shrink-0",
+                    con.signal_label === "bullish" ? "text-accent-greenSoft"
+                      : con.signal_label === "bearish" ? "text-accent-redSoft" : "text-accent-amber"
+                  )} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                      <span className={cn(
+                        "text-[10px] uppercase tracking-wider font-bold",
+                        con.signal_label === "bullish" ? "text-accent-greenSoft"
+                          : con.signal_label === "bearish" ? "text-accent-redSoft" : "text-accent-amber"
+                      )}>
+                        Signal · {con.signal_label}
+                      </span>
+                      {con.bipartisan && (
+                        <span className="badge text-[9px] py-0 bg-accent-violet/10 text-accent-violet border-accent-violet/30">
+                          BIPARTISAN
+                        </span>
+                      )}
+                    </div>
+                    {con.signal_factors && con.signal_factors.length > 0 && (
+                      <p className="text-[11px] text-text-secondary leading-snug">
+                        {con.signal_factors.join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                 <div className="bg-bg-base rounded-md p-2.5 border border-bg-border">
                   <div className="text-[10px] uppercase tracking-wider text-text-muted">Buys</div>

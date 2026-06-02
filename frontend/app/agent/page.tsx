@@ -16,6 +16,8 @@ import { ChainOfThought } from "@/components/agent/chain-of-thought";
 import { PortfolioStrategyReference } from "@/components/agent/portfolio-strategy-reference";
 import { PortfolioPickPanel } from "@/components/agent/portfolio-pick-panel";
 import { PortfolioSimRunner } from "@/components/agent/portfolio-sim-runner";
+import { TradeJournalCard } from "@/components/agent/trade-journal-card";
+import { GapFinderCard } from "@/components/agent/gap-finder-card";
 import { agentApi } from "@/lib/api/endpoints";
 import type { MultiAgentResult } from "@/lib/api/types";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -120,6 +122,14 @@ export default function AgentPage() {
             </div>
           </div>
         ) : null}
+
+        {/* Personal trade journal — log buys/sells so the Gap Finder agent
+            can reason against your real portfolio. */}
+        <TradeJournalCard />
+
+        {/* Gap Finder — AI portfolio adviser. Reads journal, runs trigger
+            sensors, Claude judges with WebSearch/WebFetch enabled. */}
+        <GapFinderCard />
 
         {/* Strategy reference — explains the portfolio AI pipeline */}
         <PortfolioStrategyReference />

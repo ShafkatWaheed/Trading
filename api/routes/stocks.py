@@ -8,15 +8,17 @@ from api.schemas import (
     AnalystConsensusResponse, BenchmarksResponse, BubbleScoreResponse,
     BullNarrativeResponse, CatalystCalendarResponse, CoHoldersResponse,
     DeepDiveBundleResponse, DeepDiveResponse, EntityMatchesResponse,
-    FundamentalsResponse, NewsFeedResponse, PeerValuationResponse,
+    EstimateRevisionsResponse, FundamentalsResponse, MacroFitResponse,
+    NewsFeedResponse, OptionsFlowResponse, PeerValuationResponse,
     RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
     SmartMoneyResponse, StockInformationResponse, StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
     bull_narrative_service, catalyst_calendar_service, co_holders_service,
-    deep_dive_service, discover_service, fundamentals_service,
-    news_feed_service, peer_valuation_service, recommendation_service,
+    deep_dive_service, discover_service, estimate_revisions_service,
+    fundamentals_service, macro_fit_service, news_feed_service,
+    options_flow_service, peer_valuation_service, recommendation_service,
     risk_narrative_service, signal_evidence_service, smart_money_service,
 )
 
@@ -131,8 +133,36 @@ def risk_narrative(
 ) -> dict:
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="Invalid ticker")
+    ticker = ticker.upper()
+
+    # Cached-or-202: avoid blocking the Next.js dev proxy (60s cap) on cold
+    # Claude calls. If cached, return instantly. If missing, kick the heavy
+    # generation in a background thread and return a "computing" placeholder
+    # the client can poll. `force=true` still runs synchronously so the user
+    # can wait through an explicit regenerate.
+    from src.utils.db import cache_get
+    from api.services._background_jobs import kick
+    cache_key = f"risk_narrative:v1:{ticker}"
+    if not force:
+        cached = cache_get(cache_key)
+        if cached:
+            cached["from_cache"] = True
+            cached["status"] = "ready"
+            return cached
+        kick(
+            f"risk_narrative:{ticker}",
+            risk_narrative_service.get_risk_narrative,
+            ticker, force=False,
+        )
+        return {
+            "symbol": ticker,
+            "from_cache": False,
+            "status": "computing",
+        }
     try:
-        return risk_narrative_service.get_risk_narrative(ticker, force=force)
+        out = risk_narrative_service.get_risk_narrative(ticker, force=force)
+        out["status"] = "ready"
+        return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Risk narrative failed: {e}")
 
@@ -157,8 +187,31 @@ def bull_narrative(
 ) -> dict:
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="Invalid ticker")
+    ticker = ticker.upper()
+
+    from src.utils.db import cache_get
+    from api.services._background_jobs import kick
+    cache_key = f"bull_narrative:v1:{ticker}"
+    if not force:
+        cached = cache_get(cache_key)
+        if cached:
+            cached["from_cache"] = True
+            cached["status"] = "ready"
+            return cached
+        kick(
+            f"bull_narrative:{ticker}",
+            bull_narrative_service.get_bull_narrative,
+            ticker, force=False,
+        )
+        return {
+            "symbol": ticker,
+            "from_cache": False,
+            "status": "computing",
+        }
     try:
-        return bull_narrative_service.get_bull_narrative(ticker, force=force)
+        out = bull_narrative_service.get_bull_narrative(ticker, force=force)
+        out["status"] = "ready"
+        return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bull narrative failed: {e}")
 
@@ -337,3 +390,45 @@ def co_holders(
         return co_holders_service.get_co_holders(ticker, force=force)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Co-holders failed: {e}")
+
+
+@router.get("/{ticker}/options-flow", response_model=OptionsFlowResponse)
+def options_flow(
+    ticker: str,
+    force: bool = Query(False, description="Bypass the 30m cache"),
+) -> dict:
+    """Put/call ratio, IV rank, and unusual options activity for this ticker."""
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return options_flow_service.get_options_flow(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Options flow failed: {e}")
+
+
+@router.get("/{ticker}/estimate-revisions", response_model=EstimateRevisionsResponse)
+def estimate_revisions(
+    ticker: str,
+    force: bool = Query(False, description="Bypass the 12h cache"),
+) -> dict:
+    """Analyst rating actions, consensus shift, and forward EPS estimate trend."""
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return estimate_revisions_service.get_estimate_revisions(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Estimate revisions failed: {e}")
+
+
+@router.get("/{ticker}/macro-fit", response_model=MacroFitResponse)
+def macro_fit(
+    ticker: str,
+    force: bool = Query(False, description="Bypass the 1h cache"),
+) -> dict:
+    """How the current macro regime + sector tilt position this stock."""
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return macro_fit_service.get_macro_fit(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Macro fit failed: {e}")

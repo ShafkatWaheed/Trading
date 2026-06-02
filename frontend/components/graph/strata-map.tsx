@@ -20,12 +20,12 @@
  * pulse when an upstream node is being hovered or actively running.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw, Database, Tag, Layers, Users, Flame, FileText, Building2,
   Eye, Zap, CheckCircle2, AlertCircle, Loader2,
-  Square, Newspaper,
+  Square, Newspaper, Play, StopCircle,
   type LucideIcon,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
@@ -77,6 +77,18 @@ const STRATA: Stratum[] = [
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([t, n]) => `${t}:${n}`).join("·"),
         }),
+      },
+      {
+        key: "nasdaq_listings", title: "NASDAQ Capital (D)", icon: Database, tone: "blue",
+        upstream: ["universe"],
+        liveStat: (q) => {
+          const d = q.universe.by_tier?.D ?? 0;
+          return {
+            primary: d.toLocaleString() + " Tier D",
+            secondary: d > 0 ? "NASDAQ Capital Market" : "run to populate",
+            warn: d === 0,
+          };
+        },
       },
     ],
   },
@@ -139,12 +151,52 @@ const STRATA: Stratum[] = [
         }),
       },
       {
+        key: "discover_ciks", title: "Discover institutions", icon: Building2, tone: "green",
+        upstream: [],
+        liveStat: (q) => ({
+          primary: q.institutional.holdings_total.toLocaleString() + " holdings now",
+          secondary: "adds verified CIKs from SEC EDGAR",
+        }),
+      },
+      {
+        key: "13f_holdings", title: "13F holdings (SEC)", icon: Building2, tone: "amber",
+        upstream: ["discover_ciks"],
+        liveStat: (q) => ({
+          primary: q.institutional.holdings_total.toLocaleString() + " holdings",
+          secondary: "fresh from SEC 13F-HR filings",
+        }),
+      },
+      {
         key: "13f_overlap", title: "13F overlap", icon: Building2, tone: "blue",
-        upstream: ["universe"],
+        upstream: ["13f_holdings"],
         liveStat: (q) => ({
           primary: q.institutional.holdings_total.toLocaleString() + " holdings",
           secondary: `${sumValues(q.institutional.by_source).toLocaleString()} edges`,
         }),
+      },
+      {
+        key: "relations_seed", title: "Relations seed (hand)", icon: FileText, tone: "green",
+        upstream: ["universe"],
+        liveStat: (q) => {
+          const sub = q.relations.by_type.substitute ?? 0;
+          const comp = q.relations.by_type.complement ?? 0;
+          return {
+            primary: `${(sub + comp).toLocaleString()} sub+comp edges`,
+            secondary: `${sub} substitute · ${comp} complement`,
+          };
+        },
+      },
+      {
+        key: "claude_relations", title: "Sub/Comp (Claude)", icon: Flame, tone: "amber",
+        upstream: ["relations_seed"],
+        liveStat: (q) => {
+          const sub = q.relations.by_type.substitute ?? 0;
+          const comp = q.relations.by_type.complement ?? 0;
+          return {
+            primary: `${(sub + comp).toLocaleString()} total sub+comp`,
+            secondary: "fills missing Tier A pairs",
+          };
+        },
       },
     ],
   },
@@ -195,6 +247,55 @@ const STRATA: Stratum[] = [
   },
 ];
 
+// ── staleness ────────────────────────────────────────────────────────
+//
+// Per-kind freshness budget (in days). After this many days since the last
+// SUCCESSFUL run, the node is considered "stale" and we tint it amber.
+// Pick values that match each layer's real-world cadence:
+//
+//   • universe / nasdaq_listings   — weekly (S&P/Russell reconstitutions)
+//   • industries / conglomerate    — monthly (yfinance / hand-curated drift)
+//   • peers                        — monthly (industry rankings shift slowly)
+//   • causal / tenk_mining         — quarterly (10-Ks file annually)
+//   • 13f_overlap                  — quarterly (13Fs file 45d after Q-end)
+//   • composite_confidence + chans — monthly (re-score after edge changes)
+//   • news_co_mention_backfill     — weekly (news flow shifts faster)
+//   • freshness                    — daily (the scan itself)
+const STALENESS_DAYS: Record<string, number> = {
+  universe:                 7,
+  nasdaq_listings:          7,
+  industries:               30,
+  conglomerate:             30,
+  peers:                    30,
+  causal:                   90,
+  tenk_mining:              90,
+  discover_ciks:            180,    // only refresh when seeding new funds
+  "13f_holdings":           90,     // 13Fs file 45d after Q-end
+  "13f_overlap":            90,
+  relations_seed:           30,     // hand seed — refresh when CSV is updated
+  claude_relations:         60,     // run when new Tier A names become candidates
+  freshness:                1,
+  composite_confidence:     30,
+  correlation_backfill:     30,
+  news_co_mention_backfill: 7,
+};
+
+type FreshState = "never" | "stale" | "fresh" | "failed";
+
+function freshnessFor(latest: RefreshJob | null, kindKey: string): FreshState {
+  // No job row at all = never been run via the UI.
+  if (!latest) return "never";
+  // The most recent job failed — surface that distinctly from "stale".
+  if (latest.status === "failed") return "failed";
+  // Successful run, but how long ago?
+  const finishedAt = latest.finished_at;
+  if (!finishedAt) return latest.status === "done" ? "fresh" : "never";
+  const ageMs = Date.now() - new Date(finishedAt).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  const budget = STALENESS_DAYS[kindKey] ?? 30;
+  return ageDays > budget ? "stale" : "fresh";
+}
+
 // ── tone tokens — matches the 4-color palette discipline ─────────────
 
 const TONE_TOKEN: Record<Tone, {
@@ -205,6 +306,194 @@ const TONE_TOKEN: Record<Tone, {
   amber: { bar: "bg-accent-amber",    ring: "ring-accent-amber/40", text: "text-accent-amber",     bg: "bg-accent-amber/10",  border: "border-accent-amber/30" },
   red:   { bar: "bg-accent-red",      ring: "ring-accent-red/40",   text: "text-accent-redSoft",   bg: "bg-accent-red/10",    border: "border-accent-red/30"   },
 };
+
+// ── bulk-run helpers ─────────────────────────────────────────────────
+//
+// Build dependency "waves" from STRATA: a wave is a set of kinds whose
+// upstreams are either (a) not in our target set, or (b) already completed
+// in earlier waves. Running waves serially ensures upstream layers finish
+// before downstream layers consume them — no race / no half-done graph.
+function planWaves(targetKinds: Set<string>): string[][] {
+  const upstreamOf: Record<string, string[]> = {};
+  for (const stratum of STRATA) {
+    for (const k of stratum.kinds) {
+      upstreamOf[k.key] = k.upstream;
+    }
+  }
+  const remaining = new Set(targetKinds);
+  const completed = new Set<string>();
+  const waves: string[][] = [];
+  // Safety bound — even a pathological cycle can't exceed N iterations.
+  for (let iter = 0; iter < 50 && remaining.size > 0; iter++) {
+    const wave: string[] = [];
+    for (const k of remaining) {
+      const blockers = (upstreamOf[k] ?? []).filter(
+        (u) => targetKinds.has(u) && !completed.has(u),
+      );
+      if (blockers.length === 0) wave.push(k);
+    }
+    if (wave.length === 0) {
+      // Should be impossible given the DAG, but guard anyway: dump remaining
+      // as a final wave so we don't hang.
+      waves.push([...remaining]);
+      break;
+    }
+    waves.push(wave);
+    for (const k of wave) {
+      remaining.delete(k);
+      completed.add(k);
+    }
+  }
+  return waves;
+}
+
+/** Poll one job until it reaches a terminal state or `isCancelled()` flips true. */
+async function waitForJob(jobId: number, isCancelled: () => boolean): Promise<RefreshJob> {
+  // Max ~3 hr — peers + tenk_mining are the slowest registered kinds.
+  for (let i = 0; i < 3 * 60 * 30; i++) {
+    if (isCancelled()) {
+      // Best-effort: return whatever the latest snapshot says so the caller
+      // can decide to skip vs retry. Backend has no cancel endpoint today.
+      return await refreshApi.job(jobId);
+    }
+    const job = await refreshApi.job(jobId);
+    if (job.status === "done" || job.status === "failed") return job;
+    await new Promise((res) => setTimeout(res, 2_000));
+  }
+  return await refreshApi.job(jobId);
+}
+
+
+// ── Run all stale button ─────────────────────────────────────────────
+
+function RunAllStaleButton({ latestMap }: { latestMap: Record<string, RefreshJob> | null }) {
+  const qc = useQueryClient();
+  const [bulk, setBulk] = useState<{
+    running: boolean;
+    waves: string[][];
+    waveIdx: number;
+    done: number;
+    failed: number;
+    currentKinds: string[];
+  }>({ running: false, waves: [], waveIdx: 0, done: 0, failed: 0, currentKinds: [] });
+  const cancelRef = useRef(false);
+
+  // Compute the set of kinds that need a run (never + stale + failed).
+  const targets = useMemo(() => {
+    const out: string[] = [];
+    for (const stratum of STRATA) {
+      for (const k of stratum.kinds) {
+        const f = freshnessFor(latestMap?.[k.key] ?? null, k.key);
+        if (f === "never" || f === "stale" || f === "failed") out.push(k.key);
+      }
+    }
+    return out;
+  }, [latestMap]);
+
+  const totalTargets = targets.length;
+  const waves = useMemo(() => planWaves(new Set(targets)), [targets]);
+
+  const run = async () => {
+    if (bulk.running) return;
+    if (totalTargets === 0) return;
+    const ok = window.confirm(
+      `Run ${totalTargets} stale/never-run layer${totalTargets === 1 ? "" : "s"}?` +
+      `\n\nGrouped into ${waves.length} wave${waves.length === 1 ? "" : "s"} by dependency. ` +
+      `Some kinds (peers, 10-K) can take 1-2 hours each — expect this to run a while. ` +
+      `You can cancel mid-run.`,
+    );
+    if (!ok) return;
+
+    cancelRef.current = false;
+    setBulk({
+      running: true, waves, waveIdx: 0, done: 0, failed: 0, currentKinds: [],
+    });
+    let done = 0;
+    let failed = 0;
+
+    for (let wIdx = 0; wIdx < waves.length; wIdx++) {
+      if (cancelRef.current) break;
+      const wave = waves[wIdx];
+      setBulk((b) => ({ ...b, waveIdx: wIdx, currentKinds: wave }));
+
+      // Start every kind in the wave in parallel — they're guaranteed
+      // independent by our topo-sort.
+      const startResults = await Promise.allSettled(
+        wave.map((k) => refreshApi.start(k)),
+      );
+      qc.invalidateQueries({ queryKey: ["refresh", "latest"] });
+
+      // Wait for each to finish. Failures count but don't abort the bulk run.
+      await Promise.all(
+        startResults.map(async (res) => {
+          if (res.status === "rejected") {
+            failed += 1;
+            setBulk((b) => ({ ...b, failed }));
+            return;
+          }
+          const finalJob = await waitForJob(res.value.id, () => cancelRef.current);
+          if (finalJob.status === "failed") failed += 1;
+          done += 1;
+          setBulk((b) => ({ ...b, done, failed }));
+          qc.invalidateQueries({ queryKey: ["refresh", "latest"] });
+          qc.invalidateQueries({ queryKey: ["refresh", "quality"] });
+        }),
+      );
+    }
+
+    setBulk({ running: false, waves: [], waveIdx: 0, done, failed, currentKinds: [] });
+    qc.invalidateQueries({ queryKey: ["refresh", "latest"] });
+    qc.invalidateQueries({ queryKey: ["refresh", "quality"] });
+  };
+
+  if (totalTargets === 0 && !bulk.running) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-accent-greenSoft font-mono">
+        <CheckCircle2 size={10} /> all layers fresh
+      </span>
+    );
+  }
+
+  if (bulk.running) {
+    const totalDone = bulk.done;
+    const totalTargetsRunning = bulk.waves.reduce((a, w) => a + w.length, 0);
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-text-muted tabular-nums font-mono">
+          wave {bulk.waveIdx + 1}/{bulk.waves.length}
+          {" · "}
+          {totalDone}/{totalTargetsRunning} done
+          {bulk.failed > 0 && (
+            <span className="text-accent-redSoft ml-1">· {bulk.failed} err</span>
+          )}
+        </span>
+        {bulk.currentKinds.length > 0 && (
+          <span className="hidden md:inline text-[10px] text-text-secondary font-mono truncate max-w-[200px]">
+            {bulk.currentKinds.join(" · ")}
+          </span>
+        )}
+        <button
+          onClick={() => { cancelRef.current = true; }}
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-accent-red/30 bg-accent-red/10 text-accent-redSoft hover:bg-accent-red/20"
+        >
+          <StopCircle size={10} /> Stop
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={run}
+      className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md border border-accent-amber/40 bg-accent-amber/10 text-accent-amber hover:bg-accent-amber/20 transition-colors font-mono font-semibold"
+      title={`Walks ${targets.length} layers in ${waves.length} dependency wave${waves.length === 1 ? "" : "s"}.`}
+    >
+      <Play size={11} />
+      Run all stale ({totalTargets})
+    </button>
+  );
+}
+
 
 // ── component ────────────────────────────────────────────────────────
 
@@ -282,13 +571,14 @@ export function StrataMap() {
       onMouseLeave={() => setHovered(null)}
       aria-label="Knowledge graph refresh pipeline"
     >
-      <div className="flex items-baseline gap-2 mb-3">
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
         <h2 className="text-[12px] uppercase tracking-[0.18em] text-text-muted font-semibold font-display">
           Pipeline map
         </h2>
-        <span className="text-[10px] text-text-dim">
+        <span className="text-[10px] text-text-dim flex-1 min-w-[200px]">
           hover a node → see what it feeds · click Run to refresh that subgraph
         </span>
+        <RunAllStaleButton latestMap={latest ?? null} />
       </div>
 
       <div className="flex flex-col">
@@ -432,24 +722,42 @@ function KindNode({
     : { primary: qLoading ? "…" : "—", secondary: "" };
   const finishedAgo = latest?.finished_at ? formatRelativeTime(latest.finished_at) : null;
 
+  // Freshness state — drives border color + dot + footer pill.
+  // Suppress while a job is in-flight so we don't flash "stale" mid-run.
+  const fresh: FreshState = active ? "fresh" : freshnessFor(latest, spec.key);
+  const isNever = fresh === "never";
+  const isStale = fresh === "stale";
+  const isFailed = fresh === "failed";
+
+  // Stale/never override the tone border (a "you should look at this" signal
+  // outranks "this is a green-themed kind"). Failed keeps the red signal.
+  const cardBorderClass = isFailed ? "border-accent-red/50"
+                        : isNever  ? "border-accent-amber/50"
+                        : isStale  ? "border-accent-amber/30"
+                        :            tone.border;
+  const stripeClass = isFailed ? "bg-accent-red"
+                    : isNever  ? "bg-accent-amber"
+                    : isStale  ? "bg-accent-amber"
+                    :            tone.bar;
+
   return (
     <div
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       className={cn(
         "group relative card p-3 transition-all duration-200 overflow-hidden",
-        "border", tone.border,
+        "border", cardBorderClass,
         isHighlighted && `ring-1 ${tone.ring}`,
         isHovered && "translate-y-[-1px]",
         dimOthers && "opacity-40",
         isActive && "ring-1 ring-accent-amber/40",
       )}
     >
-      {/* Left tone stripe — the "track" indicator */}
+      {/* Left tone stripe — switches to amber/red when the layer needs attention */}
       <div className={cn(
         "absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full transition-opacity",
-        tone.bar,
-        isHighlighted || isActive ? "opacity-100" : "opacity-50",
+        stripeClass,
+        isHighlighted || isActive || isNever || isFailed ? "opacity-100" : "opacity-50",
       )} />
 
       {/* Active glow under card */}
@@ -467,7 +775,15 @@ function KindNode({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <div className="text-[12px] font-semibold leading-tight truncate">{spec.title}</div>
-            {stat.warn && (
+            {/* Never-run dot — the priority signal: "click this first" */}
+            {isNever && (
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0 bg-accent-red animate-pulse"
+                title="Never been run — click Run to populate"
+              />
+            )}
+            {/* Stat-derived warn (e.g., review queue items, low coverage %) */}
+            {stat.warn && !isNever && (
               <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", "bg-accent-red animate-pulse")} />
             )}
           </div>
@@ -507,15 +823,39 @@ function KindNode({
         </div>
       )}
 
-      {/* Footer: last-run ago */}
-      {!active && finishedAgo && (
-        <div className="flex items-center gap-1 mt-1.5 pl-2 text-[9px] text-text-dim font-mono">
-          {latest?.status === "done" ? (
-            <CheckCircle2 size={9} className="text-accent-greenSoft" />
-          ) : latest?.status === "failed" ? (
-            <AlertCircle size={9} className="text-accent-redSoft" />
+      {/* Footer: freshness state. Three distinct pills the eye can scan: */}
+      {!active && (
+        <div className="flex items-center gap-2 mt-1.5 pl-2 text-[9px] font-mono">
+          {isNever ? (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-accent-amber/40 bg-accent-amber/10 text-accent-amber font-semibold uppercase tracking-wider"
+              title={`Never run via the UI. Budget: ${STALENESS_DAYS[spec.key] ?? 30}d.`}
+            >
+              <AlertCircle size={9} />
+              Never run
+            </span>
+          ) : isFailed ? (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-accent-red/40 bg-accent-red/10 text-accent-redSoft font-semibold uppercase tracking-wider"
+              title="Last run failed — hover the card for details"
+            >
+              <AlertCircle size={9} />
+              Failed · {finishedAgo}
+            </span>
+          ) : isStale ? (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-accent-amber/40 bg-accent-amber/10 text-accent-amber font-semibold uppercase tracking-wider"
+              title={`Older than the ${STALENESS_DAYS[spec.key] ?? 30}d budget for this layer.`}
+            >
+              <AlertCircle size={9} />
+              Stale · {finishedAgo}
+            </span>
+          ) : finishedAgo ? (
+            <span className="inline-flex items-center gap-1 text-text-dim">
+              <CheckCircle2 size={9} className="text-accent-greenSoft" />
+              {finishedAgo}
+            </span>
           ) : null}
-          {finishedAgo}
         </div>
       )}
 

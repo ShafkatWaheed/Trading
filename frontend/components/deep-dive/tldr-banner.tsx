@@ -29,12 +29,14 @@ export function TldrBanner({ symbol }: Props) {
     queryFn: () => stocksApi.bullNarrative(symbol),
     staleTime: 60 * 60 * 1000,
     enabled: Boolean(symbol),
+    refetchInterval: (q) => (q.state.data?.status === "computing" ? 8000 : false),
   });
   const bear = useQuery({
     queryKey: ["risk-narrative", symbol],
     queryFn: () => stocksApi.riskNarrative(symbol),
     staleTime: 60 * 60 * 1000,
     enabled: Boolean(symbol),
+    refetchInterval: (q) => (q.state.data?.status === "computing" ? 8000 : false),
   });
   const bubble = useQuery({
     queryKey: ["bubble-score", symbol],

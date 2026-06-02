@@ -1,13 +1,15 @@
 """News feed for a stock — headlines with rule-based sentiment tags.
 
-Uses Tavily/Exa via NewsProvider. Sentiment is scored locally to avoid
-per-headline Claude calls. Returns last N headlines + aggregate net sentiment.
+Uses Tavily/Exa via NewsProvider with Google News RSS as a free fallback.
+Sentiment is scored locally to avoid per-headline Claude calls. Returns last
+N headlines + aggregate net sentiment.
 """
 from __future__ import annotations
 
 from datetime import datetime
 
 from src.data.news import NewsProvider
+from src.data.quota_tracker import is_exhausted
 from src.utils.db import cache_get, cache_set
 
 _CACHE_TTL_MINUTES = 30  # news moves fast; refresh sub-hourly
@@ -104,6 +106,22 @@ def get_news_feed(symbol: str, force: bool = False) -> dict:
         net_score = 0.0
         net_label = "no coverage"
 
+    # Build a transparency warning the UI can render when paid providers are
+    # out of credit but we may still have results from the RSS fallback.
+    exhausted = [src for src in ("tavily", "exa") if is_exhausted(src)]
+    if exhausted and not items:
+        source_warning = (
+            f"News providers rate-limited ({', '.join(exhausted)}). "
+            "Google News RSS fallback returned nothing for this ticker."
+        )
+    elif exhausted:
+        source_warning = (
+            f"Paid news providers rate-limited ({', '.join(exhausted)}); "
+            "headlines below are from the free Google News fallback."
+        )
+    else:
+        source_warning = None
+
     payload = {
         "symbol": symbol,
         "items": items,
@@ -112,12 +130,16 @@ def get_news_feed(symbol: str, force: bool = False) -> dict:
         "neutral_count": neutral_count,
         "net_sentiment": net_label,
         "net_score": round(net_score, 2),
+        "source_warning": source_warning,
         "last_updated": datetime.utcnow().isoformat() + "Z",
         "from_cache": False,
     }
 
-    try:
-        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
-    except Exception:
-        pass
+    # Don't cache an empty payload — that's why "no coverage" was sticky for
+    # 30 minutes even after providers recovered. Only cache when we have items.
+    if items:
+        try:
+            cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
     return payload

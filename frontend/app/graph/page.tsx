@@ -46,13 +46,13 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StrataMap } from "@/components/graph/strata-map";
 import { freshnessApi, graphApi, refreshApi } from "@/lib/api/endpoints";
 import type {
   ActiveTheme,
   DiscoverImpactResponse,
   FreshnessQueueRow,
   RefreshJob,
-  RefreshKindMeta,
   RelevanceScoreItem,
 } from "@/lib/api/types";
 import { cn, formatRelativeTime } from "@/lib/utils";
@@ -83,12 +83,15 @@ const KIND_META: Record<
   { title: string; icon: typeof RefreshCw; accent: string; eta: string }
 > = {
   universe:     { title: "Universe membership",  icon: Database,   accent: "text-accent-violet", eta: "~30s" },
+  nasdaq_listings: { title: "NASDAQ Capital (D)", icon: Database,   accent: "text-accent-blue",   eta: "~10s" },
   industries:   { title: "Industry tags",        icon: Tag,        accent: "text-accent-amber",  eta: "~3 hr" },
   conglomerate: { title: "Conglomerate tags",    icon: Layers,     accent: "text-accent-cyan",   eta: "<1s" },
   peers:        { title: "Peer ranking (B/C)",   icon: Users,      accent: "text-accent-blue",   eta: "hours" },
   causal:       { title: "Commodity exposures",  icon: Flame,      accent: "text-accent-pink",   eta: "hours" },
   tenk_mining:  { title: "10-K supply chain",    icon: FileText,   accent: "text-accent-green",  eta: "1-2 hr" },
   "13f_overlap":{ title: "13F overlap edges",    icon: Building2,  accent: "text-accent-violet", eta: "<1s" },
+  "13f_holdings": { title: "13F holdings (SEC)",  icon: Building2,  accent: "text-accent-violet", eta: "~30s" },
+  "discover_ciks": { title: "Discover institutions", icon: Building2, accent: "text-accent-cyan", eta: "~20s" },
   freshness:    { title: "Freshness scan",       icon: Eye,        accent: "text-accent-cyan",   eta: "minutes" },
   composite_confidence: { title: "Composite confidence (cheap)", icon: Zap, accent: "text-accent-amber", eta: "<5s" },
   correlation_backfill: { title: "Correlation channel (Tiingo)", icon: Square, accent: "text-accent-blue", eta: "5-10 min" },
@@ -772,13 +775,6 @@ function DiscoverImpact() {
 // ── Page ─────────────────────────────────────────────────────────────
 
 export default function GraphPage() {
-  const { data: kindsResp, isLoading } = useQuery({
-    queryKey: ["refresh", "kinds"],
-    queryFn: () => refreshApi.kinds(),
-    staleTime: 60 * 60_000,
-  });
-  const kinds = useMemo(() => kindsResp?.kinds ?? [], [kindsResp]);
-
   // inject the indeterminate progress keyframe once
   useEffect(() => {
     const id = "graph-slide-keyframes";
@@ -807,25 +803,7 @@ export default function GraphPage() {
 
       {/* 2. refresh controls */}
       <section className="mb-6">
-        <div className="flex items-baseline gap-2 mb-2.5">
-          <h2 className="text-[12px] uppercase tracking-wider text-text-muted font-semibold">
-            Manual refresh
-          </h2>
-          <span className="text-[10px] text-text-dim">click Run on any source — one job per kind at a time</span>
-        </div>
-        {isLoading ? (
-          <div className="grid sm:grid-cols-2 gap-2.5">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-[100px] w-full" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 gap-2.5">
-            {kinds.map((k: RefreshKindMeta) => (
-              <JobCard key={k.kind} kind={k.kind} description={k.description} />
-            ))}
-          </div>
-        )}
+        <StrataMap />
       </section>
 
       {/* 3. review queue */}

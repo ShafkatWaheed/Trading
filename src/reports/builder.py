@@ -486,8 +486,12 @@ def _community_buzz_section(data: dict) -> ReportSection:
 
 
 def _short_interest_section(data: dict) -> ReportSection:
-    pct = data.get("short_pct_float", 0)
-    ratio = data.get("short_ratio", 0)
+    # `or 0` (not the second arg to `.get`) — yfinance returns these keys with
+    # explicit None for some tickers (e.g. GOOG), and dict.get's default only
+    # fires on missing keys. Without this coercion the f-strings below throw
+    # "unsupported format string passed to NoneType.__format__".
+    pct = data.get("short_pct_float") or 0
+    ratio = data.get("short_ratio") or 0
     signal = data.get("signal", "normal")
     score = data.get("score", 0)
 

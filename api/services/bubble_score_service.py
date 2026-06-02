@@ -56,10 +56,16 @@ def _fetch_yf_fundamentals(symbol: str) -> dict:
         out["profit_margins"]  = _safe_float(info.get("profitMargins"))
     except Exception:
         pass
-    try:
-        cache_set(cache_key, out, ttl_minutes=_CACHE_TTL_MINUTES)
-    except Exception:
-        pass
+    # Only cache if we actually got some data. Caching an all-None payload
+    # (e.g. from a Yahoo "Invalid Crumb" 401) sticks a broken bubble score
+    # in front of users for 24h — they see "Value Zone" because there's no
+    # valuation or fundamentals data to flag the bubble.
+    has_signal = any(v is not None for v in out.values())
+    if has_signal:
+        try:
+            cache_set(cache_key, out, ttl_minutes=_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
     return out
 
 

@@ -3,16 +3,20 @@
 Combines three independent sources, each best-effort (one failing doesn't kill
 the others). Cached for 6h since 13F is quarterly and Form 4 / congressional
 filings trickle in daily.
+
+Also exposes `get_sector_tape(window_days)` — a market-wide rollup of 13F
+holdings deltas by sector. Used by the market pulse page and brief Phase A.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from src.utils.db import cache_get, cache_set
+from src.utils.db import cache_get, cache_set, get_connection
 from api.services import ownership_service
 
 _CACHE_TTL_MINUTES = 6 * 60
+_TAPE_CACHE_TTL_MINUTES = 6 * 60
 
 
 def _to_float(v) -> float | None:
@@ -116,12 +120,19 @@ def _congress_section(symbol: str) -> dict:
         "top_sellers": [],
         "recent_trades": [],
         "party_breakdown": {},
+        # New: surfaced from src.analysis.congress_signal.analyze()
+        "signal_score": 0,
+        "signal_label": "no_data",
+        "bipartisan": False,
+        "signal_factors": [],
         "error": None,
     }
     try:
+        from src.analysis import congress_signal as cs_analysis
         from src.data.congress import CongressDataProvider
         prov = CongressDataProvider()
         s = prov.get_summary(symbol, days=180)
+        cs_score = cs_analysis.analyze(s)
         out.update({
             "total_trades":       s.total_trades,
             "total_buys":         s.total_buys,
@@ -131,6 +142,10 @@ def _congress_section(symbol: str) -> dict:
             "top_buyers":         list(s.top_buyers)[:25],
             "top_sellers":        list(s.top_sellers)[:25],
             "party_breakdown":    s.party_breakdown or {},
+            "signal_score":       cs_score.score,
+            "signal_label":       cs_score.signal,
+            "bipartisan":         cs_score.bipartisan,
+            "signal_factors":     cs_score.factors,
         })
         for t in (s.recent_trades or [])[:50]:
             out["recent_trades"].append({
@@ -178,6 +193,203 @@ def _summary_signal(institutional: dict, insider: dict, congress: dict) -> str:
         parts.append(f"{institutional['total_known_holders']} institutional holders tracked")
 
     return "; ".join(parts) if parts else "No notable smart-money activity in the tracking window."
+
+
+_VALID_WINDOWS = (90, 180, 365)
+
+
+def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
+    """Sector-level 13F net dollar flow over the trailing window.
+
+    For each institution in `institution_holdings`, find the most recent
+    snapshot inside the window (`now`) and the most recent snapshot strictly
+    before the window starts (`then`). Per-symbol delta is `now - then`;
+    new positions count as full adds, dropped positions as full trims.
+
+    Sectors with no qualifying delta data (no institutions with both
+    snapshots) are still surfaced with `net_dollar_flow=None` and a
+    `coverage_note`, so the caller can see "no flow signal here" instead of
+    confusing "$0".
+
+    Args:
+        window_days: 90 / 180 / 365 (others rejected).
+        force: bypass cache.
+
+    Returns:
+        {
+          "window_days": int,
+          "as_of": "YYYY-MM-DD",
+          "sectors": [
+            {
+              "sector": str,
+              "net_dollar_flow": float | None,   # USD; None when no delta data
+              "adds_count": int,                  # CIK,sym pairs with delta>0
+              "drops_count": int,                 # CIK,sym pairs with delta<0
+              "direction": "inflow"|"outflow"|"neutral"|"no_data",
+              "top_added":   [{"symbol", "delta_usd", "filings"}],   # top 5
+              "top_trimmed": [{"symbol", "delta_usd", "filings"}],   # top 3
+            }, ...
+          ],
+          "ciks_with_delta_data": int,
+          "ciks_total": int,
+          "coverage_note": str,
+        }
+    """
+    if window_days not in _VALID_WINDOWS:
+        window_days = 180
+
+    cache_key = f"smart_money:sector_tape:v1:{window_days}"
+    if not force:
+        cached = cache_get(cache_key)
+        if cached:
+            cached["from_cache"] = True
+            return cached
+
+    window_start = (datetime.utcnow() - timedelta(days=window_days)).strftime("%Y-%m-%d")
+
+    conn = get_connection()
+    try:
+        # symbol -> sector (primary mapping only)
+        sector_by_symbol = dict(
+            conn.execute(
+                """
+                SELECT si.symbol, ind.sector
+                FROM stock_industry si
+                JOIN industries ind ON ind.code = si.industry_code
+                WHERE si.is_primary = 1
+                """
+            ).fetchall()
+        )
+
+        # Per CIK: latest snapshot date INSIDE the window, and latest STRICTLY
+        # BEFORE the window. Two CIKs and their snapshots:
+        cik_anchors: dict[str, dict] = {}
+        # Use all snapshots regardless of `source` — both '13F' (from the loader)
+        # and 'hand' (from authoritative manual seeds of public 13F filings)
+        # represent real holdings. CLAUDE.md prohibits FABRICATED data, not
+        # legitimate data tagged via a different ingestion path.
+        for row in conn.execute(
+            """
+            SELECT cik, MAX(as_of) AS t_end
+            FROM institution_holdings
+            WHERE as_of >= ?
+            GROUP BY cik
+            """,
+            (window_start,),
+        ).fetchall():
+            cik_anchors.setdefault(row["cik"], {})["t_end"] = row["t_end"]
+
+        for row in conn.execute(
+            """
+            SELECT cik, MAX(as_of) AS t_start
+            FROM institution_holdings
+            WHERE as_of < ?
+            GROUP BY cik
+            """,
+            (window_start,),
+        ).fetchall():
+            cik_anchors.setdefault(row["cik"], {})["t_start"] = row["t_start"]
+
+        ciks_total = len(cik_anchors)
+        ciks_with_delta = sum(1 for v in cik_anchors.values() if v.get("t_end") and v.get("t_start"))
+
+        # Walk each CIK that has both anchors and compute symbol deltas
+        deltas_by_sector: dict[str, dict] = {}
+        for cik, anchors in cik_anchors.items():
+            t_end = anchors.get("t_end")
+            t_start = anchors.get("t_start")
+            if not (t_end and t_start):
+                continue
+
+            now_pos = dict(
+                conn.execute(
+                    "SELECT symbol, value_usd FROM institution_holdings "
+                    "WHERE cik=? AND as_of=? AND value_usd IS NOT NULL",
+                    (cik, t_end),
+                ).fetchall()
+            )
+            then_pos = dict(
+                conn.execute(
+                    "SELECT symbol, value_usd FROM institution_holdings "
+                    "WHERE cik=? AND as_of=? AND value_usd IS NOT NULL",
+                    (cik, t_start),
+                ).fetchall()
+            )
+
+            all_symbols = set(now_pos) | set(then_pos)
+            for sym in all_symbols:
+                sector = sector_by_symbol.get(sym)
+                if not sector:
+                    continue
+                delta = float(now_pos.get(sym, 0.0)) - float(then_pos.get(sym, 0.0))
+                if delta == 0.0:
+                    continue
+                bucket = deltas_by_sector.setdefault(sector, {
+                    "net": 0.0, "adds": 0, "drops": 0,
+                    "per_symbol": {},   # sym -> {"delta": float, "filings": int}
+                })
+                bucket["net"] += delta
+                if delta > 0:
+                    bucket["adds"] += 1
+                else:
+                    bucket["drops"] += 1
+                sym_entry = bucket["per_symbol"].setdefault(sym, {"delta": 0.0, "filings": 0})
+                sym_entry["delta"] += delta
+                sym_entry["filings"] += 1
+    finally:
+        conn.close()
+
+    # Build response sectors list: include sectors that appeared in the data,
+    # plus any sector with no delta data so callers see the full picture.
+    all_sectors = set(deltas_by_sector.keys())
+    out_sectors = []
+    for sector in sorted(all_sectors, key=lambda s: abs(deltas_by_sector[s]["net"]), reverse=True):
+        bucket = deltas_by_sector[sector]
+        per_sym = sorted(
+            ({"symbol": s, "delta_usd": v["delta"], "filings": v["filings"]}
+             for s, v in bucket["per_symbol"].items()),
+            key=lambda x: x["delta_usd"], reverse=True,
+        )
+        top_added = [x for x in per_sym if x["delta_usd"] > 0][:5]
+        top_trimmed = [x for x in reversed(per_sym) if x["delta_usd"] < 0][:3]
+        net = bucket["net"]
+        direction = "inflow" if net > 0 else "outflow" if net < 0 else "neutral"
+        out_sectors.append({
+            "sector": sector,
+            "net_dollar_flow": net,
+            "adds_count": bucket["adds"],
+            "drops_count": bucket["drops"],
+            "direction": direction,
+            "top_added": top_added,
+            "top_trimmed": top_trimmed,
+        })
+
+    coverage_note = (
+        f"Based on {ciks_with_delta} of {ciks_total} institutions with sequential snapshots "
+        f"in the trailing {window_days}d window. 45-day 13F disclosure lag applies."
+    )
+    if ciks_with_delta == 0:
+        coverage_note = (
+            f"No institutions have sequential 13F snapshots in the trailing {window_days}d "
+            f"window yet — flow tape requires 2+ filings per CIK. Backfill in progress."
+        )
+
+    payload = {
+        "window_days": window_days,
+        "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
+        "sectors": out_sectors,
+        "ciks_with_delta_data": ciks_with_delta,
+        "ciks_total": ciks_total,
+        "coverage_note": coverage_note,
+        "from_cache": False,
+    }
+
+    if out_sectors:
+        try:
+            cache_set(cache_key, payload, ttl_minutes=_TAPE_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
+    return payload
 
 
 def get_smart_money(symbol: str, force: bool = False) -> dict:

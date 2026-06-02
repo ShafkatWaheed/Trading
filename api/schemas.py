@@ -1229,6 +1229,10 @@ class RiskNarrativeResponse(BaseModel):
     error: str | None = None
     raw: str | None = None
     from_cache: bool = False
+    # "ready"     — cached or freshly generated, all fields populated
+    # "computing" — background generation kicked off; poll again in 30-60s
+    # None        — default, treated as "ready" by frontend
+    status: str | None = None
 
 
 class EarningsExplainRequest(BaseModel):
@@ -1292,6 +1296,8 @@ class BullNarrativeResponse(BaseModel):
     error: str | None = None
     raw: str | None = None
     from_cache: bool = False
+    # "ready" | "computing" | None — see RiskNarrativeResponse.
+    status: str | None = None
 
 
 class AnalystRatingsBreakdown(BaseModel):
@@ -1410,6 +1416,12 @@ class CongressSection(BaseModel):
     top_sellers: list[str] = []
     recent_trades: list[CongressTradeRow] = []
     party_breakdown: dict[str, dict[str, int]] = {}
+    # src.analysis.congress_signal.analyze() output — surfaced so the UI can
+    # show a one-line verdict + bipartisan badge above the recent-trades list.
+    signal_score: int = 0
+    signal_label: str = "no_data"     # 'bullish' | 'bearish' | 'mixed' | 'no_data'
+    bipartisan: bool = False
+    signal_factors: list[str] = []
     error: str | None = None
 
 
@@ -1444,6 +1456,7 @@ class NewsFeedResponse(BaseModel):
     neutral_count: int = 0
     net_sentiment: str = "no coverage"
     net_score: float = 0.0
+    source_warning: str | None = None
     last_updated: str
     from_cache: bool = False
 
@@ -1848,4 +1861,365 @@ class CoHoldersResponse(BaseModel):
     co_held: list[CoHeldStock] = []
     total_holders: int = 0
     last_updated: str
+    from_cache: bool = False
+
+
+# ── Options flow card ──────────────────────────────────────────────
+
+
+class UnusualOptionsRow(BaseModel):
+    contract_type: str
+    strike: float | None = None
+    expiration: str
+    volume: int
+    open_interest: int
+    volume_oi_ratio: float | None = None
+    premium: float | None = None
+    sentiment: str
+
+
+class OptionsFlowResponse(BaseModel):
+    symbol: str
+    available: bool
+    reason: str | None = None
+    signal: str
+    score: int
+    lede: str | None = None
+    put_call_ratio: float | None = None
+    iv_rank: float | None = None
+    iv_avg_pct: float | None = None        # absolute IV % — fallback when iv_rank unavailable
+    iv_percentile: float | None = None
+    max_pain: float | None = None
+    underlying_price: float | None = None
+    total_call_volume: int = 0
+    total_put_volume: int = 0
+    put_call_interpretation: str = ""
+    iv_interpretation: str = ""
+    unusual_activity_note: str = ""
+    factors: list[str] = []
+    unusual_top: list[UnusualOptionsRow] = []
+    data_source: str | None = None      # 'polygon' | 'yfinance' | None
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Estimate revisions card ────────────────────────────────────────
+
+
+class RatingActionRow(BaseModel):
+    action: str        # 'upgrade' | 'downgrade' | 'initiation' | 'reiteration' | 'other'
+    firm: str
+    from_grade: str = ""
+    to_grade: str = ""
+    date: str = ""
+
+
+class EpsTrendQuarter(BaseModel):
+    period: str | None = None
+    eps_avg: float | None = None
+
+
+class EpsTrend(BaseModel):
+    next_period: str | None = None
+    next_eps_avg: float | None = None
+    next_eps_high: float | None = None
+    next_eps_low: float | None = None
+    analyst_count: int | None = None
+    fy_path: list[EpsTrendQuarter] = []
+    growth_pct: float | None = None
+
+
+class PriceTargets(BaseModel):
+    mean: float | None = None
+    high: float | None = None
+    low: float | None = None
+    median: float | None = None
+
+
+class EstimateRevisionsResponse(BaseModel):
+    symbol: str
+    available: bool
+    reason: str | None = None
+    lede: str | None = None
+    net_change_30d: int = 0
+    upgrades_30d: int = 0
+    downgrades_30d: int = 0
+    initiations_30d: int = 0
+    consensus: str | None = None
+    consensus_shift: str | None = None
+    eps_trend: EpsTrend | None = None
+    recent_actions: list[RatingActionRow] = []
+    # New (Yahoo Finance fallback fields)
+    price_targets: PriceTargets | None = None
+    analyst_count: int | None = None
+    source: str | None = None
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Macro fit card ─────────────────────────────────────────────────
+
+
+class MacroSnapshotView(BaseModel):
+    regime: str | None = None
+    fed_funds_rate: float | None = None
+    treasury_10y: float | None = None
+    treasury_2y: float | None = None
+    vix: float | None = None
+    unemployment: float | None = None
+    gdp_growth: float | None = None
+    yield_curve_inverted: bool = False
+
+
+class MacroFitResponse(BaseModel):
+    symbol: str
+    available: bool
+    reason: str | None = None
+    regime: str | None = None
+    regime_score: int = 0
+    regime_factors: list[str] = []
+    sector: str | None = None
+    sector_score: float = 0.0
+    sector_drivers: list[str] = []
+    sector_note: str | None = None
+    active_factors: list[str] = []
+    verdict: str = "neutral"
+    verdict_lede: str | None = None
+    snapshot: MacroSnapshotView = MacroSnapshotView()
+    last_updated: str
+    from_cache: bool = False
+
+
+# ── Brief (morning narrative) ─────────────────────────────────────
+
+
+class BriefPickSnapshot(BaseModel):
+    verdict: str | None = None
+    risk_rating: int | None = None
+    fundamental_score: int | None = None
+    fundamental_archetype: str | None = None
+    macro_verdict: str | None = None
+    bubble_score: float | None = None
+    bubble_label: str | None = None
+    price: float | None = None
+    change_pct: float | None = None
+    headline_metric: str | None = None
+    # Rich-signal block — same shape as Gap Finder's full_signals: co_holders,
+    # neighborhood, options_flow, news, upcoming_catalysts, peer_valuation,
+    # recommendation, bull_thesis, risk_thesis, fundamental_pillars,
+    # earnings_pattern, bubble_breakdown, smart_money_detail, trade_plan,
+    # benchmarks, signal_evidence, sector signals, and web_validation.
+    # Heterogeneous + evolves often → typed as a free-form dict instead of
+    # nested models so adding new sub-fields doesn't break the schema.
+    full_signals: dict[str, Any] = {}
+
+
+class BriefPick(BaseModel):
+    symbol: str
+    name: str | None = None
+    bucket: str                 # 'stable' | 'promising' | 'hype'
+    angle: str | None = None
+    angle_label: str | None = None
+    chapter_headlines: list[str] = []   # all chapters this pick surfaced from
+    reasoning: list[str] = []           # from context_search legs
+    narrative: str
+    why_now: list[str] = []
+    snapshot: BriefPickSnapshot = BriefPickSnapshot()
+
+
+class BriefInvestmentAngle(BaseModel):
+    label: str
+    rationale: str = ""
+
+
+class BriefMarketStory(BaseModel):
+    headline: str
+    paragraphs: list[str] = []
+    investment_angles: list[BriefInvestmentAngle] = []
+
+
+class BriefChapter(BaseModel):
+    id: str
+    headline: str
+    source: str                 # 'sector' | 'disruption' | 'geopolitical' | 'claude'
+
+
+class BriefLensConvergence(BaseModel):
+    sector: str
+    lenses: list[str] = []
+    macro_alignment: str = "neutral"   # 'supports' | 'fights' | 'neutral'
+    evidence: str = ""
+
+
+class BriefLens(BaseModel):
+    """Claude-written search lens for today's brief.
+
+    Set when the Claude lens-writer succeeded; null when the brief fell back
+    to the legacy rule-based chapter rules. UI surfaces this as the
+    "Today's lens" banner.
+    """
+    query: str
+    rationale: str = ""
+    convergence: list[BriefLensConvergence] = []
+
+
+class BriefMeta(BaseModel):
+    candidates_considered: int = 0
+    sectors_in_focus: list[str] = []
+    themes_in_focus: list[str] = []
+    pulse_period: str = "1M"
+    lens_fallback_used: bool = False
+
+
+class BriefResponse(BaseModel):
+    generated_at: str
+    regime: str
+    regime_explanation: str
+    market_story: BriefMarketStory
+    chapters: list[BriefChapter] = []
+    lens: BriefLens | None = None
+    picks: list[BriefPick] = []
+    closing: str = ""
+    meta: BriefMeta = BriefMeta()
+
+
+# ── Trade Journal + Gap Finder ─────────────────────────────────────
+
+
+class JournalPosition(BaseModel):
+    id: int
+    symbol: str
+    direction: str = "long"
+    entry_date: str | None = None
+    entry_price: float | None = None
+    exit_date: str | None = None
+    exit_price: float | None = None
+    shares: int | None = None
+    pnl: float | None = None
+    pnl_percent: float | None = None
+    report_verdict: str = ""
+    thesis: str = ""
+    notes: str = ""
+    status: str  # 'open' | 'closed'
+    created_at: str
+
+
+class JournalPositionsResponse(BaseModel):
+    positions: list[JournalPosition] = []
+    total: int = 0
+
+
+class JournalHolding(BaseModel):
+    symbol: str
+    shares: int
+    avg_entry_price: float | None = None
+    total_cost: float | None = None
+    lots: int = 1
+    first_entry_date: str | None = None
+    latest_entry_date: str | None = None
+    latest_thesis: str = ""
+
+
+class JournalHoldingsResponse(BaseModel):
+    holdings: list[JournalHolding] = []
+    total_symbols: int = 0
+
+
+class JournalOpenRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=10)
+    entry_price: float = Field(..., gt=0)
+    shares: int = Field(..., gt=0)
+    direction: str = Field("long", pattern="^(long|short)$")
+    thesis: str = ""
+    report_verdict: str = ""
+
+
+class JournalCloseRequest(BaseModel):
+    exit_price: float = Field(..., gt=0)
+    notes: str = ""
+
+
+class GapFinderEvidence(BaseModel):
+    symbol: str
+    as_held: dict[str, Any] = {}
+    current: dict[str, Any] = {}
+    triggers: list[str] = []
+    triggers_for_buy: list[str] = []
+
+
+class GapFinderDecision(BaseModel):
+    symbol: str
+    action: str          # 'SELL_ALL'|'TRIM_50'|'TRIM_25'|'HOLD'|'BUY'|'ADD'|'PASS'
+    confidence: str = "medium"
+    rationale: str = ""
+    key_factors: list[str] = []
+    reevaluate_if: list[str] = []
+    web_sources: list[str] = []
+    evidence: GapFinderEvidence | None = None
+
+
+class GapFinderMeta(BaseModel):
+    judged_by_claude: int = 0
+    auto_holds: int = 0
+    web_research_enabled: bool = True
+    model: str = "haiku"
+
+
+class GapFinderResponse(BaseModel):
+    generated_at: str
+    holdings_count: int = 0
+    candidates_considered: int = 0
+    sells: list[GapFinderDecision] = []
+    holds: list[GapFinderDecision] = []
+    buys: list[GapFinderDecision] = []
+    meta: GapFinderMeta = GapFinderMeta()
+    from_cache: bool = False
+
+
+# ── Sector flow tapes (13F + Congress) ─────────────────────────────
+
+
+class SectorTapeSymbol(BaseModel):
+    """A symbol entry inside a sector tape — used for top_added / top_trimmed
+    (smart money, dollar-based) and top_bought / top_sold (congress, count-based)."""
+    symbol: str
+    # Smart-money fields (dollar-based)
+    delta_usd: float | None = None
+    filings: int | None = None
+    # Congress fields (count-based)
+    buys: int | None = None
+    sells: int | None = None
+    net: int | None = None
+    politicians: int | None = None
+
+
+class SectorTapeEntry(BaseModel):
+    sector: str
+    # Smart-money fields
+    net_dollar_flow: float | None = None
+    adds_count: int | None = None
+    drops_count: int | None = None
+    top_added: list[SectorTapeSymbol] = []
+    top_trimmed: list[SectorTapeSymbol] = []
+    # Congress fields
+    net_trades: int | None = None
+    buys_count: int | None = None
+    sells_count: int | None = None
+    unique_politicians: int | None = None
+    top_bought: list[SectorTapeSymbol] = []
+    top_sold: list[SectorTapeSymbol] = []
+    # Shared
+    direction: str  # inflow|outflow|neutral|buying|selling|no_data
+
+
+class SectorTapeResponse(BaseModel):
+    window_days: int
+    as_of: str
+    sectors: list[SectorTapeEntry] = []
+    # Smart-money diagnostics
+    ciks_with_delta_data: int | None = None
+    ciks_total: int | None = None
+    # Congress diagnostics
+    symbols_scraped: int | None = None
+    coverage_note: str
     from_cache: bool = False

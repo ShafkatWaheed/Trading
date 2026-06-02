@@ -323,6 +323,16 @@
     100% { opacity: 1; transform: scale(1);    filter: blur(0); }
   }
 
+  /* Tendril particle — used by the StrataMap connector strips. A small
+   * vertical streak slides from top to bottom, suggesting data flow from
+   * an upstream subgraph into its downstream consumers. */
+  @keyframes tendril {
+    0%   { top: 0;   opacity: 0; }
+    20%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .animate-in,
     .animate-rise,

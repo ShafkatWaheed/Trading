@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity, Compass, Search, BarChart3, Bot, Bell, Network, Newspaper,
-  Radio, Eye, ChevronDown, RefreshCw, LineChart,
+  Radio, Eye, ChevronDown, RefreshCw, LineChart, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { alertsApi } from "@/lib/api/endpoints";
@@ -16,16 +16,21 @@ const PRIMARY = [
   { href: "/",          label: "Market",    icon: Activity },
   { href: "/discover",  label: "Discover",  icon: Compass },
   { href: "/deep-dive", label: "Deep Dive", icon: Search },
-  { href: "/prove-it",  label: "Prove It",  icon: BarChart3 },
+  { href: "/brief",     label: "Brief",     icon: BookOpen },
   { href: "/agent",     label: "AI Agent",  icon: Bot },
 ];
+// Note: /prove-it page exists at frontend/app/prove-it/ but is hidden from
+// primary nav. Its signal_evidence data (per-signal historical win rates)
+// now feeds Claude's evidence packets in Brief + Gap Finder, so the
+// information still reaches users — just inline with decisions rather than
+// as a standalone research destination. Restore by re-adding:
+//   { href: "/prove-it",  label: "Prove It",  icon: BarChart3 },
 
 const SECONDARY = [
   { href: "/graph",           label: "Graph",          icon: Network,   blurb: "Health, refresh controls, review queue — combined" },
   { href: "/track-record",    label: "Track Record",   icon: LineChart, blurb: "How often is the AI right — graded vs. real moves" },
   { href: "/context-search",  label: "Context Search", icon: Search,    blurb: "Free-text scenario → ranked stocks via the graph" },
   { href: "/universe",        label: "Universe",       icon: Network,   blurb: "Tracked stock universe" },
-  { href: "/news-impact",     label: "News Impact",    icon: Newspaper, blurb: "Cross-stock news propagation" },
   { href: "/data-sources",    label: "Data Sources",   icon: Radio,     blurb: "Connected feeds + rate limits" },
 ];
 

@@ -68,41 +68,72 @@ def _peers_of(
     *,
     as_of: str | None = None,
 ) -> list[Edge]:
-    """All peer edges from `symbol`.
+    """All peer edges from `symbol` OR its share-class siblings.
+
+    Dual-class tickers (GOOG/GOOGL, BRK.A/BRK.B, ...) have edges historically
+    seeded against whichever class was canonical at seeding time. We expand
+    the query set to include siblings, then filter out edges that point AT a
+    sibling (your other share class isn't a "peer" — it's you).
 
     `as_of` (ISO 8601 date): point-in-time filter — see `_relations_of` for
     the rule. Peer edges with NULL effective_from / _to pass any as_of.
     """
+    from src.graph.share_classes import equivalents
+
+    syms = equivalents(symbol)
+    sym_set = set(syms)            # queried sym + all siblings
+    placeholders = ",".join("?" * len(syms))
+
     if as_of is None:
-        sql = """
+        sql = f"""
             SELECT to_symbol, similarity, source, confidence, evidence
             FROM stock_peers
-            WHERE from_symbol = ?
+            WHERE from_symbol IN ({placeholders})
         """
-        params: tuple = (symbol,)
+        params: tuple = tuple(syms)
     else:
-        sql = """
+        sql = f"""
             SELECT to_symbol, similarity, source, confidence, evidence
             FROM stock_peers
-            WHERE from_symbol = ?
+            WHERE from_symbol IN ({placeholders})
               AND (effective_from IS NULL OR effective_from <= ?)
               AND (effective_to IS NULL OR effective_to > ?)
         """
-        params = (symbol, as_of, as_of)
+        params = (*syms, as_of, as_of)
 
     rows = conn.execute(sql, params).fetchall()
+
+    # Dedup by to_symbol (in case both share classes have edges to the same
+    # peer) — keep the highest similarity. Also drop edges pointing AT the
+    # queried sym OR a sibling (sibling tickers aren't peers, they're the
+    # same business; the queried sym shouldn't peer-list itself).
+    best_by_to: dict[str, dict] = {}
+    for r in rows:
+        to_sym = r["to_symbol"]
+        if to_sym in sym_set:
+            continue
+        sim = float(r["similarity"])
+        existing = best_by_to.get(to_sym)
+        if existing is None or sim > existing["similarity"]:
+            best_by_to[to_sym] = {
+                "similarity": sim,
+                "source": r["source"],
+                "confidence": r["confidence"],
+                "evidence": r["evidence"],
+            }
+
     return [
         Edge(
-            from_symbol=symbol,
-            to_symbol=r["to_symbol"],
+            from_symbol=symbol,            # always report from caller's perspective
+            to_symbol=to_sym,
             edge_type="peer",
-            strength=float(r["similarity"]),
-            polarity=1.0,                   # peers always positive at the edge level
-            confidence=r["confidence"],
-            source=r["source"],
-            evidence=r["evidence"],
+            strength=row["similarity"],
+            polarity=1.0,                  # peers always positive at the edge level
+            confidence=row["confidence"],
+            source=row["source"],
+            evidence=row["evidence"],
         )
-        for r in rows
+        for to_sym, row in best_by_to.items()
     ]
 
 
@@ -145,6 +176,16 @@ def _relations_of(
     # When the caller filters by edge_type, we must also pull rows whose stored
     # type flips to the requested one. e.g. "give me suppliers of X" requires
     # both (from_symbol=X, type=supplier) AND (to_symbol=X, type=customer).
+    #
+    # Share-class expansion: dual-class tickers (GOOG/GOOGL, BRK.A/BRK.B, ...)
+    # have edges seeded against whichever class was canonical at seeding time.
+    # Pull rows from either side of the sibling set, then filter sibling-pointing
+    # rows out of the final result (your other share class isn't a "neighbor").
+    from src.graph.share_classes import equivalents, siblings as _siblings
+    syms = equivalents(symbol)
+    sibling_set = _siblings(symbol)
+    sym_placeholders = ",".join("?" * len(syms))
+
     temporal_clause = ""
     temporal_params: list = []
     if as_of is not None:
@@ -162,19 +203,19 @@ def _relations_of(
         sql = f"""
             SELECT from_symbol, to_symbol, relation_type, strength, polarity, evidence
             FROM stock_relations
-            WHERE (from_symbol = ? OR to_symbol = ?)
+            WHERE (from_symbol IN ({sym_placeholders}) OR to_symbol IN ({sym_placeholders}))
               AND relation_type IN ({ph})
               {temporal_clause}
         """
-        params = [symbol, symbol, *types_to_match, *temporal_params]
+        params = [*syms, *syms, *types_to_match, *temporal_params]
     else:
         sql = f"""
             SELECT from_symbol, to_symbol, relation_type, strength, polarity, evidence
             FROM stock_relations
-            WHERE (from_symbol = ? OR to_symbol = ?)
+            WHERE (from_symbol IN ({sym_placeholders}) OR to_symbol IN ({sym_placeholders}))
               {temporal_clause}
         """
-        params = [symbol, symbol, *temporal_params]
+        params = [*syms, *syms, *temporal_params]
 
     rows = conn.execute(sql, params).fetchall()
 
@@ -184,12 +225,22 @@ def _relations_of(
     edges_by_key: dict[tuple[str, str], Edge] = {}
     inverse_pending: list[Edge] = []
 
+    sym_set = set(syms)  # all tickers belonging to the queried company
     for r in rows:
-        if r["from_symbol"] == symbol:
-            # Forward edge — type as stored
+        # Skip edges where the OTHER endpoint is a sibling — those are the
+        # "same business as me" edges (e.g. GOOG↔GOOGL) and shouldn't appear
+        # in a neighborhood. The non-sibling rows are the real neighbors.
+        if r["from_symbol"] in sym_set and r["to_symbol"] in sym_set:
+            continue
+
+        if r["from_symbol"] in sym_set:
+            # Forward edge — type as stored, other endpoint is the neighbor
+            neighbor = r["to_symbol"]
+            if neighbor in sibling_set:
+                continue
             edge = Edge(
-                from_symbol=symbol,
-                to_symbol=r["to_symbol"],
+                from_symbol=symbol,        # report from caller's perspective
+                to_symbol=neighbor,
                 edge_type=r["relation_type"],
                 strength=float(r["strength"]),
                 polarity=float(r["polarity"]),
@@ -199,11 +250,15 @@ def _relations_of(
             )
             edges_by_key[(edge.to_symbol, edge.edge_type)] = edge
         else:
-            # Inverse edge — flip type (supplier↔customer; substitute/complement stay)
+            # Inverse edge — to_symbol is one of ours, from_symbol is the neighbor.
+            # Flip the type (supplier↔customer; substitute/complement stay).
+            neighbor = r["from_symbol"]
+            if neighbor in sibling_set:
+                continue
             flipped_type = _flip(r["relation_type"])
             edge = Edge(
                 from_symbol=symbol,
-                to_symbol=r["from_symbol"],
+                to_symbol=neighbor,
                 edge_type=flipped_type,
                 strength=float(r["strength"]),
                 polarity=float(r["polarity"]),

@@ -27,6 +27,9 @@ import { SmartMoneyCard } from "@/components/deep-dive/smart-money";
 import { FundamentalsCard } from "@/components/deep-dive/fundamentals-card";
 import { CoHoldersCard } from "@/components/deep-dive/co-holders-card";
 import { NeighborhoodCard } from "@/components/deep-dive/neighborhood-card";
+import { OptionsFlowCard } from "@/components/deep-dive/options-flow-card";
+import { EstimateRevisionsCard } from "@/components/deep-dive/estimate-revisions-card";
+import { MacroFitCard } from "@/components/deep-dive/macro-fit-card";
 import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
@@ -276,11 +279,13 @@ export default function DeepDiveTickerPage() {
           </div>
 
           {/* ── 04 · WHAT PROS ARE DOING ───────────────────────────────── */}
-          <SectionHeader index={4} label="What pros are doing" subtitle="smart money · institutional overlap · Wall Street consensus" id="pros" />
+          <SectionHeader index={4} label="What pros are doing" subtitle="smart money · institutional overlap · Wall Street consensus · estimate revisions · options" id="pros" />
 
           <SmartMoneyCard symbol={data.symbol} />
           <CoHoldersCard symbol={data.symbol} />
           <AnalystConsensus symbol={data.symbol} />
+          <EstimateRevisionsCard symbol={data.symbol} />
+          <OptionsFlowCard symbol={data.symbol} />
 
           {/* ── 05 · THE BUSINESS ──────────────────────────────────────── */}
           <SectionHeader index={5} label="The business" subtitle="four-pillar quality story · growth · profit · health" id="business" />
@@ -293,8 +298,13 @@ export default function DeepDiveTickerPage() {
           <NeighborhoodCard symbol={data.symbol} />
           <PeerValuationStrip symbol={data.symbol} />
 
-          {/* ── 07 · IS THE PRICE RIGHT ────────────────────────────────── */}
-          <SectionHeader index={7} label="Is the price right" subtitle="bubble score · vibes premium · catalysts" id="valuation" />
+          {/* ── 07 · MACRO FIT ────────────────────────────────────────── */}
+          <SectionHeader index={7} label="Macro fit" subtitle="regime backdrop · sector tailwinds vs headwinds" id="macro-fit" />
+
+          <MacroFitCard symbol={data.symbol} />
+
+          {/* ── 08 · IS THE PRICE RIGHT ────────────────────────────────── */}
+          <SectionHeader index={8} label="Is the price right" subtitle="bubble score · vibes premium · catalysts" id="valuation" />
 
           <BubbleScoreCard symbol={data.symbol} />
           <FdaCatalystsCard ticker={data.symbol} />
@@ -303,16 +313,16 @@ export default function DeepDiveTickerPage() {
           <PatentEventsCard ticker={data.symbol} />
           <ExecChangesCard ticker={data.symbol} />
 
-          {/* ── 08 · BULL vs BEAR ──────────────────────────────────────── */}
-          <SectionHeader index={8} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
+          {/* ── 09 · BULL vs BEAR ──────────────────────────────────────── */}
+          <SectionHeader index={9} label="Bull vs Bear" subtitle="symmetric thesis · invalidation conditions" id="thesis" />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <BullNarrative symbol={data.symbol} />
             <RiskNarrative symbol={data.symbol} />
           </div>
 
-          {/* ── 09 · HOW TO EXECUTE ────────────────────────────────────── */}
-          <SectionHeader index={9} label="How to execute" subtitle="trade plan · sizing · signals" id="setup" />
+          {/* ── 10 · HOW TO EXECUTE ────────────────────────────────────── */}
+          <SectionHeader index={10} label="How to execute" subtitle="trade plan · sizing · signals" id="setup" />
 
           {data.trade_plan && <TradePlanRich plan={data.trade_plan} />}
           {data.trade_plan && <PositionSizing plan={data.trade_plan} />}
@@ -333,8 +343,8 @@ export default function DeepDiveTickerPage() {
 
           <SignalGroups groups={data.signal_groups} symbol={data.symbol} />
 
-          {/* ── 10 · REFERENCE ─────────────────────────────────────────── */}
-          <SectionHeader index={10} label="Reference" subtitle="earnings history · transcript explainer" id="reference" />
+          {/* ── 11 · REFERENCE ─────────────────────────────────────────── */}
+          <SectionHeader index={11} label="Reference" subtitle="earnings history · transcript explainer" id="reference" />
 
           {data.earnings.length > 0 && <EarningsTable rows={data.earnings} />}
           <EarningsExplainer symbol={data.symbol} />
