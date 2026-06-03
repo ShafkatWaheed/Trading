@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity, Compass, Search, BarChart3, Bot, Bell, Network, Newspaper,
-  Radio, Eye, ChevronDown, RefreshCw, LineChart, BookOpen,
+  Radio, Eye, ChevronDown, RefreshCw, LineChart, BookOpen, Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { alertsApi } from "@/lib/api/endpoints";
@@ -17,6 +17,7 @@ const PRIMARY = [
   { href: "/discover",  label: "Discover",  icon: Compass },
   { href: "/deep-dive", label: "Deep Dive", icon: Search },
   { href: "/brief",     label: "Brief",     icon: BookOpen },
+  { href: "/daily-picks", label: "Picks",   icon: Target },
   { href: "/agent",     label: "AI Agent",  icon: Bot },
 ];
 // Note: /prove-it page exists at frontend/app/prove-it/ but is hidden from

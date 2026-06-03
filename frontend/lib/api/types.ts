@@ -2232,3 +2232,53 @@ export type EarningsWeek = {
   coverage_note?: string;
   from_cache?: boolean;
 };
+
+
+// ── Daily Picks (8-agent multi-personality stock picks) ────────────
+
+export type DailyPicksConviction = "high" | "med" | "medium" | "low";
+
+export type DailyPicksAgentPick = {
+  symbol: string;
+  rationale: string;
+  conviction: DailyPicksConviction;
+};
+
+export type DailyPicksAgentResult = {
+  agent_key: string;
+  agent_name: string;
+  risk_tolerance: string;
+  picks: DailyPicksAgentPick[];
+  error: string | null;
+};
+
+export type DailyPicksConsensusAgent = {
+  agent_key: string;
+  agent_name: string;
+  rationale: string;
+  conviction: DailyPicksConviction;
+};
+
+export type DailyPicksConsensusRow = {
+  symbol: string;
+  agent_count: number;
+  agents: DailyPicksConsensusAgent[];
+};
+
+export type DailyPicksContrarian = {
+  agent_key: string;
+  agent_name: string;
+  symbol: string;
+  rationale: string;
+  conviction: DailyPicksConviction;
+};
+
+export type DailyPicks = {
+  generated_at: string;
+  as_of_date: string;
+  market_context: Record<string, unknown>;
+  agents: DailyPicksAgentResult[];
+  consensus: DailyPicksConsensusRow[];
+  contrarians: DailyPicksContrarian[];
+  from_cache?: boolean;
+};

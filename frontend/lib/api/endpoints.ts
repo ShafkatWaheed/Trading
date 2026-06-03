@@ -74,6 +74,7 @@ import type {
   MacroFit,
   DiscoverImpactRequest,
   DiscoverImpactResponse,
+  DailyPicks,
 } from "./types";
 
 export const marketApi = {
@@ -544,6 +545,25 @@ export const briefApi = {
       throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
     }
     return (await res.json()) as Brief;
+  },
+};
+
+
+export const dailyPicksApi = {
+  // 8-agent fan-out runs ~90s cold on the backend — bypass the Next.js dev
+  // proxy in local dev so we don't hit its ~60s ceiling. Production keeps
+  // the relative path so reverse-proxy timeouts can be tuned independently.
+  get: async (force = false): Promise<DailyPicks> => {
+    const path = `/daily-picks${force ? "?force=true" : ""}`;
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const url = isLocalDev ? `http://localhost:8000${path}` : `/api${path}`;
+    const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as DailyPicks;
   },
 };
 
