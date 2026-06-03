@@ -11,7 +11,7 @@ from api.schemas import HealthResponse
 from api.routes import (
     market, discover, stocks, backtest, agent, watchlist, compare, alerts, simulation,
     data_sources, universe, news_impact, graph, freshness, earnings, graph_relevance,
-    refresh, track_record, context_search, brief, journal, flows,
+    refresh, track_record, context_search, brief, daily_picks, journal, flows,
 )
 
 app = FastAPI(
@@ -67,6 +67,7 @@ app.include_router(refresh.router)
 app.include_router(track_record.router)
 app.include_router(context_search.router)
 app.include_router(brief.router)
+app.include_router(daily_picks.router)
 app.include_router(journal.router)
 app.include_router(flows.router)
 
