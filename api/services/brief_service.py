@@ -82,10 +82,16 @@ _PULSE_TO_GRAPH_SECTOR = {
     "Communication Services":  "Communication Services",
 }
 
-_CACHE_KEY = "brief:v6"  # v6: Claude lens-based discovery (replaces hand-rolled chapters)
+_CACHE_KEY = "brief:v8"  # v8: narrator + lens-writer aware of active vs passive 13F flow
 _CACHE_TTL_MINUTES = 60
 
-_MAX_PICKS = 6
+# Final mix: 3 stable + 3 promising for the actionable section, plus 3 hype
+# in a separate "hype watch" list (NOT recommendations — surfaced as warnings).
+_MAX_PICKS = 6                  # actionable picks total (3 stable + 3 promising)
+_MAX_STABLE = 3
+_MAX_PROMISING = 3
+_MAX_HYPE_WATCH = 3
+_MAX_PER_SECTOR_ACTIONABLE = 2  # diversity guarantee inside the 6 actionable picks
 _MAX_CHAPTERS = 5               # legacy fallback only
 _MAX_LENS_ANCHORS = 3           # number of context_search anchors Claude picks
 _CTX_SEARCH_LIMIT = 12          # stocks per anchor
@@ -186,6 +192,49 @@ def _market_context() -> dict:
 # ── Phase B: Claude writes the lens (replaces _derive_chapters) ─────
 
 
+def _split_smart_money_tape(sm_tape: dict) -> dict:
+    """Surface ACTIVE flow (conviction) separately from PASSIVE flow (mechanical).
+
+    Active = hedge funds + active managers + sovereigns. This is the signal
+    you want when narrating "smart money is rotating into X."
+
+    Passive = index funds (BlackRock, Vanguard, State Street). Their adds
+    mostly track cap-weighting math, not conviction. Surfaced for completeness
+    but should be DOWN-WEIGHTED by the narrator/lens-writer.
+    """
+    bft = sm_tape.get("by_flow_type") or {}
+
+    def _format(view: dict, top_n: int) -> list[dict]:
+        return [
+            {
+                "sector": s.get("sector"),
+                "net_dollar_flow_usd": s.get("net_dollar_flow"),
+                "adds_count": s.get("adds_count"),
+                "drops_count": s.get("drops_count"),
+                "direction": s.get("direction"),
+                "top_added": [
+                    {"symbol": x.get("symbol"), "delta_usd": x.get("delta_usd")}
+                    for x in (s.get("top_added") or [])[:5]
+                ],
+            }
+            for s in (view.get("sectors") or [])[:top_n]
+        ]
+
+    return {
+        "window_days": sm_tape.get("window_days"),
+        "ciks_with_delta_data": sm_tape.get("ciks_with_delta_data"),
+        "ciks_total": sm_tape.get("ciks_total"),
+        "coverage_note": sm_tape.get("coverage_note"),
+        # PRIMARY signal — convergence + narrative should anchor here:
+        "active_flow_sectors": _format(bft.get("active") or {}, top_n=8),
+        "active_ciks_count": (bft.get("active") or {}).get("ciks_count"),
+        # SECONDARY — mechanical index flow, used only for "the market is
+        # buying X" context, never as a conviction signal:
+        "passive_flow_sectors": _format(bft.get("passive") or {}, top_n=4),
+        "passive_ciks_count": (bft.get("passive") or {}).get("ciks_count"),
+    }
+
+
 def _ctx_summary_for_prompt(ctx: dict) -> dict:
     """Compact, prompt-friendly view of the widened context.
 
@@ -246,23 +295,7 @@ def _ctx_summary_for_prompt(ctx: dict) -> dict:
             }
             for e in (geo.get("events") or [])[:4]
         ],
-        "smart_money_tape": {
-            "window_days": sm_tape.get("window_days"),
-            "ciks_with_delta_data": sm_tape.get("ciks_with_delta_data"),
-            "ciks_total": sm_tape.get("ciks_total"),
-            "coverage_note": sm_tape.get("coverage_note"),
-            "sectors": [
-                {
-                    "sector": s.get("sector"),
-                    "net_dollar_flow_usd": s.get("net_dollar_flow"),
-                    "adds_count": s.get("adds_count"),
-                    "drops_count": s.get("drops_count"),
-                    "direction": s.get("direction"),
-                    "top_added": [{"symbol": x.get("symbol"), "delta_usd": x.get("delta_usd")} for x in (s.get("top_added") or [])[:5]],
-                }
-                for s in (sm_tape.get("sectors") or [])[:8]
-            ],
-        },
+        "smart_money_tape": _split_smart_money_tape(sm_tape),
         "congress_tape": {
             "window_days": cg_tape.get("window_days"),
             "symbols_scraped": cg_tape.get("symbols_scraped"),
@@ -323,10 +356,13 @@ def _derive_search_query(ctx: dict) -> dict | None:
         return None
 
     # Sanity: convergence sectors must appear in the data we showed Claude.
+    sm = summary.get("smart_money_tape", {}) or {}
     allowed_sectors = {
         s["sector"] for s in (summary.get("sectors_price_flow_1m") or []) if s.get("sector")
     } | {
-        s["sector"] for s in (summary.get("smart_money_tape", {}).get("sectors") or []) if s.get("sector")
+        s["sector"] for s in (sm.get("active_flow_sectors") or []) if s.get("sector")
+    } | {
+        s["sector"] for s in (sm.get("passive_flow_sectors") or []) if s.get("sector")
     } | {
         s["sector"] for s in (summary.get("congress_tape", {}).get("sectors") or []) if s.get("sector")
     }
@@ -361,10 +397,28 @@ PRICE FLOW (1M and 3M) — where capital is being deployed RIGHT NOW.
   Compare 1M momentum to 3M trend: 1M strong on top of 3M strong = real
   trend; 1M strong against 3M weak = blip; 1M weak against 3M strong = pause.
 
-SMART-MONEY FLOW (180d, 13F-based) — where INSTITUTIONS are positioning.
-  Direction "inflow" = net dollar adds outpacing trims. Pay attention to
-  ciks_with_delta_data — sparse coverage means treat the signal as a hint
-  rather than gospel.
+SMART-MONEY FLOW (180d, 13F-based) — split into ACTIVE and PASSIVE.
+
+  CRITICAL distinction. The tape splits flow by institution type:
+
+    `active_flow_sectors` = hedge funds, active managers, sovereigns.
+      THIS IS THE CONVICTION SIGNAL. When sector X shows active inflow it
+      means thoughtful informed money chose to buy X over alternatives.
+      A $5B active add carries more signal weight than a $20B passive add.
+
+    `passive_flow_sectors` = index funds (BlackRock, Vanguard, State Street).
+      Mechanical cap-weighting math. When SPX rises, passive funds mechanically
+      add to the biggest names. Passive flow is NOT conviction — it's price
+      action with a 6-month lag. Use it only to say "the market is
+      mechanically rotating into X."
+
+  YOUR CONVERGENCE SECTORS MUST AGREE WITH active_flow_sectors,
+  not passive_flow_sectors. Passive flow alone is NOT a convergence lens —
+  it's already implicit in price flow.
+
+  Pay attention to `active_ciks_count` (typically 10-15 institutions) and
+  `passive_ciks_count` (typically 3). Sparse active coverage means treat
+  the signal as a hint, not gospel.
 
 CONGRESS FLOW (180d, STOCK-Act-based) — where POLITICAL INSIDERS are buying.
   Count-based (not dollar-based). High net_trades with many unique
@@ -393,7 +447,7 @@ YOUR FUSION TASK
 Step 1 — Find sectors where MULTIPLE flow lenses agree.
 A "convergence sector" appears in 2+ of:
   • Price-flow inflow (1M OR 3M)
-  • Smart-money adding (180d)
+  • ACTIVE smart-money adding (180d) — not passive
   • Congress buying (180d)
   • Disruption theme tickers_benefit
   • Geopolitical positive_sectors
@@ -745,6 +799,18 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
             else:
                 headline = "Profitable + stable"
 
+        # Decoupled profitability flag — independent of bucket. A "promising"
+        # name can be profitable (NVDA) or burning cash (early-stage growth);
+        # the UI shows this as a separate chip so users see both dimensions.
+        net_income = _to_float(fund.get("net_income"))
+        is_profitable = bool(
+            (margin is not None and margin > 0)
+            and (net_income is None or net_income > 0)
+        )
+
+        # Sector tag for the diversity constraint in _select_mix.
+        sector = (fund.get("sector") or "").strip() or None
+
         # Composite score for ranking within bucket
         bucket_weight = {"hype": 0.9, "promising": 1.0, "stable": 0.8}[bucket]
         size_weight = min(1.0, mcap / 1e11)
@@ -754,6 +820,7 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
             **c,
             "bucket": bucket,
             "name": (fund.get("longName") or fund.get("shortName") or sym)[:48],
+            "sector": sector,
             "market_cap": mcap or None,
             "revenue_ttm": _to_float(fund.get("revenue")),
             "headline_metric": headline,
@@ -761,6 +828,7 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
             "eps_growth": eps,
             "profit_margin": margin,
             "peg": _to_float(fund.get("peg_ratio")),
+            "is_profitable": is_profitable,
             "bubble_score_cached": bubble_score,
             "bubble_label_cached": bubble_label,
             "score": round(composite, 2),
@@ -848,22 +916,90 @@ def _enrich_all(picks: list[dict]) -> list[dict]:
 # ── Phase H: select 2 stable + 2 promising + 2 hype (fill from rest) ─
 
 
-def _select_mix(scored: list[dict]) -> list[dict]:
+def _select_mix(scored: list[dict],
+                 diversity_enabled: bool = False) -> tuple[list[dict], list[dict]]:
+    """Pick 3 stable + 3 promising as actionable, plus 3 hype as separate watch.
+
+    Returns: (actionable, hype_watch)
+
+    `diversity_enabled` controls whether the sector cap
+    (`_MAX_PER_SECTOR_ACTIONABLE`) applies to the 6 actionable picks:
+
+      • False (default) — pick top-3 promising + top-3 stable by score, no
+        sector consideration. Today's strongest themes can dominate (e.g. 5
+        of 6 picks Technology when AI capex is the story).
+      • True — enforce max 2 per sector across both buckets; relax the cap
+        by +1 only if needed to guarantee 6 total picks.
+
+    Hype watch is always the 3 top-scoring hype names with NO sector cap —
+    they're warnings, not buys; sector clustering is informative.
+    """
     scored.sort(key=lambda x: x["score"], reverse=True)
     by_bucket: dict[str, list[dict]] = {"stable": [], "promising": [], "hype": []}
     for s in scored:
         by_bucket[s["bucket"]].append(s)
 
-    target_per_bucket = 2
-    out: list[dict] = []
-    for b in ("promising", "stable", "hype"):
-        out.extend(by_bucket[b][:target_per_bucket])
+    if not diversity_enabled:
+        # Simple path — top N per bucket, no sector consideration.
+        actionable: list[dict] = (
+            by_bucket["promising"][:_MAX_PROMISING]
+            + by_bucket["stable"][:_MAX_STABLE]
+        )
+        # Backfill if either bucket came up short, ignoring sector entirely.
+        if len(actionable) < _MAX_PICKS:
+            already = {p["symbol"] for p in actionable}
+            for cand in scored:
+                if len(actionable) >= _MAX_PICKS:
+                    break
+                if cand["symbol"] in already or cand["bucket"] == "hype":
+                    continue
+                actionable.append(cand)
+                already.add(cand["symbol"])
+        return actionable[:_MAX_PICKS], by_bucket["hype"][:_MAX_HYPE_WATCH]
 
-    # Fill any shortfall (e.g. no hype today) from remaining by score
-    if len(out) < _MAX_PICKS:
-        rest = [s for s in scored if s not in out]
-        out.extend(rest[:_MAX_PICKS - len(out)])
-    return out[:_MAX_PICKS]
+    # ── diversity path ──────────────────────────────────────────────────
+    targets = {"stable": _MAX_STABLE, "promising": _MAX_PROMISING}
+
+    def _pick_with_sector_cap(pool: list[dict], target: int,
+                               sector_taken: dict[str, int]) -> list[dict]:
+        """Greedy fill from pool, respecting the sector cap. `sector_taken` is
+        mutated across calls so stable + promising share the same sector
+        budget — that's the actual diversity guarantee for the 6 actionable."""
+        chosen: list[dict] = []
+        for cand in pool:
+            if len(chosen) >= target:
+                break
+            sec = cand.get("sector") or "_unknown"
+            if sector_taken.get(sec, 0) >= _MAX_PER_SECTOR_ACTIONABLE:
+                continue
+            chosen.append(cand)
+            sector_taken[sec] = sector_taken.get(sec, 0) + 1
+        return chosen
+
+    sector_taken: dict[str, int] = {}
+    actionable = []
+    actionable.extend(_pick_with_sector_cap(by_bucket["promising"],
+                                             targets["promising"], sector_taken))
+    actionable.extend(_pick_with_sector_cap(by_bucket["stable"],
+                                             targets["stable"], sector_taken))
+
+    # Relax the cap by +1 if needed to guarantee 6 picks.
+    if len(actionable) < _MAX_PICKS:
+        already = {p["symbol"] for p in actionable}
+        relaxed_cap = _MAX_PER_SECTOR_ACTIONABLE + 1
+        for cand in scored:
+            if len(actionable) >= _MAX_PICKS:
+                break
+            if cand["symbol"] in already or cand["bucket"] == "hype":
+                continue
+            sec = cand.get("sector") or "_unknown"
+            if sector_taken.get(sec, 0) >= relaxed_cap:
+                continue
+            actionable.append(cand)
+            sector_taken[sec] = sector_taken.get(sec, 0) + 1
+            already.add(cand["symbol"])
+
+    return actionable[:_MAX_PICKS], by_bucket["hype"][:_MAX_HYPE_WATCH]
 
 
 # ── Phase I: narrate (single batched Claude call) ───────────────────
@@ -941,6 +1077,28 @@ trade detail, trade plan, benchmarks vs SPY/sector, signal_evidence (per-signal
 historical win rates), and sector-specific signals: backlog (defense), litigation
 (IP), patent_events (pharma), exec_changes (8-K), fda_catalysts (pharma).
 
+When `metrics.full_signals.pre_earnings_setup` is present, the company has an
+earnings call within ~45 days and we've composited the positioning signals:
+  • verdict = "pricing_in_beat"   → tape is set up bullishly; cite the signals
+                                    list ("price 5d +6%, options skew bullish,
+                                    analysts raising") in the narrative
+  • verdict = "pricing_in_miss"   → tape is set up bearishly; flag the warning
+  • verdict = "leaning_bullish"   → modest positive lean; mention if relevant
+  • verdict = "leaning_bearish"   → modest negative lean; mention if relevant
+  • verdict = "mixed"             → signals disagree; useful as "uncertainty into
+                                    earnings" framing
+
+`pre_earnings_setup.recent_news_bullish` and `recent_news_bearish` carry the
+latest 3 positive / negative headlines tagged by the news pipeline. Use these
+to CITE WHY the tape might be positioning: "the run-up is supported by
+[positive headline]" or "the cautious setup reflects [negative headline]".
+Cite specific headlines verbatim — they're real, recent context.
+
+This is NOT an insider-trading detector — it's market positioning. Frame
+accordingly when citing it ("the tape is pricing in a beat", "the setup is
+bullish into the print", NEVER "insiders are buying"). When days_to_next_earnings
+is short (<10d), the binary risk is high — call it out for hype picks.
+
 CRITICALLY — each pick now also includes `metrics.full_signals.web_validation`
 populated by a focused Claude+web call. This block carries the most up-to-date
 context (last 7 days) and is authoritative for recency. The structure is:
@@ -977,9 +1135,23 @@ Skip irrelevant blocks. If a sector signal is absent (e.g. no FDA for
 non-pharma), simply don't mention it — absence is not negative.
 
 MARKET CONTEXT (full pulse — regime, KPIs, breadth, top movers, price flow 1M+3M,
-smart-money 13F sector tape, congress sector tape, news, themes, geopolitical,
-upcoming catalysts):
+smart-money 13F sector tape (split into active + passive), congress sector tape,
+news, themes, geopolitical, upcoming catalysts):
 {ctx_summary}
+
+CRITICAL — `ctx_summary.smart_money_tape` is split by flow type:
+  • `active_flow_sectors` — hedge funds + active managers + sovereigns.
+    THIS is the conviction signal. When citing "smart money is rotating into
+    X" or "institutions are adding to Y", reference active_flow_sectors and
+    name the specific top_added tickers (e.g. "active money added $5B+ to
+    Healthcare, led by ABT and LLY").
+  • `passive_flow_sectors` — index funds (BlackRock + Vanguard + State Street).
+    This is mechanical cap-weighting — index re-weighting, NOT conviction.
+    Mention only when relevant ("$1T flowed mechanically into Tech via passive
+    index adds — that's price action with a 6-month lag, not new conviction").
+
+When narrating institutional positioning, ALWAYS cite active_flow_sectors as
+the primary signal. NEVER refer to passive flow as "smart money" or "conviction".
 
 If `todays_lens` is present, that's the lens the discovery engine ran today —
 the brief is built around it. Paragraph 1 MUST frame the brief around
@@ -1220,9 +1392,16 @@ def _validate_all_picks(picks: list[dict], *, force: bool = False) -> None:
 # ── public entry point ──────────────────────────────────────────────
 
 
-def get_brief(force: bool = False) -> dict:
+def get_brief(force: bool = False, diversity: bool = False) -> dict:
+    """Generate the brief.
+
+    `diversity` — when True, enforce sector cap on actionable picks
+    (max 2 per sector). Default False: top-by-score, no sector consideration.
+    Cache key includes the flag so on/off variants don't poison each other.
+    """
+    cache_key = f"{_CACHE_KEY}:div={int(bool(diversity))}"
     if not force:
-        cached = cache_get(_CACHE_KEY)
+        cached = cache_get(cache_key)
         if cached:
             return cached
 
@@ -1271,28 +1450,34 @@ def get_brief(force: bool = False) -> dict:
     # F — classify (cache-only bubble peek here)
     scored = _classify_all(candidates, funds)
 
-    # H — select 2+2+2
-    picks = _select_mix(scored)
+    # H — select: 6 actionable (3 stable + 3 promising, max 2/sector) + 3 hype watch
+    actionable, hype_watch = _select_mix(scored, diversity_enabled=bool(diversity))
 
-    # G — enrich finalists (deep-dive + macro fit + bubble fetch if needed)
-    picks = _enrich_all(picks)
+    # G — enrich finalists (deep-dive + macro fit + bubble fetch if needed).
+    # Both the actionable and hype-watch picks get full enrichment so the UI
+    # can show consistent signal blocks on either. Enrich both lists in a
+    # SINGLE ThreadPoolExecutor — previously these ran sequentially, leaving
+    # workers idle in the second phase when its pick count fell below pool size.
+    n_a = len(actionable)
+    combined = _enrich_all(actionable + hype_watch)
+    actionable = combined[:n_a]
+    hype_watch = combined[n_a:]
 
     # H.5 — VALIDATE each pick with web-enabled Claude (parallel, 24h cached).
-    # Each pick gets a focused "did anything material happen in the last 7d
-    # that changes this pick?" call. Result attached to snapshot.full_signals
-    # .web_validation = {verdict, summary, fresh_facts, red_flag, web_sources}.
-    # When the user clicked Regenerate, force cascades down so each pick
-    # re-queries the web instead of serving 24h-cached results.
-    _validate_all_picks(picks, force=force)
+    # Run validation on BOTH actionable and hype watch — fresh news matters
+    # for hype names too ("this hype just got vindicated" or "the air is out").
+    _validate_all_picks(actionable + hype_watch, force=force)
 
-    # I — narrate (now informed by web_validation per pick + the Claude lens)
-    prose = _narrate(ctx, chapters, picks, lens=lens)
+    # I — narrate (now informed by web_validation per pick + the Claude lens).
+    # Hype watch picks are passed through so Claude can write a brief
+    # warning-style note per pick alongside the actionable narrative.
+    prose = _narrate(ctx, chapters, actionable + hype_watch, lens=lens)
     if not prose:
         prose = _fallback_market_story(regime, regime_explanation)
 
     claude_picks = {p.get("symbol"): p for p in (prose.get("picks") or []) if isinstance(p, dict)}
-    final_picks: list[dict] = []
-    for p in picks:
+
+    def _finalize(p: dict) -> dict:
         cp = claude_picks.get(p["symbol"])
         if cp and isinstance(cp.get("narrative"), str):
             narrative = cp["narrative"]
@@ -1301,10 +1486,12 @@ def get_brief(force: bool = False) -> dict:
             fb = _fallback_pick_narrative(p)
             narrative = fb["narrative"]
             why_now = fb["why_now"]
-        final_picks.append({
+        return {
             "symbol": p["symbol"],
             "name": p["name"],
             "bucket": p["bucket"],
+            "is_profitable": bool(p.get("is_profitable")),
+            "sector": p.get("sector"),
             "chapter_headlines": p.get("chapter_headlines") or [],
             "angle": p.get("chapters", [None])[0] if p.get("chapters") else None,
             "angle_label": (p.get("chapter_headlines") or [None])[0],
@@ -1312,7 +1499,10 @@ def get_brief(force: bool = False) -> dict:
             "narrative": narrative,
             "why_now": [str(w) for w in why_now][:4],
             "snapshot": p.get("snapshot") or {},
-        })
+        }
+
+    final_picks = [_finalize(p) for p in actionable]
+    final_hype_watch = [_finalize(p) for p in hype_watch]
 
     sectors_in_focus = sorted({
         s["sector"] for s in (pulse.get("sectors") or [])
@@ -1347,6 +1537,7 @@ def get_brief(force: bool = False) -> dict:
             ],
         }),
         "picks": final_picks,
+        "hype_watch": final_hype_watch,
         "closing": prose.get("closing") or "",
         "meta": {
             "candidates_considered": len(candidates),
@@ -1358,7 +1549,7 @@ def get_brief(force: bool = False) -> dict:
     }
 
     try:
-        cache_set(_CACHE_KEY, payload, ttl_minutes=_CACHE_TTL_MINUTES)
+        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
     except Exception:
         pass
     return payload

@@ -337,6 +337,7 @@ def get_deep_dive(
     risk_pct: float = 2.0,
     force: bool = False,
 ) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
     from src.orchestrator import analyze_stock
 
     symbol = symbol.upper()
@@ -355,7 +356,20 @@ def get_deep_dive(
             cached["from_cache"] = True
             return cached
 
-    report = analyze_stock(symbol, export=False, pdf=False)
+    # ── Parallel I/O ──────────────────────────────────────────
+    # analyze_stock is already parallel internally, but it blocks the
+    # three sibling fetches that only need `symbol`. Run all four
+    # concurrently — typical wall-clock saving 2-4 s on cold cache.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        f_report   = pool.submit(analyze_stock, symbol, export=False, pdf=False)
+        f_period   = pool.submit(_period_change, symbol, period)
+        f_earnings = pool.submit(_earnings_calendar, symbol)
+        f_volume   = pool.submit(_volume_profile, symbol)
+
+    report = f_report.result()
+    period_change_pre = f_period.result()
+    earnings_pre = f_earnings.result()
+    volume_profile_pre = f_volume.result()
 
     # Risk + sentiment
     risk_rating = 3
@@ -377,7 +391,7 @@ def get_deep_dive(
     except Exception:
         pass
 
-    period_change = _period_change(symbol, period)
+    period_change = period_change_pre
     if period_change and price is None:
         price = period_change.get("end_price")
 
@@ -476,8 +490,8 @@ def get_deep_dive(
             "total": len(signals),
         },
         "trade_plan": _trade_plan(report, price, account_size, risk_pct),
-        "earnings": _earnings_calendar(symbol),
-        "volume_profile": _volume_profile(symbol),
+        "earnings": earnings_pre,
+        "volume_profile": volume_profile_pre,
         "available_periods": list(_PERIOD_DAYS.keys()),
         "period": period,
         "signal_filter": f,
