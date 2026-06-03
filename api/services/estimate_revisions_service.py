@@ -373,8 +373,11 @@ def get_estimate_revisions(symbol: str, force: bool = False) -> dict:
         "last_updated": datetime.utcnow().isoformat() + "Z",
     }
 
-    try:
-        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
-    except Exception:
-        pass
+    # Skip cache when there's literally nothing — avoids poisoning the slot
+    # for the full TTL when upstream is rate-limited (same pattern as AMD).
+    if payload["available"]:
+        try:
+            cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
     return payload

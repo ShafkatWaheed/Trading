@@ -23,6 +23,7 @@ import { TopMovers } from "@/components/market/top-movers";
 import { MarketNews } from "@/components/market/market-news";
 import { SmartMoneyTape } from "@/components/market/smart-money-tape";
 import { CongressTape } from "@/components/market/congress-tape";
+import { EarningsThisWeek } from "@/components/market/earnings-this-week";
 import { SectionHeader } from "@/components/deep-dive/section-header";
 import { SimulationReplay } from "@/components/simulation-replay";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -148,12 +149,14 @@ export default function MarketPulsePage() {
         </section>
 
         {/* ── 06 · UPCOMING CATALYSTS ──────────────────────────────────── */}
-        <SectionHeader index={6} label="Upcoming catalysts" subtitle="economic calendar · geopolitical risk" id="catalysts" accent="red" />
+        <SectionHeader index={6} label="Upcoming catalysts" subtitle="earnings this week · economic calendar · geopolitical risk" id="catalysts" accent="red" />
 
         <NextCatalystPill
           nextEvent={calendar.data?.next_event}
           nextHighImpact={calendar.data?.next_high_impact}
         />
+
+        <EarningsThisWeek />
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <EconomicCalendar events={calendar.data?.events} loading={calendar.isLoading} />

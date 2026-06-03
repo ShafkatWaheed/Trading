@@ -4,10 +4,12 @@ from fastapi import APIRouter, Query
 from api.schemas import (
     MarketPulseResponse, CalendarResponse, GeopoliticalResponse, DisruptionResponse,
     MarketDashboardResponse, MarketTakeawayResponse, MarketNewsResponse,
+    EarningsWeekResponse,
 )
 from api.services import (
     market_service, calendar_service, events_service, disruption_service,
     market_dashboard_service, market_takeaway_service, market_news_service,
+    earnings_week_service,
 )
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -49,3 +51,12 @@ def market_takeaway(force: bool = Query(False)) -> dict:
 @router.get("/news", response_model=MarketNewsResponse)
 def market_news(force: bool = Query(False)) -> dict:
     return market_news_service.get_market_news(force=force)
+
+
+@router.get("/earnings-this-week", response_model=EarningsWeekResponse)
+def market_earnings_this_week(
+    days: int = Query(7, description="Window in days: 3, 7, or 14"),
+    force: bool = Query(False),
+) -> dict:
+    """Earnings reports from the tracked universe in the next `days` days."""
+    return earnings_week_service.get_earnings_week(days=days, force=force)

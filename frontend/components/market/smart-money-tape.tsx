@@ -20,22 +20,38 @@ function fmtUsd(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
+type FlowType = "active" | "passive" | "all";
+const FLOW_TYPES: { key: FlowType; label: string; hint: string }[] = [
+  { key: "active",  label: "Active",  hint: "conviction flow — hedge funds, active managers, sovereigns" },
+  { key: "passive", label: "Passive", hint: "mechanical flow — index funds (BlackRock, Vanguard, State Street)" },
+  { key: "all",     label: "All",     hint: "every institution combined" },
+];
+
 export function SmartMoneyTape() {
   const [windowDays, setWindowDays] = useState<"90" | "180" | "365">("180");
+  const [flowType, setFlowType] = useState<FlowType>("active");
   const { data, isLoading } = useQuery({
     queryKey: ["smart-money-tape", windowDays],
     queryFn: () => flowsApi.smartMoneyTape(Number(windowDays) as 90 | 180 | 365),
     staleTime: 5 * 60_000,
   });
 
+  // Pick the right view from by_flow_type, falling back to top-level sectors
+  // (which equals by_flow_type.all) if the breakdown isn't present.
+  const view = data?.by_flow_type?.[flowType];
+  const sectors = view?.sectors ?? data?.sectors ?? [];
+  const ciksCount = view?.ciks_count;
+
   return (
     <div className="card p-6">
-      <div className="flex items-start justify-between mb-4">
+      <div className="flex items-start justify-between mb-4 gap-2">
         <div className="flex items-center gap-2.5">
           <Building2 size={16} className="text-accent-blue" />
           <div>
             <h3 className="text-[13px] font-semibold text-text-primary">13F sector flow</h3>
-            <p className="text-[11px] text-text-muted">institutional net adds / trims by sector</p>
+            <p className="text-[11px] text-text-muted">
+              {FLOW_TYPES.find((f) => f.key === flowType)?.hint}
+            </p>
           </div>
         </div>
         <PeriodChips
@@ -47,13 +63,39 @@ export function SmartMoneyTape() {
         />
       </div>
 
+      {/* Flow-type tabs — active is the most informative view */}
+      <div className="flex items-center gap-1 mb-3 p-0.5 bg-bg-base border border-bg-border rounded-md self-start">
+        {FLOW_TYPES.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFlowType(f.key)}
+            title={f.hint}
+            className={cn(
+              "px-2.5 py-1 rounded-[4px] text-[10px] font-semibold uppercase tracking-wider transition-colors",
+              flowType === f.key
+                ? "bg-accent-blue/15 text-accent-blueSoft border border-accent-blue/30"
+                : "text-text-muted hover:text-text-primary border border-transparent",
+            )}
+          >
+            {f.label}
+            {data?.by_flow_type && (
+              <span className="ml-1 text-text-dim font-normal">
+                {data.by_flow_type[f.key]?.ciks_count ?? 0}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {isLoading ? (
         <Skeleton className="h-64 w-full" />
       ) : (
         <SectorList
-          sectors={data?.sectors ?? []}
+          sectors={sectors}
           coverageNote={data?.coverage_note ?? ""}
           windowLabel={WINDOW_LABEL[windowDays]}
+          flowType={flowType}
+          ciksCount={ciksCount}
         />
       )}
     </div>
@@ -61,14 +103,22 @@ export function SmartMoneyTape() {
 }
 
 function SectorList({
-  sectors, coverageNote, windowLabel,
-}: { sectors: SectorTapeEntry[]; coverageNote: string; windowLabel: string }) {
+  sectors, coverageNote, windowLabel, flowType, ciksCount,
+}: {
+  sectors: SectorTapeEntry[]; coverageNote: string; windowLabel: string;
+  flowType?: FlowType; ciksCount?: number;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (sectors.length === 0) {
+    const emptyNote = flowType === "active"
+      ? `No conviction flow data in the ${windowLabel} window yet (${ciksCount ?? 0} institutions). Try "All" or wait for more 13F snapshots.`
+      : flowType === "passive"
+      ? `No passive flow data in the ${windowLabel} window yet (${ciksCount ?? 0} institutions).`
+      : coverageNote;
     return (
       <div className="rounded-md border border-bg-border bg-bg-base/40 p-4">
-        <p className="text-[12px] text-text-muted leading-relaxed">{coverageNote}</p>
+        <p className="text-[12px] text-text-muted leading-relaxed">{emptyNote}</p>
       </div>
     );
   }
@@ -164,8 +214,10 @@ function SectorList({
         })}
       </div>
       <p className="text-[10px] text-text-muted mt-3 pt-2 border-t border-bg-border leading-relaxed">
-        {windowLabel} net adds − trims across institutions with sequential 13F filings.
-        45-day disclosure lag applies.
+        {windowLabel} net adds − trims across {ciksCount ?? "all"} institutions with sequential 13F filings.
+        {" "}Active = conviction (hedge funds, active managers, sovereigns).
+        {" "}Passive = mechanical index-flow (BlackRock, Vanguard, State Street).
+        {" "}45-day disclosure lag applies.
       </p>
     </>
   );

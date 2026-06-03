@@ -238,7 +238,7 @@ def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
     if window_days not in _VALID_WINDOWS:
         window_days = 180
 
-    cache_key = f"smart_money:sector_tape:v1:{window_days}"
+    cache_key = f"smart_money:sector_tape:v2:{window_days}"
     if not force:
         cached = cache_get(cache_key)
         if cached:
@@ -261,8 +261,17 @@ def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
             ).fetchall()
         )
 
+        # cik -> type (so we can split "passive" index funds from "active" managers).
+        # Passive = index_fund. Active = everything else (active_mgr, hedge_fund,
+        # sovereign, pension). Passive flow mostly reflects cap-weighting math;
+        # active flow reflects conviction. Splitting these is the single biggest
+        # signal-quality improvement on the tape.
+        cik_type = dict(
+            conn.execute("SELECT cik, type FROM institutions").fetchall()
+        )
+
         # Per CIK: latest snapshot date INSIDE the window, and latest STRICTLY
-        # BEFORE the window. Two CIKs and their snapshots:
+        # BEFORE the window.
         cik_anchors: dict[str, dict] = {}
         # Use all snapshots regardless of `source` — both '13F' (from the loader)
         # and 'hand' (from authoritative manual seeds of public 13F filings)
@@ -293,13 +302,26 @@ def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
         ciks_total = len(cik_anchors)
         ciks_with_delta = sum(1 for v in cik_anchors.values() if v.get("t_end") and v.get("t_start"))
 
-        # Walk each CIK that has both anchors and compute symbol deltas
-        deltas_by_sector: dict[str, dict] = {}
+        # Build THREE parallel aggregates in one pass: all / active / passive.
+        # Each is `sector -> {net, adds, drops, per_symbol}`.
+        views = {
+            "all":     {},
+            "active":  {},
+            "passive": {},
+        }
+        view_cik_counts = {"all": 0, "active": 0, "passive": 0}
+
         for cik, anchors in cik_anchors.items():
             t_end = anchors.get("t_end")
             t_start = anchors.get("t_start")
             if not (t_end and t_start):
                 continue
+
+            # Determine which view(s) this CIK contributes to
+            ctype = cik_type.get(cik)
+            target_views = ["all", "passive" if ctype == "index_fund" else "active"]
+            for v in target_views:
+                view_cik_counts[v] += 1
 
             now_pos = dict(
                 conn.execute(
@@ -324,45 +346,52 @@ def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
                 delta = float(now_pos.get(sym, 0.0)) - float(then_pos.get(sym, 0.0))
                 if delta == 0.0:
                     continue
-                bucket = deltas_by_sector.setdefault(sector, {
-                    "net": 0.0, "adds": 0, "drops": 0,
-                    "per_symbol": {},   # sym -> {"delta": float, "filings": int}
-                })
-                bucket["net"] += delta
-                if delta > 0:
-                    bucket["adds"] += 1
-                else:
-                    bucket["drops"] += 1
-                sym_entry = bucket["per_symbol"].setdefault(sym, {"delta": 0.0, "filings": 0})
-                sym_entry["delta"] += delta
-                sym_entry["filings"] += 1
+                for v in target_views:
+                    bucket = views[v].setdefault(sector, {
+                        "net": 0.0, "adds": 0, "drops": 0,
+                        "per_symbol": {},
+                    })
+                    bucket["net"] += delta
+                    if delta > 0:
+                        bucket["adds"] += 1
+                    else:
+                        bucket["drops"] += 1
+                    sym_entry = bucket["per_symbol"].setdefault(sym, {"delta": 0.0, "filings": 0})
+                    sym_entry["delta"] += delta
+                    sym_entry["filings"] += 1
+        # Keep `deltas_by_sector` as a local alias to the "all" view for the
+        # existing top-level formatting code below.
+        deltas_by_sector = views["all"]
     finally:
         conn.close()
 
-    # Build response sectors list: include sectors that appeared in the data,
-    # plus any sector with no delta data so callers see the full picture.
-    all_sectors = set(deltas_by_sector.keys())
-    out_sectors = []
-    for sector in sorted(all_sectors, key=lambda s: abs(deltas_by_sector[s]["net"]), reverse=True):
-        bucket = deltas_by_sector[sector]
-        per_sym = sorted(
-            ({"symbol": s, "delta_usd": v["delta"], "filings": v["filings"]}
-             for s, v in bucket["per_symbol"].items()),
-            key=lambda x: x["delta_usd"], reverse=True,
-        )
-        top_added = [x for x in per_sym if x["delta_usd"] > 0][:5]
-        top_trimmed = [x for x in reversed(per_sym) if x["delta_usd"] < 0][:3]
-        net = bucket["net"]
-        direction = "inflow" if net > 0 else "outflow" if net < 0 else "neutral"
-        out_sectors.append({
-            "sector": sector,
-            "net_dollar_flow": net,
-            "adds_count": bucket["adds"],
-            "drops_count": bucket["drops"],
-            "direction": direction,
-            "top_added": top_added,
-            "top_trimmed": top_trimmed,
-        })
+    def _format_view(deltas: dict) -> list[dict]:
+        out = []
+        for sector in sorted(deltas.keys(), key=lambda s: abs(deltas[s]["net"]), reverse=True):
+            bucket = deltas[sector]
+            per_sym = sorted(
+                ({"symbol": s, "delta_usd": v["delta"], "filings": v["filings"]}
+                 for s, v in bucket["per_symbol"].items()),
+                key=lambda x: x["delta_usd"], reverse=True,
+            )
+            top_added = [x for x in per_sym if x["delta_usd"] > 0][:5]
+            top_trimmed = [x for x in reversed(per_sym) if x["delta_usd"] < 0][:3]
+            net = bucket["net"]
+            direction = "inflow" if net > 0 else "outflow" if net < 0 else "neutral"
+            out.append({
+                "sector": sector,
+                "net_dollar_flow": net,
+                "adds_count": bucket["adds"],
+                "drops_count": bucket["drops"],
+                "direction": direction,
+                "top_added": top_added,
+                "top_trimmed": top_trimmed,
+            })
+        return out
+
+    out_sectors          = _format_view(views["all"])
+    out_sectors_active   = _format_view(views["active"])
+    out_sectors_passive  = _format_view(views["passive"])
 
     coverage_note = (
         f"Based on {ciks_with_delta} of {ciks_total} institutions with sequential snapshots "
@@ -377,7 +406,12 @@ def get_sector_tape(window_days: int = 180, *, force: bool = False) -> dict:
     payload = {
         "window_days": window_days,
         "as_of": datetime.utcnow().strftime("%Y-%m-%d"),
-        "sectors": out_sectors,
+        "sectors": out_sectors,              # backward-compat: == by_flow_type.all
+        "by_flow_type": {
+            "all":     {"sectors": out_sectors,         "ciks_count": view_cik_counts["all"]},
+            "active":  {"sectors": out_sectors_active,  "ciks_count": view_cik_counts["active"]},
+            "passive": {"sectors": out_sectors_passive, "ciks_count": view_cik_counts["passive"]},
+        },
         "ciks_with_delta_data": ciks_with_delta,
         "ciks_total": ciks_total,
         "coverage_note": coverage_note,

@@ -10,15 +10,17 @@ from api.schemas import (
     DeepDiveBundleResponse, DeepDiveResponse, EntityMatchesResponse,
     EstimateRevisionsResponse, FundamentalsResponse, MacroFitResponse,
     NewsFeedResponse, OptionsFlowResponse, PeerValuationResponse,
-    RecommendationResponse, RiskNarrativeResponse, SignalEvidenceResponse,
-    SmartMoneyResponse, StockInformationResponse, StockSearchResult,
+    PreEarningsSetupResponse, RecommendationResponse, RiskNarrativeResponse,
+    SignalEvidenceResponse, SmartMoneyResponse, StockInformationResponse,
+    StockSearchResult,
 )
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
     bull_narrative_service, catalyst_calendar_service, co_holders_service,
     deep_dive_service, discover_service, estimate_revisions_service,
     fundamentals_service, macro_fit_service, news_feed_service,
-    options_flow_service, peer_valuation_service, recommendation_service,
+    options_flow_service, peer_valuation_service,
+    pre_earnings_setup_service, recommendation_service,
     risk_narrative_service, signal_evidence_service, smart_money_service,
 )
 
@@ -240,6 +242,27 @@ def peer_valuation(
         return peer_valuation_service.get_peer_valuation(ticker, force=force)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Peer valuation failed: {e}")
+
+
+@router.get("/{ticker}/pre-earnings-setup", response_model=PreEarningsSetupResponse)
+def pre_earnings_setup(
+    ticker: str,
+    force: bool = Query(False, description="Bypass cache and recompute"),
+) -> dict:
+    """Composite "is the market pricing in a beat or a miss?" signal.
+
+    Fuses 6 components: price 5d/30d, volume vs avg, options skew, analyst
+    revisions, short interest, and historical beat-miss pattern. Returns a
+    verdict + per-signal breakdown the UI can render.
+
+    NOT an insider-trading detector — see service docstring for the why.
+    """
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    try:
+        return pre_earnings_setup_service.get_pre_earnings_setup(ticker, force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pre-earnings setup failed: {e}")
 
 
 @router.get("/{ticker}/smart-money", response_model=SmartMoneyResponse)

@@ -1917,6 +1917,8 @@ export type BriefPick = {
   symbol: string;
   name?: string | null;
   bucket: BriefBucket;
+  is_profitable?: boolean;
+  sector?: string | null;
   angle?: string | null;
   angle_label?: string | null;
   chapter_headlines: string[];
@@ -1972,6 +1974,8 @@ export type Brief = {
   chapters: BriefChapter[];
   lens: BriefLens | null;
   picks: BriefPick[];
+  /** 3 hype names — rendered as a separate "watch with caution" strip, NOT recommendations. */
+  hype_watch?: BriefPick[];
   closing: string;
   meta: BriefMeta;
 };
@@ -2115,13 +2119,116 @@ export type SectorTapeEntry = {
   top_sold?: SectorTapeSymbol[];
 };
 
+export type SectorTapeFlowTypeView = {
+  sectors: SectorTapeEntry[];
+  ciks_count: number;
+};
+
+export type SectorTapeFlowTypeBreakdown = {
+  all: SectorTapeFlowTypeView;
+  active: SectorTapeFlowTypeView;
+  passive: SectorTapeFlowTypeView;
+};
+
 export type SectorTapeResponse = {
   window_days: number;
   as_of: string;
   sectors: SectorTapeEntry[];
+  by_flow_type?: SectorTapeFlowTypeBreakdown | null;
   ciks_with_delta_data?: number | null;
   ciks_total?: number | null;
   symbols_scraped?: number | null;
   coverage_note: string;
+  from_cache?: boolean;
+};
+
+
+// ── Pre-earnings setup ─────────────────────────────────────────────
+
+export type PreEarningsSignal = {
+  label: string;
+  tone: "positive" | "negative" | "neutral" | string;
+  value: string;
+};
+
+export type PreEarningsVerdict =
+  | "pricing_in_beat"
+  | "leaning_bullish"
+  | "mixed"
+  | "leaning_bearish"
+  | "pricing_in_miss"
+  | "no_earnings_imminent"
+  | "insufficient_data"
+  | string;
+
+export type PreEarningsNewsCategory =
+  | "earnings_preview"
+  | "channel_check"
+  | "analyst_revision"
+  | "product_news"
+  | "legal"
+  | "merger"
+  | "general"
+  | string;
+
+export type PreEarningsNewsItem = {
+  title: string;
+  url?: string;
+  source?: string;
+  published?: string | null;
+  sentiment_score?: number | null;
+  category?: PreEarningsNewsCategory | null;
+};
+
+export type PreEarningsRecentNews = {
+  bullish: PreEarningsNewsItem[];
+  bearish: PreEarningsNewsItem[];
+  net_sentiment?: string | null;
+  source_warning?: string | null;
+};
+
+export type PreEarningsSetup = {
+  symbol: string;
+  verdict: PreEarningsVerdict;
+  headline: string;
+  score: number;
+  days_to_next_earnings: number | null;
+  next_earnings_date: string | null;
+  signals: PreEarningsSignal[];
+  components: Record<string, unknown>;
+  recent_news?: PreEarningsRecentNews;
+  disclaimer?: string;
+  last_updated?: string;
+  from_cache?: boolean;
+};
+
+
+// ── Market-wide earnings calendar ──────────────────────────────────
+
+export type EarningsWeekCompany = {
+  symbol: string;
+  name?: string | null;
+  sector?: string | null;
+  hour?: "bmo" | "amc" | null;
+  eps_estimate?: number | null;
+  revenue_estimate?: number | null;
+  market_cap?: number | null;
+  pre_earnings_verdict?: string | null;
+  pre_earnings_score?: number | null;
+};
+
+export type EarningsWeekDay = {
+  date: string;
+  weekday: string;
+  count: number;
+  companies: EarningsWeekCompany[];
+};
+
+export type EarningsWeek = {
+  days_window: number;
+  as_of: string;
+  by_day: EarningsWeekDay[];
+  total_companies: number;
+  coverage_note?: string;
   from_cache?: boolean;
 };

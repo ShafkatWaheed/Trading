@@ -96,8 +96,11 @@ def get_benchmarks(symbol: str, period: str = "3M", force: bool = False) -> dict
         "from_cache":    False,
     }
 
-    try:
-        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
-    except Exception:
-        pass
+    # Don't cache an empty benchmarks payload (yfinance fail → both sparks empty)
+    # — same pattern as the AMD bubble-score incident.
+    if spy_spark or sector_spark:
+        try:
+            cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
     return payload

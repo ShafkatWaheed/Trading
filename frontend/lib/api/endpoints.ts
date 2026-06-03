@@ -86,6 +86,8 @@ export const marketApi = {
     api.get<CalendarPayload>(`/market/calendar?days=${days}&limit=${limit}`),
   geopolitical: () => api.get<GeopoliticalPayload>("/market/geopolitical"),
   disruption: () => api.get<DisruptionPayload>("/market/disruption"),
+  earningsThisWeek: (days: 3 | 7 | 14 = 7) =>
+    api.get<import("./types").EarningsWeek>(`/market/earnings-this-week?days=${days}`),
 };
 
 export const discoverApi = {
@@ -298,6 +300,10 @@ export const stocksApi = {
   signalEvidence: (ticker: string, force = false) =>
     api.get<SignalEvidence>(
       `/stocks/${encodeURIComponent(ticker)}/signal-evidence${force ? "?force=true" : ""}`
+    ),
+  preEarningsSetup: (ticker: string, force = false) =>
+    api.get<import("./types").PreEarningsSetup>(
+      `/stocks/${encodeURIComponent(ticker)}/pre-earnings-setup${force ? "?force=true" : ""}`
     ),
   fdaCatalysts: (ticker: string) =>
     api.get<StockInformation>(`/stocks/${encodeURIComponent(ticker)}/fda-catalysts`),
@@ -524,10 +530,13 @@ export const trackRecordApi = {
 export const briefApi = {
   // First page-load triggers a Claude call (~5-10s) — bypass the dev proxy
   // in local dev so we don't hit its 60s ceiling on slow LLM responses.
-  get: async (opts?: { force?: boolean }): Promise<Brief> => {
+  get: async (opts?: { force?: boolean; diversity?: boolean }): Promise<Brief> => {
     const isBrowser = typeof window !== "undefined";
     const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
-    const qs = opts?.force ? "?force=true" : "";
+    const params = new URLSearchParams();
+    if (opts?.force)     params.set("force", "true");
+    if (opts?.diversity) params.set("diversity", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
     const url = isLocalDev ? `http://localhost:8000/brief${qs}` : `/api/brief${qs}`;
     const res = await fetch(url);
     if (!res.ok) {

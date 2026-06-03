@@ -174,10 +174,19 @@ function PickCard({ pick, index }: { pick: BriefPick; index: number }) {
               </span>
             )}
           </div>
-          <span className={cn("badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1", bk.bg, bk.color)}>
-            <BkIcon size={10} />
-            {bk.label}
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={cn("badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1", bk.bg, bk.color)}>
+              <BkIcon size={10} />
+              {bk.label}
+            </span>
+            {/* Profitability chip — independent of bucket, so users see e.g.
+                "Promising · Profitable" (NVDA) vs "Promising · Burning cash" */}
+            {pick.is_profitable && (
+              <span className="badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1 bg-accent-blue/10 text-accent-blueSoft border-accent-blue/30">
+                Profitable
+              </span>
+            )}
+          </div>
         </header>
 
         {/* Angle row — small explainer of why it's here. If the pick surfaced
@@ -318,6 +327,57 @@ function PickCard({ pick, index }: { pick: BriefPick; index: number }) {
         )}
       </div>
     </article>
+  );
+}
+
+
+// ── hype watch card (compact, muted) ─────────────────────────────────
+
+function HypeWatchCard({ pick, index }: { pick: BriefPick; index: number }) {
+  const snap = pick.snapshot || {};
+  const bubble = snap.bubble_score;
+  return (
+    <Link
+      href={`/deep-dive/${encodeURIComponent(pick.symbol)}`}
+      className="card-subtle p-3 hover:border-bg-borderHi transition-all hover:translate-y-[-1px] block animate-rise border-l-2 border-l-accent-amber/40"
+      style={{ animationDelay: `${index * 60}ms` }}
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="font-mono text-[15px] font-bold tabular-nums text-text-primary group-hover:text-accent-blue">
+          ${pick.symbol}
+        </span>
+        <span className="badge text-[9px] uppercase tracking-wider bg-accent-amber/10 text-accent-amber border-accent-amber/40">
+          Hype
+        </span>
+      </div>
+      {pick.name && (
+        <div className="text-[10px] text-text-muted truncate mb-1.5" title={pick.name}>
+          {pick.name}
+        </div>
+      )}
+      {bubble != null && (
+        <div className="flex items-center gap-1.5 text-[10px] mb-1.5">
+          <span className="text-text-muted">Bubble score:</span>
+          <span className={cn(
+            "font-mono tabular-nums font-semibold",
+            bubble >= 75 ? "text-accent-redSoft" : bubble >= 65 ? "text-accent-amber" : "text-text-secondary",
+          )}>
+            {bubble.toFixed(0)}
+            {snap.bubble_label && <span className="text-text-muted ml-1 font-normal">· {snap.bubble_label}</span>}
+          </span>
+        </div>
+      )}
+      {snap.headline_metric && (
+        <div className="text-[10px] text-text-secondary leading-snug line-clamp-2">
+          {snap.headline_metric}
+        </div>
+      )}
+      {pick.narrative && (
+        <div className="text-[10px] text-text-muted leading-snug line-clamp-3 mt-1.5 pt-1.5 border-t border-bg-divider">
+          {renderNarrative(pick.narrative)}
+        </div>
+      )}
+    </Link>
   );
 }
 
@@ -606,20 +666,33 @@ function AskResult({ result }: { result: ContextSearchResponse }) {
 
 export default function BriefPage() {
   const qc = useQueryClient();
-  // queryKey bumped to "v3" so old client-side caches from the v1/v2 shape
-  // (intro + chapters) miss and re-fetch the new (market_story + picks) shape.
+  // Sector-diversity toggle — when ON, the picker caps actionable picks at
+  // max 2 per sector (forces diversity). Default OFF: top-by-score, no
+  // sector cap. The queryKey + cache key both include the flag so the on/off
+  // variants don't poison each other.
+  const [diversity, setDiversity] = useState(false);
+  // queryKey bumped to "v4" — server now returns status: "computing" on cold
+  // cache and we auto-poll until it's "ready". Older client caches without
+  // the status field should miss + re-fetch the new shape.
   const { data, isLoading, error, isFetching } = useQuery<Brief>({
-    queryKey: ["brief", "v3"],
-    queryFn: () => briefApi.get(),
+    queryKey: ["brief", "v4", diversity ? "div" : "nodiv"],
+    queryFn: () => briefApi.get({ diversity }),
     staleTime: 30 * 60 * 1000,
+    // Auto-poll every 10s while the backend is still generating. The route
+    // returns a "computing" stub instantly + kicks generation in a background
+    // thread; next poll picks up the populated cache. Without this the user
+    // sees an empty brief and has to manually refresh.
+    refetchInterval: (q) => ((q.state.data as { status?: string } | undefined)?.status === "computing" ? 10000 : false),
   });
+
+  const isComputing = (data as { status?: string } | undefined)?.status === "computing";
 
   const [forceRefreshing, setForceRefreshing] = useState(false);
   const forceRefresh = async () => {
     setForceRefreshing(true);
     try {
-      const fresh = await briefApi.get({ force: true });
-      qc.setQueryData(["brief", "v3"], fresh);
+      const fresh = await briefApi.get({ force: true, diversity });
+      qc.setQueryData(["brief", "v3", diversity ? "div" : "nodiv"], fresh);
     } finally {
       setForceRefreshing(false);
     }
@@ -636,6 +709,29 @@ export default function BriefPage() {
         trailing={
           <div className="flex items-center gap-2">
             <FreshnessPill iso={data?.generated_at} />
+            {/* Sector-diversity toggle */}
+            <button
+              onClick={() => setDiversity((v) => !v)}
+              disabled={isFetching || forceRefreshing}
+              title={diversity
+                ? "Diversity ON — actionable picks capped at max 2 per sector."
+                : "Diversity OFF (default) — actionable picks chosen by score only, no sector cap."}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors border",
+                diversity
+                  ? "bg-accent-blue/10 text-accent-blueSoft border-accent-blue/40 hover:bg-accent-blue/20"
+                  : "bg-bg-card text-text-secondary border-bg-borderHi hover:text-text-primary hover:bg-bg-card2",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+              )}
+            >
+              <span
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  diversity ? "bg-accent-blueSoft" : "bg-text-dim",
+                )}
+              />
+              Diversity: <span className="font-mono">{diversity ? "ON" : "OFF"}</span>
+            </button>
             <button
               onClick={forceRefresh}
               disabled={isFetching || forceRefreshing}
@@ -653,9 +749,24 @@ export default function BriefPage() {
         }
       />
 
-      {/* Loading */}
-      {isLoading && !data && (
+      {/* Loading — either initial fetch OR cold cache (server returned
+          status:"computing" while Claude generates in the background). */}
+      {(isLoading || isComputing) && (!data || isComputing) && (
         <div className="space-y-6">
+          {isComputing && (
+            <div className="card p-4 border-l-4 border-accent-blue/40 flex items-start gap-3">
+              <div className="w-2 h-2 mt-1.5 rounded-full bg-accent-blue animate-pulse shrink-0" />
+              <div>
+                <p className="text-[13px] text-text-primary font-semibold">
+                  Generating today's brief
+                </p>
+                <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                  Claude is composing the lens, hydrating picks, validating against the web, and writing the narrative.
+                  This typically takes 1-3 minutes on a cold cache — polling every 10s, will update automatically.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="space-y-3">
             <Skeleton className="h-3 w-32" />
             <Skeleton className="h-10 w-full" />
@@ -677,8 +788,8 @@ export default function BriefPage() {
         </div>
       )}
 
-      {/* Content */}
-      {data && (
+      {/* Content — only render once we have a real "ready" brief */}
+      {data && !isComputing && (
         <>
           {/* Defensive guard: if backend serves the legacy v1/v2 shape
               (intro + chapters but no market_story), render an upgrade notice
@@ -736,20 +847,19 @@ export default function BriefPage() {
           <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
             <div className="flex items-baseline gap-3">
               <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-text-muted">
-                The picks
+                Actionable picks
               </span>
               <span className="text-[11px] text-text-muted">
                 {data.picks.length} stocks · {data.meta.candidates_considered} candidates scanned
               </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Bucket count chips so users see the stable/promising/hype mix at a glance */}
-              {(["stable", "promising", "hype"] as const).map((b) => {
+              {/* Bucket counts — only the 2 actionable buckets here */}
+              {(["stable", "promising"] as const).map((b) => {
                 const n = data.picks.filter((p) => p.bucket === b).length;
                 if (n === 0) return null;
-                const tone = b === "hype"      ? "badge text-[10px] bg-accent-violet/10 text-accent-violet border-accent-violet/40"
-                          : b === "promising"  ? "badge text-[10px] bg-accent-amber/10 text-accent-amber border-accent-amber/30"
-                          :                      "badge text-[10px] bg-accent-green/10 text-accent-greenSoft border-accent-green/30";
+                const tone = b === "promising"  ? "badge text-[10px] bg-accent-amber/10 text-accent-amber border-accent-amber/30"
+                          :                       "badge text-[10px] bg-accent-green/10 text-accent-greenSoft border-accent-green/30";
                 const label = b.charAt(0).toUpperCase() + b.slice(1);
                 return (
                   <span key={b} className={tone}>
@@ -757,6 +867,15 @@ export default function BriefPage() {
                   </span>
                 );
               })}
+              {/* Profitability count — independent of bucket */}
+              {(() => {
+                const profitableCount = data.picks.filter((p) => p.is_profitable).length;
+                return profitableCount > 0 ? (
+                  <span className="badge text-[10px] bg-accent-blue/10 text-accent-blueSoft border-accent-blue/30">
+                    {profitableCount} profitable
+                  </span>
+                ) : null;
+              })()}
             </div>
           </div>
 
@@ -773,6 +892,32 @@ export default function BriefPage() {
                 <PickCard key={p.symbol} pick={p} index={i} />
               ))}
             </div>
+          )}
+
+          {/* Hype watch — separate strip, clearly labeled, muted styling */}
+          {(data.hype_watch?.length ?? 0) > 0 && (
+            <section className="mb-10 mt-8 pt-6 border-t border-bg-divider animate-rise">
+              <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+                <div className="flex items-baseline gap-3">
+                  <AlertTriangle size={12} className="text-accent-amber translate-y-[2px]" />
+                  <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-accent-amber">
+                    Hype watch · don't chase
+                  </span>
+                </div>
+                <span className="text-[10px] text-text-muted">
+                  {data.hype_watch!.length} names where price has run ahead of fundamentals
+                </span>
+              </div>
+              <p className="text-[12px] text-text-muted mb-3 max-w-3xl leading-relaxed">
+                These aren't recommendations. They're momentum names with elevated bubble scores
+                or rich multiples — surfaced so you know what's getting bid up, not what to buy.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 opacity-90">
+                {data.hype_watch!.map((p, i) => (
+                  <HypeWatchCard key={p.symbol} pick={p} index={i} />
+                ))}
+              </div>
+            </section>
           )}
 
           {/* Closing */}

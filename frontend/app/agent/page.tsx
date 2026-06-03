@@ -123,19 +123,19 @@ export default function AgentPage() {
           </div>
         ) : null}
 
-        {/* Personal trade journal — log buys/sells so the Gap Finder agent
+        {/* Daily Picks — screen universe + 7 agents vote on what to buy today. */}
+        <PortfolioPickPanel />
+
+        {/* Personal trade journal — log buys/sells so Position Reviewer
             can reason against your real portfolio. */}
         <TradeJournalCard />
 
-        {/* Gap Finder — AI portfolio adviser. Reads journal, runs trigger
-            sensors, Claude judges with WebSearch/WebFetch enabled. */}
+        {/* Position Reviewer — AI portfolio adviser. Reads journal, runs
+            trigger sensors, Claude judges with WebSearch/WebFetch enabled. */}
         <GapFinderCard />
 
-        {/* Strategy reference — explains the portfolio AI pipeline */}
+        {/* Strategy reference — explains the pick / review pipelines */}
         <PortfolioStrategyReference />
-
-        {/* Portfolio AI pick — screen universe + 7 agents vote */}
-        <PortfolioPickPanel />
 
         {/* Walk-forward simulation */}
         <PortfolioSimRunner />

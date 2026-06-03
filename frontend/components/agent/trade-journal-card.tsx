@@ -84,7 +84,7 @@ export function TradeJournalCard() {
             <Skeleton className="h-20 w-full" />
           ) : holdings.length === 0 ? (
             <div className="text-[12px] text-text-muted italic py-3">
-              No positions logged yet. Click "Log a trade" to start — the AI Gap Finder below will
+              No positions logged yet. Click "Log a trade" to start — the Position Reviewer below will
               read your holdings and recommend what to buy / sell / hold.
             </div>
           ) : (

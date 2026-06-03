@@ -2018,6 +2018,10 @@ class BriefPick(BaseModel):
     symbol: str
     name: str | None = None
     bucket: str                 # 'stable' | 'promising' | 'hype'
+    # Decoupled from bucket — a "promising" name can be profitable (NVDA) or
+    # not (early-stage growth). UI shows this as a separate "Profitable" chip.
+    is_profitable: bool = False
+    sector: str | None = None
     angle: str | None = None
     angle_label: str | None = None
     chapter_headlines: list[str] = []   # all chapters this pick surfaced from
@@ -2079,8 +2083,15 @@ class BriefResponse(BaseModel):
     chapters: list[BriefChapter] = []
     lens: BriefLens | None = None
     picks: list[BriefPick] = []
+    # Hype names rendered as a separate "watch with caution" strip below the
+    # actionable picks — flagged, NOT recommended.
+    hype_watch: list[BriefPick] = []
     closing: str = ""
     meta: BriefMeta = BriefMeta()
+    # "ready" — populated brief, render it
+    # "computing" — generation kicked off; poll again in 8-15s for the real brief
+    # None — same as ready (older cached briefs without this field)
+    status: str | None = None
 
 
 # ── Trade Journal + Gap Finder ─────────────────────────────────────
@@ -2176,6 +2187,81 @@ class GapFinderResponse(BaseModel):
     from_cache: bool = False
 
 
+# ── Market-wide earnings calendar (next N days) ────────────────────
+
+
+class EarningsWeekCompany(BaseModel):
+    symbol: str
+    name: str | None = None
+    sector: str | None = None
+    hour: str | None = None              # "bmo" | "amc" | None
+    eps_estimate: float | None = None
+    revenue_estimate: float | None = None
+    market_cap: float | None = None      # USD; cache-only — null when never deep-dived
+    pre_earnings_verdict: str | None = None
+    pre_earnings_score: float | None = None
+
+
+class EarningsWeekDay(BaseModel):
+    date: str
+    weekday: str
+    count: int
+    companies: list[EarningsWeekCompany] = []
+
+
+class EarningsWeekResponse(BaseModel):
+    days_window: int
+    as_of: str
+    by_day: list[EarningsWeekDay] = []
+    total_companies: int = 0
+    coverage_note: str = ""
+    from_cache: bool = False
+
+
+# ── Pre-earnings setup ─────────────────────────────────────────────
+
+
+class PreEarningsSignal(BaseModel):
+    label: str
+    tone: str                  # "positive" | "negative" | "neutral"
+    value: str
+
+
+class PreEarningsNewsItem(BaseModel):
+    title: str
+    url: str = ""
+    source: str = ""
+    published: str | None = None
+    sentiment_score: float | None = None
+    # Relevance category from news_relevance_service:
+    # earnings_preview | channel_check | analyst_revision | product_news |
+    # legal | merger | general. Surfaces in UI as a small pill.
+    category: str | None = None
+
+
+class PreEarningsRecentNews(BaseModel):
+    bullish: list[PreEarningsNewsItem] = []
+    bearish: list[PreEarningsNewsItem] = []
+    net_sentiment: str | None = None
+    source_warning: str | None = None
+
+
+class PreEarningsSetupResponse(BaseModel):
+    symbol: str
+    verdict: str               # pricing_in_beat | leaning_bullish | mixed | leaning_bearish | pricing_in_miss | no_earnings_imminent | insufficient_data
+    headline: str
+    score: float               # -100 (full miss positioning) … +100 (full beat positioning)
+    days_to_next_earnings: int | None = None
+    next_earnings_date: str | None = None
+    signals: list[PreEarningsSignal] = []
+    components: dict[str, Any] = {}
+    recent_news: PreEarningsRecentNews = PreEarningsRecentNews()
+    disclaimer: str = ""
+    last_updated: str = ""
+    from_cache: bool = False
+    status: str | None = None
+
+
 # ── Sector flow tapes (13F + Congress) ─────────────────────────────
 
 
@@ -2212,10 +2298,23 @@ class SectorTapeEntry(BaseModel):
     direction: str  # inflow|outflow|neutral|buying|selling|no_data
 
 
+class SectorTapeFlowTypeView(BaseModel):
+    sectors: list[SectorTapeEntry] = []
+    ciks_count: int = 0
+
+
+class SectorTapeFlowTypeBreakdown(BaseModel):
+    all:     SectorTapeFlowTypeView = SectorTapeFlowTypeView()
+    active:  SectorTapeFlowTypeView = SectorTapeFlowTypeView()
+    passive: SectorTapeFlowTypeView = SectorTapeFlowTypeView()
+
+
 class SectorTapeResponse(BaseModel):
     window_days: int
     as_of: str
     sectors: list[SectorTapeEntry] = []
+    # 13F-only: split by flow type (active vs passive). For congress this is null.
+    by_flow_type: SectorTapeFlowTypeBreakdown | None = None
     # Smart-money diagnostics
     ciks_with_delta_data: int | None = None
     ciks_total: int | None = None

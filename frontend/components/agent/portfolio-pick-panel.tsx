@@ -88,7 +88,7 @@ export function PortfolioPickPanel() {
             <div className="flex items-center gap-2 mb-1">
               <Compass size={14} className="text-accent-violet" strokeWidth={2.4} />
               <h3 className="text-sm font-semibold tracking-tight">
-                Portfolio AI — pick stocks now
+                Daily Picks — what to buy today
               </h3>
             </div>
             <p className="text-[11px] text-text-muted leading-snug">
@@ -150,7 +150,7 @@ export function PortfolioPickPanel() {
               ) : (
                 <>
                   <Compass size={14} />
-                  Run Portfolio Pick
+                  Run Daily Picks
                 </>
               )}
             </button>

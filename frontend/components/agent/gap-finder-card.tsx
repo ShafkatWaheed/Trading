@@ -56,7 +56,7 @@ export function GapFinderCard() {
       <section className="card-subtle p-6">
         <div className="flex items-center gap-2 mb-4">
           <Brain size={16} className="text-accent-violet" />
-          <h3 className="text-base font-semibold">Gap Finder — AI portfolio adviser</h3>
+          <h3 className="text-base font-semibold">Position Reviewer — AI portfolio adviser</h3>
         </div>
         <Skeleton className="h-64 w-full" />
       </section>
@@ -68,7 +68,7 @@ export function GapFinderCard() {
       <section className="card-subtle p-6">
         <div className="flex items-center gap-2 mb-3">
           <Brain size={16} className="text-accent-violet" />
-          <h3 className="text-base font-semibold">Gap Finder</h3>
+          <h3 className="text-base font-semibold">Position Reviewer</h3>
         </div>
         <p className="text-text-muted text-sm">{(error as Error).message}</p>
       </section>
@@ -91,7 +91,7 @@ export function GapFinderCard() {
         <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             <Brain size={16} className="text-accent-violet" />
-            <h3 className="text-base font-semibold">Gap Finder</h3>
+            <h3 className="text-base font-semibold">Position Reviewer</h3>
             <span className="text-[10px] uppercase tracking-wider text-text-muted">
               {data.holdings_count} holdings · {data.candidates_considered} candidates scanned
             </span>
@@ -132,7 +132,7 @@ export function GapFinderCard() {
         {!hasHoldings ? (
           <div className="card p-4 border-l-4 border-accent-blue/40">
             <p className="text-[13px] text-text-secondary">
-              Log a buy in the journal above to activate the Gap Finder. With at least one open
+              Log a buy in the journal above to activate the Position Reviewer. With at least one open
               position, Claude will recommend what to sell / hold and find adjacent stocks to buy.
             </p>
           </div>

@@ -28,6 +28,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _start_schedulers() -> None:
+    """Kick off daemon-thread schedulers. Idempotent across reloads.
+
+    `earnings_prewarm` runs daily at 6:30am ET — refreshes the 7d calendar
+    and warms `pre_earnings_setup` for every company in it. By the time the
+    market opens (9:30 ET) the calendar shows verdicts for every report.
+    """
+    try:
+        from api.services._scheduler import schedule_daily_at
+        from api.services.earnings_week_service import daily_prewarm
+        schedule_daily_at(6, 30, daily_prewarm, name="earnings_prewarm")
+    except Exception as e:
+        # Never fail startup on scheduler error — the lazy prewarm path in
+        # earnings_week_service still kicks in on first request.
+        import logging
+        logging.getLogger(__name__).warning("scheduler startup failed: %r", e)
+
 app.include_router(market.router)
 app.include_router(discover.router)
 app.include_router(stocks.router)

@@ -138,6 +138,33 @@ def _enrich_with_full_signals(ev: dict) -> None:
         if events:
             full["upcoming_catalysts"] = events
 
+    # Pre-earnings setup — is the tape pricing in a beat or a miss?
+    # Composite of price/volume/options/analyst revisions/short interest/beat
+    # history. Only meaningful when next earnings is within ~45d. Service
+    # call returns cached or computes on demand (24h cache, 1h when <5d).
+    # Only attached to the evidence packet when the signal is actionable —
+    # "insufficient_data" / "no_earnings_imminent" are dropped silently.
+    try:
+        from api.services import pre_earnings_setup_service
+        pes = pre_earnings_setup_service.get_pre_earnings_setup(sym)
+        if pes and pes.get("verdict") not in ("insufficient_data", "no_earnings_imminent", None):
+            recent_news = pes.get("recent_news") or {}
+            full["pre_earnings_setup"] = {
+                "verdict":               pes.get("verdict"),
+                "headline":              pes.get("headline"),
+                "score":                 pes.get("score"),
+                "days_to_next_earnings": pes.get("days_to_next_earnings"),
+                "next_earnings_date":    pes.get("next_earnings_date"),
+                "signals":               pes.get("signals") or [],
+                # Titles only (no URLs/snippets) to keep the prompt tight while
+                # giving Claude concrete recent positive / negative headlines to
+                # reference in narrative ("per Reuters Tuesday, X" style).
+                "recent_news_bullish":   [n.get("title") for n in (recent_news.get("bullish") or [])[:3]],
+                "recent_news_bearish":   [n.get("title") for n in (recent_news.get("bearish") or [])[:3]],
+            }
+    except Exception as e:
+        logger.info("gap_finder: pre-earnings setup failed for %s: %r", sym, e)
+
     # Peer valuation — relative cheapness
     pv = cache_get(f"peer_valuation:v1:{sym}")
     if pv and pv.get("rows"):
@@ -837,9 +864,14 @@ The EVIDENCE PACKET below is comprehensive — it includes the stock's:
     earnings beat-miss pattern, bubble breakdown (growth_gap/valuation/momentum),
     smart money trade detail (insider + congress recent transactions),
     benchmarks vs SPY + sector, signal_evidence (per-signal historical win rates),
-    trade plan (entry/stop/targets), Brief inclusion if applicable, and the
+    trade plan (entry/stop/targets), Brief inclusion if applicable, the
     sector-specific signals: backlog (defense / govcon), litigation (IP),
-    patent_events (pharma), exec_changes (8-K Item 5.02), fda_catalysts (pharma).
+    patent_events (pharma), exec_changes (8-K Item 5.02), fda_catalysts (pharma),
+    and `pre_earnings_setup` — a composite "is the tape pricing in a beat or a
+    miss?" signal that only appears when the next earnings is within ~45 days.
+    Verdicts: pricing_in_beat / leaning_bullish / mixed / leaning_bearish /
+    pricing_in_miss. NOT an insider-trading detector — it's a positioning view.
+    Weight it more for short-dated decisions; less when earnings is far out.
 
 WEIGH WHAT'S RELEVANT. The packet includes signals for every sector —
 some won't apply to this stock. Examples:

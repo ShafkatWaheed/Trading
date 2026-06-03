@@ -58,10 +58,13 @@ def _fetch_snapshot(symbol: str) -> dict:
         if out[k] is not None:
             out[k] = round(out[k], 1)
 
-    try:
-        cache_set(cache_key, out, ttl_minutes=_CACHE_TTL_MINUTES)
-    except Exception:
-        pass
+    # Don't cache an all-None payload — would poison peer-valuation for the
+    # symbol for the full TTL (same pattern as the AMD bubble-score incident).
+    if any(out.get(k) is not None for k in ("pe_ratio", "ps_ratio", "pfcf_ratio", "price_change_1y_pct")):
+        try:
+            cache_set(cache_key, out, ttl_minutes=_CACHE_TTL_MINUTES)
+        except Exception:
+            pass
     return out
 
 

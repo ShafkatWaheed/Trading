@@ -32,6 +32,7 @@ import { EstimateRevisionsCard } from "@/components/deep-dive/estimate-revisions
 import { MacroFitCard } from "@/components/deep-dive/macro-fit-card";
 import { NewsFeed } from "@/components/deep-dive/news-feed";
 import { CatalystCalendar } from "@/components/deep-dive/catalyst-calendar";
+import { PreEarningsSetupCard } from "@/components/deep-dive/pre-earnings-setup-card";
 import { RecommendationCard } from "@/components/deep-dive/recommendation-card";
 import { FdaCatalystsCard } from "@/components/deep-dive/fda-catalysts-card";
 import { BacklogCard } from "@/components/deep-dive/backlog-card";
@@ -279,8 +280,9 @@ export default function DeepDiveTickerPage() {
           </div>
 
           {/* ── 04 · WHAT PROS ARE DOING ───────────────────────────────── */}
-          <SectionHeader index={4} label="What pros are doing" subtitle="smart money · institutional overlap · Wall Street consensus · estimate revisions · options" id="pros" />
+          <SectionHeader index={4} label="What pros are doing" subtitle="pre-earnings setup · smart money · institutional overlap · Wall Street consensus · estimate revisions · options" id="pros" />
 
+          <PreEarningsSetupCard symbol={data.symbol} />
           <SmartMoneyCard symbol={data.symbol} />
           <CoHoldersCard symbol={data.symbol} />
           <AnalystConsensus symbol={data.symbol} />
