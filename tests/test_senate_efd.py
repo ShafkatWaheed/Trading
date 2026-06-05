@@ -96,3 +96,41 @@ def test_parse_ptr_html_extracts_tickered_rows():
 
 def test_parse_ptr_html_empty_when_no_table():
     assert senate_efd.parse_ptr_html("<html><body>No table</body></html>") == []
+
+
+def _make_data_page(rows: list, total: int | None = None) -> dict:
+    """Shape of the DataTables /report/data/ JSON response."""
+    return {"data": rows, "recordsTotal": total if total is not None else len(rows),
+            "recordsFiltered": total if total is not None else len(rows)}
+
+
+def test_fetch_index_classifies_and_caps():
+    # row = [first, last, office, report_link_html, date_received]
+    page = _make_data_page([
+        ["Mark", "Warner", "Warner, Mark R. (Senator)",
+         '<a href="/search/view/ptr/aaa-111/" target="_blank">PTR</a>', "03/31/2026"],
+        ["Jane", "Doe", "Doe, Jane (Senator)",
+         '<a href="/search/view/paper/bbb-222/">PTR (paper)</a>', "03/30/2026"],
+        ["Ron", "Roe", "Roe, Ron (Senator)",
+         '<a href="/search/view/ptr/ccc-333/">PTR</a>', "03/29/2026"],
+    ])
+    calls = []
+
+    def fake_search(start, length, start_date, end_date):
+        calls.append((start, length))
+        return page if start == 0 else _make_data_page([])
+
+    out = senate_efd.fetch_index(days=30, max_docs=2, search_fn=fake_search)
+    assert len(out) == 2  # capped at max_docs
+    assert out[0]["filing_uuid"] == "aaa-111"
+    assert out[0]["doc_kind"] == "electronic"
+    assert out[0]["politician_name"] == "Mark Warner"
+    assert out[0]["filing_date"] == "2026-03-31"
+    assert out[1]["doc_kind"] == "paper"
+    assert out[1]["filing_uuid"] == "bbb-222"
+
+
+def test_fetch_index_search_error_returns_empty():
+    def boom(start, length, start_date, end_date):
+        raise RuntimeError("portal down")
+    assert senate_efd.fetch_index(days=30, search_fn=boom) == []
