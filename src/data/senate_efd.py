@@ -153,15 +153,20 @@ def _search_page(client: httpx.Client, start: int, length: int,
     """POST the DataTables report/data endpoint for one page."""
     token = client.cookies.get("csrftoken") or ""
     payload = {
+        "draw": "1",
         "start": str(start),
         "length": str(length),
         "report_types": f"[{_REPORT_TYPE_PTR}]",
+        "filer_types": "[]",
         "submitted_start_date": f"{start_date} 00:00:00",
         "submitted_end_date": f"{end_date} 23:59:59",
+        "first_name": "",
+        "last_name": "",
         "csrfmiddlewaretoken": token,
     }
     r = client.post(_DATA_URL, data=payload,
-                    headers={"Referer": _HOME_URL, "X-CSRFToken": token})
+                    headers={"Referer": _HOME_URL, "X-CSRFToken": token,
+                             "X-Requested-With": "XMLHttpRequest"})
     r.raise_for_status()
     return r.json()
 

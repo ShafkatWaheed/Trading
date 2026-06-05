@@ -5,6 +5,7 @@ search JSON and the electronic-PTR HTML are fed as canned fixtures.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -144,6 +145,9 @@ class _FakeResp:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return json.loads(self.text)
 
 
 @pytest.fixture
@@ -298,3 +302,25 @@ def test_query_functions(clean_senate_tables):
 
     top = senate_efd.get_top_traded_stocks(days=90, limit=10)
     assert top[0] == {"symbol": "NVDA", "trade_count": 2}
+
+
+class _FakeClient:
+    """Captures the args of a single .post() call; no network."""
+    def __init__(self):
+        self.cookies = {"csrftoken": "tok123"}
+        self.posted = None
+
+    def post(self, url, data=None, headers=None):
+        self.posted = {"url": url, "data": data, "headers": headers}
+        return _FakeResp('{"data": [], "recordsTotal": 0}')
+
+
+def test_search_page_sends_ajax_header_and_draw():
+    c = _FakeClient()
+    out = senate_efd._search_page(c, 0, 100, "2026-05-01", "2026-05-31")
+    assert out == {"data": [], "recordsTotal": 0}
+    assert c.posted["headers"]["X-Requested-With"] == "XMLHttpRequest"
+    assert c.posted["headers"]["X-CSRFToken"] == "tok123"
+    assert c.posted["data"]["draw"] == "1"
+    assert c.posted["data"]["report_types"] == "[11]"
+    assert c.posted["data"]["csrfmiddlewaretoken"] == "tok123"
