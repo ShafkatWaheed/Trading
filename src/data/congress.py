@@ -11,11 +11,10 @@ existing `CongressTrade` / `CongressTradesSummary` shapes so
 `congress_signal_service`, `smart_money_service`, and `ai_analyst_service`
 keep working without changes.
 
-House-only. The Senate eFD portal (efdsearch.senate.gov) needs its own
-ingester and is not covered here yet -- party/chamber breakdowns therefore
-under-represent Senate activity. House membership covers ~80% of
-disclosed transactions historically, so the signal direction is preserved
-even with the gap.
+Both chambers are now ingested: House via `src.data.house_clerk` and Senate
+via `src.data.senate_efd`. Party affiliation is still "Unknown" for both --
+the disclosure feeds don't carry it; a separate roster-enrichment join will
+fill party + committees later.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from src.data import house_clerk
+from src.data import house_clerk, senate_efd
 from src.models.data_types import CongressTrade, CongressTradesSummary
 from src.utils.config import CACHE_TTL_FUNDAMENTALS
 from src.utils.db import cache_get, cache_set, log_api_call
@@ -74,7 +73,13 @@ class CongressDataProvider:
         if cached:
             return cached
 
-        result = house_clerk.get_top_traded_stocks(days=days, limit=20)
+        counts: dict[str, int] = {}
+        for src in (house_clerk.get_top_traded_stocks(days=days, limit=50),
+                    senate_efd.get_top_traded_stocks(days=days, limit=50)):
+            for row in src:
+                counts[row["symbol"]] = counts.get(row["symbol"], 0) + row["trade_count"]
+        result = [{"symbol": s, "trade_count": c}
+                  for s, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)][:20]
         cache_set(cache_key, result, ttl_minutes=CACHE_TTL_FUNDAMENTALS)
         log_api_call("congress", "top_traded", "success")
         return result
@@ -82,22 +87,31 @@ class CongressDataProvider:
     # ── House Clerk adapters ──────────────────────────────────────────
 
     def _fetch_trades_by_symbol(self, symbol: str, days: int) -> list[CongressTrade]:
-        rows = house_clerk.get_trades_by_symbol(symbol, days=days)
-        return [self._row_to_trade(r) for r in rows]
+        house = [self._row_to_trade(r, "House")
+                 for r in house_clerk.get_trades_by_symbol(symbol, days=days)]
+        senate = [self._row_to_trade(r, "Senate")
+                  for r in senate_efd.get_trades_by_symbol(symbol, days=days)]
+        return house + senate
 
     def _fetch_trades_by_politician(self, name: str, days: int) -> list[CongressTrade]:
-        rows = house_clerk.get_trades_by_politician(name, days=days)
-        return [self._row_to_trade(r) for r in rows]
+        house = [self._row_to_trade(r, "House")
+                 for r in house_clerk.get_trades_by_politician(name, days=days)]
+        senate = [self._row_to_trade(r, "Senate")
+                  for r in senate_efd.get_trades_by_politician(name, days=days)]
+        return house + senate
 
-    def _row_to_trade(self, r: dict) -> CongressTrade:
-        """Convert a house_clerk_trades row dict to a CongressTrade.
+    def _row_to_trade(self, r: dict, chamber: str = "House") -> CongressTrade:
+        """Convert a house_clerk_trades or senate_efd_trades row dict to a CongressTrade.
 
-        Party is left "Unknown" -- the Clerk index doesn't carry it. State
-        is the StateDst prefix (first 2 chars of e.g. "CA17"). Chamber is
-        always "House" because that's the only source.
+        Party is left "Unknown" -- neither feed carries it. For House rows the
+        state is derived from state_dst (first 2 chars of e.g. "CA17"); for
+        Senate rows the state field is used directly.
         """
-        state_dst = (r.get("state_dst") or "").strip()
-        state = state_dst[:2] if len(state_dst) >= 2 else ""
+        if chamber == "Senate":
+            state = (r.get("state") or "").strip()
+        else:
+            state_dst = (r.get("state_dst") or "").strip()
+            state = state_dst[:2] if len(state_dst) >= 2 else ""
 
         amount_low = Decimal(str(r.get("amount_low") or 0))
         amount_high = Decimal(str(r.get("amount_high") or 0))
@@ -122,7 +136,7 @@ class CongressDataProvider:
         return CongressTrade(
             politician=(r.get("politician_name") or "Unknown").strip() or "Unknown",
             party="Unknown",  # not in House Clerk feed
-            chamber="House",
+            chamber=chamber,
             state=state,
             symbol=(r.get("ticker") or "").upper(),
             company="",  # not in PTR PDFs in machine-readable form
