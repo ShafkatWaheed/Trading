@@ -521,6 +521,42 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_orange_book_sponsor ON orange_book_patents(sponsor_name);
         CREATE INDEX IF NOT EXISTS idx_orange_book_expire ON orange_book_patents(patent_expire_date);
+
+        -- ── House Clerk PTR cache (congressional trades) ────────────────────
+        -- Populated from disclosures-clerk.house.gov per-PDF parse.
+        -- Refreshed daily; per-DocID idempotent (re-parse just upserts).
+        CREATE TABLE IF NOT EXISTS house_clerk_trades (
+            doc_id              TEXT NOT NULL,
+            txn_index           INTEGER NOT NULL,
+            politician_name     TEXT NOT NULL,
+            state_dst           TEXT,
+            filing_date         TEXT,
+            ticker              TEXT NOT NULL,
+            asset_type          TEXT,
+            transaction_type    TEXT,
+            transaction_date    TEXT,
+            notification_date   TEXT,
+            amount_low          INTEGER,
+            amount_high         INTEGER,
+            raw_text            TEXT,
+            fetched_at          TEXT NOT NULL,
+            PRIMARY KEY (doc_id, txn_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_hct_ticker ON house_clerk_trades(ticker);
+        CREATE INDEX IF NOT EXISTS idx_hct_date ON house_clerk_trades(transaction_date);
+        CREATE INDEX IF NOT EXISTS idx_hct_politician ON house_clerk_trades(politician_name);
+
+        -- Track which DocIDs we've attempted to parse (idempotent refresh).
+        CREATE TABLE IF NOT EXISTS house_clerk_index (
+            doc_id          TEXT PRIMARY KEY,
+            year            TEXT NOT NULL,
+            filing_type     TEXT NOT NULL,
+            last_attempted  TEXT,
+            status          TEXT,
+            error           TEXT,
+            fetched_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_hci_status ON house_clerk_index(status);
     """)
     conn.commit()
     conn.close()
