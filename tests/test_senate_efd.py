@@ -134,3 +134,102 @@ def test_fetch_index_search_error_returns_empty():
     def boom(start, length, start_date, end_date):
         raise RuntimeError("portal down")
     assert senate_efd.fetch_index(days=30, search_fn=boom) == []
+
+
+class _FakeResp:
+    def __init__(self, text: str = "", status: int = 200):
+        self.text = text
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+@pytest.fixture
+def clean_senate_tables():
+    init_db()
+    conn = get_connection()
+    conn.execute("DELETE FROM senate_efd_trades")
+    conn.execute("DELETE FROM senate_efd_index")
+    conn.commit()
+    conn.close()
+    yield
+    conn = get_connection()
+    conn.execute("DELETE FROM senate_efd_trades")
+    conn.execute("DELETE FROM senate_efd_index")
+    conn.commit()
+    conn.close()
+
+
+def test_store_electronic_persists_rows(clean_senate_tables):
+    meta = {"filing_uuid": "aaa-111", "doc_kind": "electronic", "filing_type": "P",
+            "politician_name": "Mark Warner", "state": "", "filing_date": "2026-03-31"}
+    n = senate_efd._fetch_and_store_one(meta, http_get=lambda url: _FakeResp(_PTR_HTML))
+    assert n == 2  # AAPL + NVDA; treasury dropped
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT ticker, transaction_type, transaction_date, amount_high "
+        "FROM senate_efd_trades WHERE filing_uuid='aaa-111' ORDER BY txn_index"
+    ).fetchall()
+    status = conn.execute(
+        "SELECT status FROM senate_efd_index WHERE filing_uuid='aaa-111'"
+    ).fetchone()["status"]
+    conn.close()
+
+    assert status == "parsed"
+    by_t = {r["ticker"]: r for r in rows}
+    assert by_t["AAPL"]["transaction_type"] == "buy"
+    assert by_t["AAPL"]["transaction_date"] == "2026-03-16"
+    assert by_t["NVDA"]["transaction_type"] == "sell"
+    assert by_t["NVDA"]["amount_high"] == 50000
+
+
+def test_store_paper_skips_and_marks(clean_senate_tables):
+    meta = {"filing_uuid": "bbb-222", "doc_kind": "paper", "filing_type": "P",
+            "politician_name": "Jane Doe", "state": "", "filing_date": "2026-03-30"}
+
+    def must_not_call(url):
+        raise AssertionError("paper filing should not be fetched")
+
+    n = senate_efd._fetch_and_store_one(meta, http_get=must_not_call)
+    assert n == 0
+    conn = get_connection()
+    status = conn.execute(
+        "SELECT status FROM senate_efd_index WHERE filing_uuid='bbb-222'"
+    ).fetchone()["status"]
+    conn.close()
+    assert status == "paper_unparsed"
+
+
+def test_store_http_error_marked(clean_senate_tables):
+    meta = {"filing_uuid": "ccc-333", "doc_kind": "electronic", "filing_type": "P",
+            "politician_name": "Ron Roe", "state": "", "filing_date": "2026-03-29"}
+
+    def boom(url):
+        raise RuntimeError("503 unavailable")
+
+    n = senate_efd._fetch_and_store_one(meta, http_get=boom)
+    assert n == 0
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT status, error FROM senate_efd_index WHERE filing_uuid='ccc-333'"
+    ).fetchone()
+    conn.close()
+    assert row["status"] == "http_error"
+    assert "503" in (row["error"] or "")
+
+
+def test_store_empty_marked(clean_senate_tables):
+    meta = {"filing_uuid": "ddd-444", "doc_kind": "electronic", "filing_type": "P",
+            "politician_name": "Empty Filer", "state": "", "filing_date": "2026-03-28"}
+    n = senate_efd._fetch_and_store_one(
+        meta, http_get=lambda url: _FakeResp("<html>no table</html>"))
+    assert n == 0
+    conn = get_connection()
+    status = conn.execute(
+        "SELECT status FROM senate_efd_index WHERE filing_uuid='ddd-444'"
+    ).fetchone()["status"]
+    conn.close()
+    assert status == "empty"

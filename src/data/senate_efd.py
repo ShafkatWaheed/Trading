@@ -233,3 +233,97 @@ def _row_to_index_record(row: list) -> dict | None:
         "state": "",  # not in the search row; filled by roster join later
         "filing_date": _norm_date(row[4] or ""),
     }
+
+
+def _fetch_and_store_one(meta: dict, *, http_get=None) -> int:
+    """Fetch + parse + store ONE electronic PTR. Returns transactions stored.
+
+    Paper filings are not fetched -- marked 'paper_unparsed' and skipped.
+    `http_get` is dependency-injected for tests; the default establishes a
+    session per call.
+    """
+    init_db()
+    uuid = meta["filing_uuid"]
+    now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO senate_efd_index "
+            "  (filing_uuid, doc_kind, filing_type, politician_name, state, "
+            "   filing_date, last_attempted) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(filing_uuid) DO UPDATE SET last_attempted = ?",
+            (uuid, meta.get("doc_kind"), meta.get("filing_type", "P"),
+             meta.get("politician_name"), meta.get("state"),
+             meta.get("filing_date"), now_iso, now_iso),
+        )
+        conn.commit()
+
+        if meta.get("doc_kind") == "paper":
+            conn.execute(
+                "UPDATE senate_efd_index SET status='paper_unparsed', fetched_at=? "
+                "WHERE filing_uuid=?", (now_iso, uuid))
+            conn.commit()
+            return 0
+
+        get = http_get
+        client = None
+        if get is None:
+            client = _establish_session()
+            if client is None:
+                conn.execute(
+                    "UPDATE senate_efd_index SET status='http_error', error=? "
+                    "WHERE filing_uuid=?", ("session failed", uuid))
+                conn.commit()
+                return 0
+            get = lambda url: client.get(url)
+
+        url = _VIEW_URL.format(uuid=uuid)
+        try:
+            r = get(url)
+            r.raise_for_status()
+        except Exception as exc:
+            conn.execute(
+                "UPDATE senate_efd_index SET status='http_error', error=? "
+                "WHERE filing_uuid=?", (str(exc)[:200], uuid))
+            conn.commit()
+            log_api_call("senate_efd", url, "error", error=str(exc))
+            return 0
+        finally:
+            if client is not None:
+                client.close()
+
+        txns = parse_ptr_html(r.text)
+        if not txns:
+            conn.execute(
+                "UPDATE senate_efd_index SET status='empty', fetched_at=? "
+                "WHERE filing_uuid=?", (now_iso, uuid))
+            conn.commit()
+            return 0
+
+        conn.execute("DELETE FROM senate_efd_trades WHERE filing_uuid=?", (uuid,))
+        for i, t in enumerate(txns):
+            txn_date = _norm_date(t["transaction_date_raw"])
+            conn.execute(
+                """
+                INSERT INTO senate_efd_trades
+                  (filing_uuid, txn_index, politician_name, state, filing_date,
+                   ticker, asset_type, transaction_type, transaction_date,
+                   notification_date, amount_low, amount_high, raw_text, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (uuid, i, meta.get("politician_name"), meta.get("state"),
+                 meta.get("filing_date"), t["ticker"], t["asset_type"],
+                 _norm_txn(t["transaction_code"]), txn_date,
+                 txn_date,  # Senate table has no separate notification date
+                 t["amount_low"], t["amount_high"], t["raw_text"], now_iso),
+            )
+        conn.execute(
+            "UPDATE senate_efd_index SET status='parsed', fetched_at=? "
+            "WHERE filing_uuid=?", (now_iso, uuid))
+        conn.commit()
+        log_api_call("senate_efd", url, "ok", error=f"{len(txns)} txns")
+        return len(txns)
+    finally:
+        conn.close()
