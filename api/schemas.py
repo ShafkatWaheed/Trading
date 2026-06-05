@@ -2092,6 +2092,16 @@ class BriefResponse(BaseModel):
     # "computing" — generation kicked off; poll again in 8-15s for the real brief
     # None — same as ready (older cached briefs without this field)
     status: str | None = None
+    # ── Progress fields (only present on the "computing" stub) ──────────
+    # Populated from the durable background-jobs tracker so the UI can
+    # render a live phase + percentage instead of a static spinner. All
+    # optional — existing clients that ignore these still work.
+    current_phase: str | None = None
+    progress_pct: int | None = None
+    elapsed_s: int | None = None
+    started_at: str | None = None
+    job_status: str | None = None    # 'computing' | 'failed' | None
+    job_error: str | None = None
 
 
 # ── Trade Journal + Gap Finder ─────────────────────────────────────

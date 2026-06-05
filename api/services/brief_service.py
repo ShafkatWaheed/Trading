@@ -62,10 +62,23 @@ from api.services import (
     market_service,
     smart_money_service,
 )
+from api.services import _phase_cache
+from api.services._background_jobs import heartbeat
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
+
+# Namespace prefix used by `_phase_cache` for the market-wide brief. The
+# /brief/{symbol}/restart endpoint passes a ticker as the namespace for
+# per-symbol flows; for the daily market brief there's no symbol, so we
+# scope by the literal string "MARKET" — `force_restart` paths can wipe
+# it with `_phase_cache.invalidate("MARKET")`.
+_PHASE_NS = "MARKET"
+
+# Bump this when the phase prompt or expected output shape changes so old
+# entries don't pollute results after a deployment.
+_PHASE_INPUT_VERSION = 1
 
 
 _PULSE_TO_GRAPH_SECTOR = {
@@ -336,6 +349,14 @@ def _derive_search_query(ctx: dict) -> dict | None:
     """
     summary = _ctx_summary_for_prompt(ctx)
 
+    # Phase-level checkpoint: if a previous brief build already produced a
+    # lens for THIS exact summary, reuse it. Survives uvicorn restarts and
+    # is wiped by /brief/restart.
+    phase_input = {"v": _PHASE_INPUT_VERSION, "prompt": "lens", "summary": summary}
+    cached_phase = _phase_cache.get(_PHASE_NS, "lens", phase_input)
+    if cached_phase is not None:
+        return cached_phase
+
     cache_key = f"brief:lens:v1:{_q_hash(repr(summary))}"
     cached = cache_get(cache_key)
     if cached:
@@ -343,10 +364,11 @@ def _derive_search_query(ctx: dict) -> dict | None:
 
     prompt = _build_lens_prompt(summary)
     try:
-        # 180s timeout (claude CLI cold-start in this env can take 60-90s);
-        # 0 retries — if the first attempt fails, fall through to the
-        # rule-based chapter fallback instead of burning another 180s.
-        result = ask_claude_json(prompt, model="haiku", timeout=180, retries=0)
+        # 180s timeout (claude CLI cold-start in this env can take 60-90s).
+        # One retry — the lens-writer is the most expensive failure mode and
+        # a single Claude flake should not knock the brief into the
+        # rule-based fallback.
+        result = ask_claude_json(prompt, model="haiku", timeout=180, retries=1)
     except Exception as e:
         logger.warning("brief: lens-writer Claude call failed %r", e)
         return None
@@ -374,6 +396,12 @@ def _derive_search_query(ctx: dict) -> dict | None:
 
     try:
         cache_set(cache_key, result, ttl_minutes=_LENS_CACHE_TTL)
+    except Exception:
+        pass
+    # Phase checkpoint write — keyed on the SAME summary used to call Claude,
+    # so the next build replays this phase for free.
+    try:
+        _phase_cache.put(_PHASE_NS, "lens", phase_input, result)
     except Exception:
         pass
     return result
@@ -1195,14 +1223,50 @@ as the input, using the same symbol strings.
 
 def _narrate(ctx: dict, chapters: list[dict], picks: list[dict], lens: dict | None = None) -> dict:
     prompt = _build_narrative_prompt(ctx, chapters, picks, lens=lens)
+    # Phase checkpoint key — narrate output depends on the picks (symbols +
+    # bucket + chapter attribution + web_validation summary) and on the
+    # chapter/lens story. We deliberately exclude pulse numbers so the cache
+    # hit survives small price-flow drift.
+    phase_input = {
+        "v": _PHASE_INPUT_VERSION,
+        "prompt": "narrate",
+        "picks": [
+            {
+                "symbol": p.get("symbol"),
+                "bucket": p.get("bucket"),
+                "chapter_headlines": p.get("chapter_headlines"),
+                "web_validation_verdict": (
+                    (p.get("snapshot") or {})
+                    .get("full_signals", {})
+                    .get("web_validation", {})
+                    .get("verdict")
+                ),
+            }
+            for p in picks
+        ],
+        "lens_query": (lens or {}).get("query"),
+        "chapters": [c.get("headline") for c in chapters],
+    }
+    cached_phase = _phase_cache.get(_PHASE_NS, "narrate", phase_input)
+    if cached_phase is not None:
+        return cached_phase
+
     try:
         result = ask_claude_json(prompt, model="haiku", timeout=120, retries=1)
         if not isinstance(result, dict):
             return {}
         out_picks = result.get("picks")
         if isinstance(out_picks, list) and len(out_picks) == len(picks):
+            try:
+                _phase_cache.put(_PHASE_NS, "narrate", phase_input, result)
+            except Exception:
+                pass
             return result
         result["picks"] = []
+        try:
+            _phase_cache.put(_PHASE_NS, "narrate", phase_input, result)
+        except Exception:
+            pass
         return result
     except Exception as e:
         logger.warning("brief: narrative generation failed %r", e)
@@ -1392,18 +1456,37 @@ def _validate_all_picks(picks: list[dict], *, force: bool = False) -> None:
 # ── public entry point ──────────────────────────────────────────────
 
 
-def get_brief(force: bool = False, diversity: bool = False) -> dict:
+def get_brief(
+    force: bool = False,
+    diversity: bool = False,
+    job_key: str | None = None,
+) -> dict:
     """Generate the brief.
 
     `diversity` — when True, enforce sector cap on actionable picks
     (max 2 per sector). Default False: top-by-score, no sector consideration.
     Cache key includes the flag so on/off variants don't poison each other.
+
+    `job_key` — when set, emits `heartbeat(job_key, phase=..., progress_pct=...)`
+    between phases so the API stub can surface progress. None when called
+    synchronously (e.g. force=True from the user); heartbeat() then becomes a
+    no-op since there's no `running` row for the key.
     """
+    def _hb(phase: str, pct: int) -> None:
+        if job_key:
+            try:
+                heartbeat(job_key, phase=phase, progress_pct=pct)
+            except Exception:
+                # Never let a heartbeat write break the pipeline
+                pass
+
     cache_key = f"{_CACHE_KEY}:div={int(bool(diversity))}"
     if not force:
         cached = cache_get(cache_key)
         if cached:
             return cached
+
+    _hb("context", 5)
 
     # A — widened context: pulse 1M + 3M, disruption, geopolitical, breadth,
     # top movers, news, calendar, smart-money tape, congress tape — in parallel.
@@ -1411,6 +1494,8 @@ def get_brief(force: bool = False, diversity: bool = False) -> dict:
     pulse = ctx.get("pulse") or {}
     regime = pulse.get("regime") or "unclear"
     regime_explanation = pulse.get("regime_explanation") or ""
+
+    _hb("discovery", 20)
 
     # B — Claude lens-writer: reads the full widened context and writes ONE
     # search query plus a `convergence` list naming the anchor sectors.
@@ -1444,14 +1529,20 @@ def get_brief(force: bool = False, diversity: bool = False) -> dict:
         chapter_results = _search_all_chapters(chapters)
         candidates = _pool_candidates(chapter_results)
 
+    _hb("score", 40)
+
     # E — hydrate fundamentals
     funds = _hydrate_fundamentals([c["symbol"] for c in candidates])
 
     # F — classify (cache-only bubble peek here)
     scored = _classify_all(candidates, funds)
 
+    _hb("score", 55)
+
     # H — select: 6 actionable (3 stable + 3 promising, max 2/sector) + 3 hype watch
     actionable, hype_watch = _select_mix(scored, diversity_enabled=bool(diversity))
+
+    _hb("enrich", 65)
 
     # G — enrich finalists (deep-dive + macro fit + bubble fetch if needed).
     # Both the actionable and hype-watch picks get full enrichment so the UI
@@ -1467,6 +1558,8 @@ def get_brief(force: bool = False, diversity: bool = False) -> dict:
     # Run validation on BOTH actionable and hype watch — fresh news matters
     # for hype names too ("this hype just got vindicated" or "the air is out").
     _validate_all_picks(actionable + hype_watch, force=force)
+
+    _hb("narrate", 80)
 
     # I — narrate (now informed by web_validation per pick + the Claude lens).
     # Hype watch picks are passed through so Claude can write a brief
@@ -1552,4 +1645,5 @@ def get_brief(force: bool = False, diversity: bool = False) -> dict:
         cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
     except Exception:
         pass
+    _hb("done", 95)  # _finish_job_row will bump to 100 once the thread exits
     return payload

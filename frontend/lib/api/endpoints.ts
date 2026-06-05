@@ -546,6 +546,22 @@ export const briefApi = {
     }
     return (await res.json()) as Brief;
   },
+  // Cancel the in-flight job + wipe phase checkpoints. Next GET will start
+  // a fresh background generation and return a computing stub immediately.
+  restart: async (opts?: { diversity?: boolean }): Promise<{ restarted: boolean; phases_invalidated: number }> => {
+    const isBrowser = typeof window !== "undefined";
+    const isLocalDev = isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+    const params = new URLSearchParams();
+    if (opts?.diversity) params.set("diversity", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const url = isLocalDev ? `http://localhost:8000/brief/restart${qs}` : `/api/brief/restart${qs}`;
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as { restarted: boolean; phases_invalidated: number };
+  },
 };
 
 

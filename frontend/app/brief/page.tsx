@@ -16,7 +16,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen, RefreshCw, Loader2, Sparkles, ArrowUpRight, AlertTriangle,
-  TrendingUp, ShieldCheck, Compass, Wind, Tornado, CloudFog, Sun, Gauge,
+  TrendingUp, ShieldCheck, Compass, Wind, Tornado, CloudFog, Sun, Gauge, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { FreshnessPill } from "@/components/ui/freshness-pill";
@@ -686,6 +686,12 @@ export default function BriefPage() {
   });
 
   const isComputing = (data as { status?: string } | undefined)?.status === "computing";
+  // Progress fields from the durable background-jobs tracker. Only populated
+  // while status === "computing"; absent on the legacy stub and on the
+  // "ready" payload.
+  const currentPhase = (data as Brief | undefined)?.current_phase ?? null;
+  const progressPct  = (data as Brief | undefined)?.progress_pct ?? 0;
+  const elapsedS     = (data as Brief | undefined)?.elapsed_s ?? 0;
 
   const [forceRefreshing, setForceRefreshing] = useState(false);
   const forceRefresh = async () => {
@@ -695,6 +701,22 @@ export default function BriefPage() {
       qc.setQueryData(["brief", "v3", diversity ? "div" : "nodiv"], fresh);
     } finally {
       setForceRefreshing(false);
+    }
+  };
+
+  // Cancel-and-restart: wipes the in-flight job row + the per-phase
+  // checkpoints, then refetches so the API kicks a fresh background build
+  // and returns a new computing stub. Doesn't kill the Claude subprocess
+  // (Python threads can't be force-cancelled) — but the user immediately
+  // gets a fresh progress meter instead of being stuck on a hung phase.
+  const [restarting, setRestarting] = useState(false);
+  const cancelAndRestart = async () => {
+    setRestarting(true);
+    try {
+      await briefApi.restart({ diversity });
+      await qc.invalidateQueries({ queryKey: ["brief", "v4", diversity ? "div" : "nodiv"] });
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -754,16 +776,53 @@ export default function BriefPage() {
       {(isLoading || isComputing) && (!data || isComputing) && (
         <div className="space-y-6">
           {isComputing && (
-            <div className="card p-4 border-l-4 border-accent-blue/40 flex items-start gap-3">
-              <div className="w-2 h-2 mt-1.5 rounded-full bg-accent-blue animate-pulse shrink-0" />
-              <div>
-                <p className="text-[13px] text-text-primary font-semibold">
-                  Generating today's brief
-                </p>
-                <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
-                  Claude is composing the lens, hydrating picks, validating against the web, and writing the narrative.
-                  This typically takes 1-3 minutes on a cold cache — polling every 10s, will update automatically.
-                </p>
+            <div className="card p-4 border-l-4 border-accent-blue/40">
+              <div className="flex items-start gap-3">
+                <div className="w-2 h-2 mt-1.5 rounded-full bg-accent-blue animate-pulse shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[13px] text-text-primary font-semibold">
+                      Generating today's brief
+                      {currentPhase ? (
+                        <span className="ml-2 font-mono text-[10px] tracking-[0.18em] uppercase text-accent-blueSoft">
+                          · {currentPhase}
+                        </span>
+                      ) : null}
+                    </p>
+                    <button
+                      onClick={cancelAndRestart}
+                      disabled={restarting}
+                      title="Cancel the current generation, wipe phase checkpoints, and start fresh."
+                      className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium transition-colors",
+                        "bg-bg-card hover:bg-bg-card2 border border-bg-borderHi text-text-secondary hover:text-text-primary",
+                        "disabled:opacity-50 disabled:cursor-not-allowed shrink-0",
+                      )}
+                    >
+                      <X size={10} />
+                      {restarting ? "Restarting..." : "Cancel and restart"}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                    Claude is composing the lens, hydrating picks, validating against the web, and writing the narrative.
+                    This typically takes 1-3 minutes on a cold cache — polling every 10s, will update automatically.
+                  </p>
+                  {/* Progress bar — width driven by backend's progress_pct */}
+                  <div className="mt-3 h-1 bg-bg-card2 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-accent-blue transition-[width] duration-700 ease-out"
+                      style={{ width: `${Math.max(2, Math.min(100, progressPct ?? 0))}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] font-mono text-text-muted">
+                    <span>{progressPct != null ? `${progressPct}%` : "starting..."}</span>
+                    <span>
+                      {elapsedS != null && elapsedS > 0
+                        ? `${Math.floor(elapsedS / 60)}m ${elapsedS % 60}s elapsed`
+                        : ""}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           )}

@@ -573,6 +573,19 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_bg_jobs_heartbeat ON background_jobs(last_heartbeat);
+
+        -- ── Brief pipeline per-phase checkpoint cache ──────────────────────
+        -- Saves the output of each expensive phase (Claude lens/narrate calls,
+        -- multi-API enrichment) so a restart can skip already-completed work
+        -- and only re-run the phase that failed. Symbol-scoped via the key
+        -- prefix so /brief/{symbol}/restart can wipe just one ticker's
+        -- checkpoints. For the market-wide brief the namespace is "MARKET".
+        CREATE TABLE IF NOT EXISTS brief_phase_cache (
+            cache_key   TEXT PRIMARY KEY,
+            payload     TEXT NOT NULL,       -- JSON
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brief_phase_cache_created ON brief_phase_cache(created_at);
     """)
     conn.commit()
     conn.close()

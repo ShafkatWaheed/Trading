@@ -1978,6 +1978,16 @@ export type Brief = {
   hype_watch?: BriefPick[];
   closing: string;
   meta: BriefMeta;
+  /** "ready" | "computing" | undefined (legacy). Drives client polling. */
+  status?: string;
+  /** Progress fields populated by the background-jobs tracker — only present
+   *  while `status === "computing"`. */
+  current_phase?: string | null;
+  progress_pct?: number | null;
+  elapsed_s?: number | null;
+  started_at?: string | null;
+  job_status?: string | null;
+  job_error?: string | null;
 };
 
 
