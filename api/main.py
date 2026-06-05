@@ -64,6 +64,23 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("house_clerk scheduler failed: %r", e)
 
+    # Senate eFD PTR refresh — rolling 30-day window, nightly at 6:05 ET
+    # (offset 5 min from the House job so both chambers don't refresh at once).
+    try:
+        from api.services._scheduler import schedule_daily_at
+        from src.data.senate_efd import refresh_recent as _refresh_senate
+
+        def _refresh_senate_efd():
+            try:
+                _refresh_senate(days=30, max_docs=50)
+            except Exception:
+                pass
+
+        schedule_daily_at(6, 5, _refresh_senate_efd, name="senate_efd_refresh")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("senate_efd scheduler failed: %r", e)
+
 app.include_router(market.router)
 app.include_router(discover.router)
 app.include_router(stocks.router)

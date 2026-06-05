@@ -558,6 +558,42 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_hci_status ON house_clerk_index(status);
 
+        -- ── Senate eFD PTR ingest (sibling to house_clerk_*) ──
+        CREATE TABLE IF NOT EXISTS senate_efd_trades (
+            filing_uuid        TEXT NOT NULL,
+            txn_index          INTEGER NOT NULL,
+            politician_name    TEXT NOT NULL,
+            state              TEXT,
+            filing_date        TEXT,
+            ticker             TEXT NOT NULL,
+            asset_type         TEXT,
+            transaction_type   TEXT,            -- buy | sell | exchange
+            transaction_date   TEXT,
+            notification_date  TEXT,
+            amount_low         INTEGER,
+            amount_high        INTEGER,
+            raw_text           TEXT,
+            fetched_at         TEXT NOT NULL,
+            PRIMARY KEY (filing_uuid, txn_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sef_ticker     ON senate_efd_trades(ticker);
+        CREATE INDEX IF NOT EXISTS idx_sef_date       ON senate_efd_trades(transaction_date);
+        CREATE INDEX IF NOT EXISTS idx_sef_politician ON senate_efd_trades(politician_name);
+
+        CREATE TABLE IF NOT EXISTS senate_efd_index (
+            filing_uuid     TEXT PRIMARY KEY,
+            doc_kind        TEXT,              -- electronic | paper
+            filing_type     TEXT,             -- always 'P' (PTR)
+            politician_name TEXT,
+            state           TEXT,
+            filing_date     TEXT,
+            last_attempted  TEXT,
+            status          TEXT,             -- parsed | paper_unparsed | empty | http_error
+            error           TEXT,
+            fetched_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sefi_status ON senate_efd_index(status);
+
         -- ── Background-job tracker (durable replacement for in-memory _in_flight) ──
         -- Lets watchdogs reap stuck jobs whose heartbeat is stale, surfaces
         -- progress to the API stub, and survives uvicorn restarts.
