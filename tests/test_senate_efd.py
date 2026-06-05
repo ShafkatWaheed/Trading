@@ -263,3 +263,38 @@ def test_refresh_recent_idempotent_and_skips_paper(clean_senate_tables):
             AssertionError("should not refetch terminal filings")),
     )
     assert counts2["attempted"] == 0
+
+
+def _seed_trade(conn, uuid, idx, name, ticker, txn, date_iso):
+    now_iso = datetime.now(tz=timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO senate_efd_trades
+          (filing_uuid, txn_index, politician_name, state, filing_date,
+           ticker, asset_type, transaction_type, transaction_date,
+           notification_date, amount_low, amount_high, raw_text, fetched_at)
+        VALUES (?, ?, ?, '', ?, ?, 'Stock', ?, ?, ?, 1001, 15000, 'raw', ?)
+        """,
+        (uuid, idx, name, date_iso, ticker, txn, date_iso, date_iso, now_iso),
+    )
+
+
+def test_query_functions(clean_senate_tables):
+    today = datetime.now(tz=timezone.utc).date().isoformat()
+    conn = get_connection()
+    _seed_trade(conn, "U1", 0, "Mark Warner", "NVDA", "buy", today)
+    _seed_trade(conn, "U1", 1, "Mark Warner", "AAPL", "buy", today)
+    _seed_trade(conn, "U2", 0, "Jane Doe", "NVDA", "sell", today)
+    conn.commit()
+    conn.close()
+
+    by_sym = senate_efd.get_trades_by_symbol("NVDA", days=90)
+    assert len(by_sym) == 2
+    assert all(r["ticker"] == "NVDA" for r in by_sym)
+    assert senate_efd.get_trades_by_symbol("", days=90) == []
+
+    by_pol = senate_efd.get_trades_by_politician("Warner", days=90)
+    assert len(by_pol) == 2
+
+    top = senate_efd.get_top_traded_stocks(days=90, limit=10)
+    assert top[0] == {"symbol": "NVDA", "trade_count": 2}

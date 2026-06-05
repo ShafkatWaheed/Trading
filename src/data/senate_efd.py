@@ -392,3 +392,72 @@ def refresh_recent(*, days: int = 30, max_docs: int = 50,
     finally:
         if client is not None:
             client.close()
+
+
+def get_top_traded_stocks(days: int = 90, *, limit: int = 20) -> list[dict]:
+    """Top tickers by transaction count over the last `days`."""
+    init_db()
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT ticker, COUNT(*) AS trade_count
+            FROM senate_efd_trades
+            WHERE ticker != '' AND transaction_date >= ?
+            GROUP BY ticker ORDER BY trade_count DESC LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"symbol": r["ticker"], "trade_count": r["trade_count"]} for r in rows]
+
+
+def get_trades_by_symbol(symbol: str, days: int = 180) -> list[dict]:
+    """All Senate transactions for one ticker over the lookback window."""
+    if not symbol:
+        return []
+    init_db()
+    sym = symbol.upper().strip()
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT filing_uuid, politician_name, state, filing_date, ticker, asset_type,
+                   transaction_type, transaction_date, notification_date,
+                   amount_low, amount_high, raw_text
+            FROM senate_efd_trades
+            WHERE ticker = ? AND transaction_date >= ?
+            ORDER BY transaction_date DESC
+            """,
+            (sym, cutoff),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_trades_by_politician(name: str, days: int = 180) -> list[dict]:
+    """All Senate transactions for one politician over the lookback window."""
+    if not name:
+        return []
+    init_db()
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT filing_uuid, politician_name, state, filing_date, ticker, asset_type,
+                   transaction_type, transaction_date, notification_date,
+                   amount_low, amount_high, raw_text
+            FROM senate_efd_trades
+            WHERE politician_name LIKE ? AND transaction_date >= ?
+            ORDER BY transaction_date DESC
+            """,
+            (f"%{name.strip()}%", cutoff),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
