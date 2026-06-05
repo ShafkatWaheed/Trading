@@ -43,14 +43,32 @@ _HEADERS = {
 }
 
 
-# Transaction line shape (verified against PTR PDFs):
-#   ... (TICKER) [ASSET_TYPE] S/P/E (partial|full)? MM/DD/YYYY MM/DD/YYYY $low - $high
-_TXN_RE = re.compile(
-    r"\(([A-Z][A-Z0-9.\-/]{0,9})\)\s*\[(\w{1,4})\]\s*([SPE])(?:\s*\(partial\)|\s*\(full\))?\s+"
+# PTR PDFs are laid out as a table that pdfplumber flattens into text with
+# unpredictable wrapping. After whitespace-collapse we see shapes like:
+#   "(AAPL) S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 [ST]"        (canonical)
+#   "Asset wraps S 01/14/2026 02/04/2026 $50,001 - more text (AWK) [ST] $100,000"  (high wraps)
+#   "(BRK.B) S 03/16/2026 03/16/2026 $1,001 - $15,000 ... wrap ... [ST]"    (type after amount)
+# Strategy: ANCHOR on (code, date, date, $low, ..., $high) which is the
+# load-bearing tuple; then find the nearest (TICKER) and [TYPE] in the
+# surrounding window. Treasuries / bonds use CUSIPs (digit-leading) which
+# the ticker regex rejects -- desirable, we only want equity-like tickers.
+_TXN_ANCHOR_RE = re.compile(
+    r"\b([SPE])(?:\s*\((?:partial|full)\))?\s+"
     r"(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+"
-    r"\$([\d,]+)\s*[-–]\s*\$([\d,]+)",
-    re.IGNORECASE,
+    r"\$([\d,]+)\s*[-–]\s*"
+    r"(?:.{0,200}?)?\$([\d,]+)",
+    re.IGNORECASE | re.DOTALL,
 )
+_TICKER_RE = re.compile(r"\(([A-Z][A-Z0-9.\-/]{0,9})\)")
+_TYPE_RE = re.compile(r"\[(\w{1,4})\]")
+
+# House Clerk asset-type codes (https://fd.house.gov/reference/asset-type-codes.aspx).
+# We keep only codes that imply a tradeable security; CUSIP-only items (GS =
+# government bond, etc.) still parse but the ticker filter drops them.
+_ASSET_TYPES = {
+    "ST", "OP", "ET", "MF", "BD", "CT", "HE", "RS", "OL", "PE", "OI",
+    "CS", "PS", "OT", "FE", "CA", "GS", "RP",
+}
 
 
 def _norm_date(mdY: str) -> str:
@@ -127,6 +145,12 @@ def parse_ptr_pdf(content: bytes) -> list[dict]:
 
     Returns list of dicts with raw fields. Normalization happens at insert.
     Returns empty list on PDF read failure (scanned/non-text/corrupt).
+
+    Approach: collapse all whitespace, then scan for date-bracketed
+    transaction anchors. For each anchor, look in the surrounding text for
+    the closest (TICKER) and [TYPE] tokens. CUSIPs and other non-equity
+    identifiers naturally fall out because the ticker regex requires an
+    uppercase-letter lead.
     """
     out: list[dict] = []
     try:
@@ -134,20 +158,52 @@ def parse_ptr_pdf(content: bytes) -> list[dict]:
             full_text = ""
             for p in pdf.pages:
                 full_text += "\n" + (p.extract_text() or "")
-        # Collapse whitespace to handle multi-line splits (ticker on one line,
-        # amount on the next).
         collapsed = re.sub(r"\s+", " ", full_text)
-        for m in _TXN_RE.finditer(collapsed):
-            ticker, asset_type, code, t_date, n_date, lo, hi = m.groups()
+
+        anchors = list(_TXN_ANCHOR_RE.finditer(collapsed))
+        for i, m in enumerate(anchors):
+            code, t_date, n_date, lo, hi = m.groups()
+            prev_end = anchors[i - 1].end() if i > 0 else 0
+            next_start = anchors[i + 1].start() if i + 1 < len(anchors) else len(collapsed)
+            # Window: everything between the previous anchor's end and this
+            # anchor's start (the asset name + ticker usually sit there), plus
+            # a small forward slice (to catch trailing [TYPE] and any wrap).
+            pre = collapsed[prev_end:m.start()]
+            post = collapsed[m.start():min(next_start, m.end() + 200)]
+
+            # Pick the ticker closest to the anchor: prefer the LAST one in
+            # the pre-window, else the first in the post-window.
+            ticker = None
+            pre_tickers = list(_TICKER_RE.finditer(pre))
+            if pre_tickers:
+                ticker = pre_tickers[-1].group(1)
+            else:
+                pt = _TICKER_RE.search(post)
+                if pt:
+                    ticker = pt.group(1)
+            if not ticker:
+                continue
+
+            # Pick the asset type from the same logical record (post first).
+            asset_type = None
+            for window in (post, pre):
+                for t in _TYPE_RE.finditer(window):
+                    cand = t.group(1).upper()
+                    if cand in _ASSET_TYPES:
+                        asset_type = cand
+                        break
+                if asset_type:
+                    break
+
             out.append({
                 "ticker": ticker.upper(),
-                "asset_type": asset_type.upper(),
+                "asset_type": asset_type or "",
                 "transaction_code": code.upper(),
                 "transaction_date_raw": t_date,
                 "notification_date_raw": n_date,
                 "amount_low": _parse_amount(lo),
                 "amount_high": _parse_amount(hi),
-                "raw_text": m.group(0)[:500],
+                "raw_text": collapsed[max(0, m.start() - 80):min(len(collapsed), m.end() + 80)][:500],
             })
     except Exception:
         # PDF may be scanned/non-text -- yield nothing, caller logs.
