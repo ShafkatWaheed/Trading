@@ -62,6 +62,13 @@ def test_symbol_unions_house_and_senate(seeded_both):
     assert senate.state == "VA"
     assert senate.transaction_type == "sell"
 
+    # Second call hits the congress cache; chamber + state must survive
+    # the _trade_to_dict / _dict_to_trade round-trip.
+    cached = CongressDataProvider().get_trades_by_symbol("NVDA", days=90)
+    assert {t.chamber for t in cached} == {"House", "Senate"}
+    cached_senate = next(t for t in cached if t.chamber == "Senate")
+    assert cached_senate.state == "VA"
+
 
 def test_top_traded_merges_counts(seeded_both):
     top = CongressDataProvider().get_top_traded_stocks(days=90)

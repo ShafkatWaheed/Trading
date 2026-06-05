@@ -29,7 +29,7 @@ from src.utils.db import cache_get, cache_set, log_api_call
 
 
 class CongressDataProvider:
-    """Fetch congressional stock trading disclosures (House Clerk PTR-backed)."""
+    """Fetch congressional stock trading disclosures (House Clerk + Senate eFD backed)."""
 
     # ── Public API (unchanged shape) ──────────────────────────────────
 
@@ -84,7 +84,7 @@ class CongressDataProvider:
         log_api_call("congress", "top_traded", "success")
         return result
 
-    # ── House Clerk adapters ──────────────────────────────────────────
+    # ── House Clerk + Senate eFD adapters ────────────────────────────
 
     def _fetch_trades_by_symbol(self, symbol: str, days: int) -> list[CongressTrade]:
         house = [self._row_to_trade(r, "House")
@@ -135,7 +135,7 @@ class CongressDataProvider:
 
         return CongressTrade(
             politician=(r.get("politician_name") or "Unknown").strip() or "Unknown",
-            party="Unknown",  # not in House Clerk feed
+            party="Unknown",  # not in either disclosure feed
             chamber=chamber,
             state=state,
             symbol=(r.get("ticker") or "").upper(),
