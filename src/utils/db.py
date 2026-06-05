@@ -557,6 +557,22 @@ def init_db() -> None:
             fetched_at      TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_hci_status ON house_clerk_index(status);
+
+        -- ── Background-job tracker (durable replacement for in-memory _in_flight) ──
+        -- Lets watchdogs reap stuck jobs whose heartbeat is stale, surfaces
+        -- progress to the API stub, and survives uvicorn restarts.
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            key             TEXT PRIMARY KEY,
+            status          TEXT NOT NULL,        -- 'running' | 'done' | 'failed'
+            started_at      TEXT NOT NULL,
+            last_heartbeat  TEXT NOT NULL,
+            current_phase   TEXT,                  -- 'lens' | 'discovery' | 'enrich' | 'narrate' | etc.
+            progress_pct    INTEGER,               -- 0–100
+            error           TEXT,
+            finished_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_bg_jobs_heartbeat ON background_jobs(last_heartbeat);
     """)
     conn.commit()
     conn.close()
