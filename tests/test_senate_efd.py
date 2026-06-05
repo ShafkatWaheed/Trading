@@ -44,3 +44,55 @@ def test_norm_date_and_amounts():
 
 def test_parse_amount_range_handles_endash():
     assert senate_efd._parse_amount_range("$1,001 – $15,000") == (1001, 15000)
+
+
+# Captured shape of an electronic PTR transactions table (sanitized).
+_PTR_HTML = """
+<html><body>
+<table class="table table-striped">
+  <thead><tr>
+    <th>#</th><th>Transaction Date</th><th>Owner</th><th>Ticker</th>
+    <th>Asset Name</th><th>Asset Type</th><th>Type</th>
+    <th>Amount</th><th>Comment</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td>1</td><td>03/16/2026</td><td>Self</td>
+      <td><a href="/search/...">AAPL</a></td>
+      <td>Apple Inc.</td><td>Stock</td><td>Purchase</td>
+      <td>$1,001 - $15,000</td><td>--</td>
+    </tr>
+    <tr>
+      <td>2</td><td>03/17/2026</td><td>Spouse</td>
+      <td>NVDA</td>
+      <td>NVIDIA Corp</td><td>Stock</td><td>Sale (Full)</td>
+      <td>$15,001 - $50,000</td><td>--</td>
+    </tr>
+    <tr>
+      <td>3</td><td>03/18/2026</td><td>Self</td>
+      <td>--</td>
+      <td>US Treasury Bond</td><td>Corporate Bond</td><td>Purchase</td>
+      <td>$1,001 - $15,000</td><td>--</td>
+    </tr>
+  </tbody>
+</table>
+</body></html>
+"""
+
+
+def test_parse_ptr_html_extracts_tickered_rows():
+    out = senate_efd.parse_ptr_html(_PTR_HTML)
+    # The tickerless treasury row (ticker '--') is dropped.
+    assert len(out) == 2
+    by_t = {r["ticker"]: r for r in out}
+    assert by_t["AAPL"]["transaction_code"] == "Purchase"
+    assert by_t["AAPL"]["asset_type"] == "Stock"
+    assert by_t["AAPL"]["transaction_date_raw"] == "03/16/2026"
+    assert by_t["AAPL"]["amount_low"] == 1001
+    assert by_t["AAPL"]["amount_high"] == 15000
+    assert by_t["NVDA"]["transaction_code"] == "Sale (Full)"
+    assert by_t["NVDA"]["amount_high"] == 50000
+
+
+def test_parse_ptr_html_empty_when_no_table():
+    assert senate_efd.parse_ptr_html("<html><body>No table</body></html>") == []

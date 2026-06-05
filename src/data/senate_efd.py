@@ -71,3 +71,47 @@ def _parse_amount_range(s: str) -> tuple[int, int]:
     lo = int(m.group(1).replace(",", ""))
     hi = int(m.group(2).replace(",", ""))
     return (lo, hi)
+
+
+def _cell_text(td) -> str:
+    return td.get_text(" ", strip=True)
+
+
+def parse_ptr_html(html: str) -> list[dict]:
+    """Parse one electronic PTR view's transactions table into raw dicts.
+
+    Column order: #, Transaction Date, Owner, Ticker, Asset Name, Asset Type,
+    Type, Amount, Comment. Rows without a real ticker (e.g. '--', bonds) are
+    dropped -- we never guess a symbol. Returns [] when no table / on any
+    parse error.
+    """
+    out: list[dict] = []
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table")
+        if table is None:
+            return []
+        body = table.find("tbody") or table
+        for tr in body.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 8:
+                continue
+            ticker = _cell_text(tds[3]).upper().strip()
+            if not _TICKER_RE.match(ticker):
+                continue  # '--', CUSIPs, blanks -> dropped
+            txn_date = _cell_text(tds[1])
+            asset_type = _cell_text(tds[5])
+            txn_type = _cell_text(tds[6])
+            lo, hi = _parse_amount_range(_cell_text(tds[7]))
+            out.append({
+                "ticker": ticker,
+                "asset_type": asset_type,
+                "transaction_code": txn_type,
+                "transaction_date_raw": txn_date,
+                "amount_low": lo,
+                "amount_high": hi,
+                "raw_text": tr.get_text(" ", strip=True)[:500],
+            })
+    except Exception:
+        return []
+    return out
