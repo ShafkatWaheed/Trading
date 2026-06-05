@@ -664,6 +664,15 @@ function AskResult({ result }: { result: ContextSearchResponse }) {
 
 // ── page ─────────────────────────────────────────────────────────────
 
+// Cache-buster version — bump when the brief response shape changes so old
+// cached payloads in users' browsers get ignored. Defined once and shared
+// across the read query and the regenerate/restart writes so they can't
+// drift apart (a stale write to a different version would silently make
+// "Regenerate" appear broken).
+const BRIEF_QUERY_VERSION = "v4";
+const briefQueryKey = (diversity: boolean) =>
+  ["brief", BRIEF_QUERY_VERSION, diversity ? "div" : "nodiv"] as const;
+
 export default function BriefPage() {
   const qc = useQueryClient();
   // Sector-diversity toggle — when ON, the picker caps actionable picks at
@@ -671,11 +680,8 @@ export default function BriefPage() {
   // sector cap. The queryKey + cache key both include the flag so the on/off
   // variants don't poison each other.
   const [diversity, setDiversity] = useState(false);
-  // queryKey bumped to "v4" — server now returns status: "computing" on cold
-  // cache and we auto-poll until it's "ready". Older client caches without
-  // the status field should miss + re-fetch the new shape.
   const { data, isLoading, error, isFetching } = useQuery<Brief>({
-    queryKey: ["brief", "v4", diversity ? "div" : "nodiv"],
+    queryKey: briefQueryKey(diversity),
     queryFn: () => briefApi.get({ diversity }),
     staleTime: 30 * 60 * 1000,
     // Auto-poll every 10s while the backend is still generating. The route
@@ -698,10 +704,7 @@ export default function BriefPage() {
     setForceRefreshing(true);
     try {
       const fresh = await briefApi.get({ force: true, diversity });
-      // Write to the SAME query key the page reads from. (Previously this
-      // wrote to "v3" while useQuery reads "v4", so the fresh data landed
-      // in a slot nothing renders and the page appeared not to refresh.)
-      qc.setQueryData(["brief", "v4", diversity ? "div" : "nodiv"], fresh);
+      qc.setQueryData(briefQueryKey(diversity), fresh);
     } finally {
       setForceRefreshing(false);
     }
@@ -717,7 +720,7 @@ export default function BriefPage() {
     setRestarting(true);
     try {
       await briefApi.restart({ diversity });
-      await qc.invalidateQueries({ queryKey: ["brief", "v4", diversity ? "div" : "nodiv"] });
+      await qc.invalidateQueries({ queryKey: briefQueryKey(diversity) });
     } finally {
       setRestarting(false);
     }
