@@ -47,6 +47,23 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("scheduler startup failed: %r", e)
 
+    # House Clerk PTR refresh — pulls the latest 50 unparsed disclosures
+    # nightly at 6:00 ET so /flows + congress_signal serve fresh data.
+    try:
+        from api.services._scheduler import schedule_daily_at
+        from src.data.house_clerk import refresh_recent
+
+        def _refresh_house_clerk():
+            try:
+                refresh_recent(max_docs=50)
+            except Exception:
+                pass
+
+        schedule_daily_at(6, 0, _refresh_house_clerk, name="house_clerk_refresh")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("house_clerk scheduler failed: %r", e)
+
 app.include_router(market.router)
 app.include_router(discover.router)
 app.include_router(stocks.router)
