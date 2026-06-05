@@ -698,7 +698,10 @@ export default function BriefPage() {
     setForceRefreshing(true);
     try {
       const fresh = await briefApi.get({ force: true, diversity });
-      qc.setQueryData(["brief", "v3", diversity ? "div" : "nodiv"], fresh);
+      // Write to the SAME query key the page reads from. (Previously this
+      // wrote to "v3" while useQuery reads "v4", so the fresh data landed
+      // in a slot nothing renders and the page appeared not to refresh.)
+      qc.setQueryData(["brief", "v4", diversity ? "div" : "nodiv"], fresh);
     } finally {
       setForceRefreshing(false);
     }
