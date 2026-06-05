@@ -226,7 +226,11 @@ def get_geopolitical_events() -> dict:
         "data_available": any_upstream_ok,
     }
     try:
-        ttl = 60 if any_upstream_ok else 5
+        # Short TTL when the result is empty (even if upstream "succeeded"
+        # with zero hits) — otherwise an unlucky empty cycle camps the
+        # "All Clear" verdict for a full hour. Long TTL only when we
+        # genuinely have content to show.
+        ttl = 60 if (any_upstream_ok and events) else 5
         cache_set("geo_events_v1", payload, ttl_minutes=ttl)
     except Exception:
         pass
