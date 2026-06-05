@@ -233,3 +233,33 @@ def test_store_empty_marked(clean_senate_tables):
     ).fetchone()["status"]
     conn.close()
     assert status == "empty"
+
+
+def test_refresh_recent_idempotent_and_skips_paper(clean_senate_tables):
+    page = _make_data_page([
+        ["Mark", "Warner", "Warner (Senator)",
+         '<a href="/search/view/ptr/aaa-111/">PTR</a>', "03/31/2026"],
+        ["Jane", "Doe", "Doe (Senator)",
+         '<a href="/search/view/paper/bbb-222/">PTR</a>', "03/30/2026"],
+    ])
+
+    def fake_search(start, length, sd, ed):
+        return page if start == 0 else _make_data_page([])
+
+    counts = senate_efd.refresh_recent(
+        days=30, max_docs=50,
+        search_fn=fake_search,
+        http_get=lambda url: _FakeResp(_PTR_HTML),
+    )
+    assert counts["found"] == 2
+    assert counts["parsed"] == 1
+    assert counts["paper"] == 1
+
+    # Second run: both filings terminal -> nothing re-attempted.
+    counts2 = senate_efd.refresh_recent(
+        days=30, max_docs=50,
+        search_fn=fake_search,
+        http_get=lambda url: (_ for _ in ()).throw(
+            AssertionError("should not refetch terminal filings")),
+    )
+    assert counts2["attempted"] == 0

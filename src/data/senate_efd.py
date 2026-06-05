@@ -327,3 +327,68 @@ def _fetch_and_store_one(meta: dict, *, http_get=None) -> int:
         return len(txns)
     finally:
         conn.close()
+
+
+def refresh_recent(*, days: int = 30, max_docs: int = 50,
+                   search_fn=None, http_get=None) -> dict:
+    """Refresh recent Senate PTRs in a rolling `days` window.
+
+    Lists filings, skips any already in a terminal state ('parsed' or
+    'paper_unparsed'), and processes up to `max_docs` new ones. Both fetchers
+    are dependency-injected for tests; defaults establish one shared session.
+    Returns {found, attempted, parsed, errored, empty, paper}.
+    """
+    init_db()
+
+    client = None
+    _search = search_fn
+    _get = http_get
+    if _search is None or _get is None:
+        client = _establish_session()
+        if client is None:
+            return {"found": 0, "attempted": 0, "parsed": 0,
+                    "errored": 0, "empty": 0, "paper": 0}
+        if _search is None:
+            _search = lambda s, l, sd, ed: _search_page(client, s, l, sd, ed)
+        if _get is None:
+            _get = lambda url: client.get(url)
+
+    try:
+        index = fetch_index(days=days, max_docs=max_docs, search_fn=_search)
+        if not index:
+            return {"found": 0, "attempted": 0, "parsed": 0,
+                    "errored": 0, "empty": 0, "paper": 0}
+
+        conn = get_connection()
+        terminal = {r[0] for r in conn.execute(
+            "SELECT filing_uuid FROM senate_efd_index "
+            "WHERE status IN ('parsed', 'paper_unparsed')"
+        )}
+        conn.close()
+
+        todo = [m for m in index if m["filing_uuid"] not in terminal][:max_docs]
+        counts = {"found": len(index), "attempted": len(todo),
+                  "parsed": 0, "errored": 0, "empty": 0, "paper": 0}
+
+        for meta in todo:
+            if meta["doc_kind"] == "paper":
+                _fetch_and_store_one(meta, http_get=_get)
+                counts["paper"] += 1
+                continue
+            n = _fetch_and_store_one(meta, http_get=_get)
+            if n > 0:
+                counts["parsed"] += 1
+            else:
+                conn = get_connection()
+                row = conn.execute(
+                    "SELECT status FROM senate_efd_index WHERE filing_uuid=?",
+                    (meta["filing_uuid"],)).fetchone()
+                conn.close()
+                if row and row["status"] == "empty":
+                    counts["empty"] += 1
+                else:
+                    counts["errored"] += 1
+        return counts
+    finally:
+        if client is not None:
+            client.close()
