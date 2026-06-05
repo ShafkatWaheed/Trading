@@ -15,9 +15,9 @@ once filed, so old entries are forever-cached.
 Per CLAUDE.md: data layer. May call external APIs, read/write trading.db.
 Returns empty lists on error -- no fake fallbacks.
 
-Note: House-only. The Senate side (efdsearch.senate.gov) is not covered
-here -- they publish a separate disclosure feed that would need its own
-ingester. Senate-only signal is therefore empty for now.
+Note: House-only. The Senate side lives in `src.data.senate_efd` (efd
+search portal); the `congress` adapter unions both. This module stays
+House-only by design.
 """
 from __future__ import annotations
 
