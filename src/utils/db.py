@@ -567,7 +567,7 @@ def init_db() -> None:
             filing_date        TEXT,
             ticker             TEXT NOT NULL,
             asset_type         TEXT,
-            transaction_type   TEXT,
+            transaction_type   TEXT,            -- buy | sell | exchange
             transaction_date   TEXT,
             notification_date  TEXT,
             amount_low         INTEGER,
@@ -582,13 +582,13 @@ def init_db() -> None:
 
         CREATE TABLE IF NOT EXISTS senate_efd_index (
             filing_uuid     TEXT PRIMARY KEY,
-            doc_kind        TEXT,
-            filing_type     TEXT,
+            doc_kind        TEXT,              -- electronic | paper
+            filing_type     TEXT,             -- always 'P' (PTR)
             politician_name TEXT,
             state           TEXT,
             filing_date     TEXT,
             last_attempted  TEXT,
-            status          TEXT,
+            status          TEXT,             -- parsed | paper_unparsed | empty | http_error
             error           TEXT,
             fetched_at      TEXT
         );

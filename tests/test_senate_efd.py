@@ -40,3 +40,7 @@ def test_norm_date_and_amounts():
     assert senate_efd._norm_date("garbage") == "garbage"
     assert senate_efd._parse_amount_range("$1,001 - $15,000") == (1001, 15000)
     assert senate_efd._parse_amount_range("no dollars here") == (0, 0)
+
+
+def test_parse_amount_range_handles_endash():
+    assert senate_efd._parse_amount_range("$1,001 – $15,000") == (1001, 15000)

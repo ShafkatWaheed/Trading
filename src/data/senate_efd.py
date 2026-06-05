@@ -39,8 +39,8 @@ _HEADERS = {
 }
 
 _LINK_RE = re.compile(r"/search/view/(ptr|paper)/([0-9a-fA-F\-]+)/?")
-_AMOUNT_RE = re.compile(r"\$([\d,]+)\s*-\s*\$([\d,]+)")
-_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+_AMOUNT_RE = re.compile(r"\$([\d,]+)\s*[-–]\s*\$([\d,]+)")
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9./\-]{0,9}$")
 
 
 def _norm_date(mdY: str) -> str:
