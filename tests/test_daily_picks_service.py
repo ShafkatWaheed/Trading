@@ -40,6 +40,12 @@ def _patch_common(monkeypatch):
                                              "contrarians": []})
     monkeypatch.setattr(ops, "enrich_symbols", lambda syms, **kw: {})
 
+    class _FakeGateway:
+        def get_fundamentals(self, s): return None
+        def get_options_summary(self, s): return None
+
+    monkeypatch.setattr(dps, "_make_gateway", lambda: _FakeGateway())
+
 
 def test_get_daily_picks_runs_all_agents(monkeypatch):
     """Service runs all 8 agents over real candidates and returns consensus."""

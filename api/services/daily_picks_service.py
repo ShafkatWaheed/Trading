@@ -27,6 +27,12 @@ _MAX_PARALLEL = 8
 _PICKS_PER_AGENT = 5
 
 
+def _make_gateway():
+    """Module-level factory — monkeypatch this in tests to avoid network calls."""
+    from src.data.gateway import DataGateway
+    return DataGateway()
+
+
 def _market_ctx() -> dict:
     """Lightweight market snapshot — VIX, SPY, yields. Reuse what brief_service uses."""
     try:
@@ -36,13 +42,12 @@ def _market_ctx() -> dict:
         return {}
 
 
-def _run_one_agent(agent_key: str, ctx: dict, opportunities: list[dict]) -> dict:
+def _run_one_agent(agent_key: str, ctx: dict, opportunities: list[dict], gateway) -> dict:
     """Discover this agent's picks from real data. Returns the agent_results shape."""
     p = AGENT_PERSONALITIES[agent_key]
     try:
-        from src.data.gateway import DataGateway
         raw = daily_picks_agents.discover_for_agent(
-            agent_key, opportunities=opportunities, gateway=DataGateway())
+            agent_key, opportunities=opportunities, gateway=gateway)
         picks = [{"symbol": r["symbol"], "rationale": "",
                   "conviction": r.get("conviction", ""), "evidence": r.get("evidence", {})}
                  for r in raw]
@@ -70,11 +75,11 @@ def get_daily_picks(*, force: bool = False) -> dict:
     ctx = _market_ctx()
     from api.services import discover_service
     opportunities = (discover_service.get_opportunities(limit=60, period="1M") or {}).get("opportunities", [])
-
+    gateway = _make_gateway()
     agents = list(AGENT_PERSONALITIES.keys())
     agent_results: list[dict] = []
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL) as pool:
-        futures = {pool.submit(_run_one_agent, k, ctx, opportunities): k for k in agents}
+        futures = {pool.submit(_run_one_agent, k, ctx, opportunities, gateway): k for k in agents}
         for f in as_completed(futures):
             agent_results.append(f.result())
     order = {k: i for i, k in enumerate(agents)}

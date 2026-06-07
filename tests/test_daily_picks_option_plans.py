@@ -6,6 +6,11 @@ from __future__ import annotations
 import api.services.daily_picks_service as dps
 
 
+class _FakeGateway:
+    def get_fundamentals(self, s): return None
+    def get_options_summary(self, s): return None
+
+
 def test_payload_includes_option_plans(monkeypatch):
     # Stub the 8-agent run with two agents picking overlapping symbols.
     fake_agents = [
@@ -17,9 +22,10 @@ def test_payload_includes_option_plans(monkeypatch):
          "picks": [{"symbol": "AAA", "rationale": "z", "conviction": "high"}],
          "error": None},
     ]
-    # _run_one_agent now takes (agent_key, ctx, opportunities) — 3 args
+    # _run_one_agent now takes (agent_key, ctx, opportunities, gateway) — 4 args
     monkeypatch.setattr(dps, "_run_one_agent",
-                        lambda k, ctx, opps: fake_agents[0] if k == "a1" else fake_agents[1])
+                        lambda k, ctx, opps, gw: fake_agents[0] if k == "a1" else fake_agents[1])
+    monkeypatch.setattr(dps, "_make_gateway", lambda: _FakeGateway())
     monkeypatch.setattr(dps, "AGENT_PERSONALITIES", {"a1": {"name": "A1"},
                                                      "a2": {"name": "A2"}})
     monkeypatch.setattr(dps, "_market_ctx", lambda: {})

@@ -5,6 +5,11 @@ import api.services.daily_picks_service as dps
 from src.utils.db import get_connection, init_db
 
 
+class _FakeGateway:
+    def get_fundamentals(self, s): return None
+    def get_options_summary(self, s): return None
+
+
 def _fake_opps():
     return {"opportunities": [
         {"symbol": "AAA", "strategy": "Momentum", "score": 88,
@@ -25,6 +30,7 @@ def test_grounded_picks_non_empty(monkeypatch):
     import api.services.discover_service as disc
     monkeypatch.setattr(disc, "get_opportunities", lambda **kw: _fake_opps())
     monkeypatch.setattr(dps, "_market_ctx", lambda: {})
+    monkeypatch.setattr(dps, "_make_gateway", lambda: _FakeGateway())
     import api.services.daily_picks_synthesis as syn
     monkeypatch.setattr(syn, "synthesize",
                         lambda agents, ctx: {"consensus": [{"symbol": "AAA", "agent_count": 1,
@@ -43,6 +49,7 @@ def test_empty_run_not_cached(monkeypatch):
     import api.services.discover_service as disc
     monkeypatch.setattr(disc, "get_opportunities", lambda **kw: {"opportunities": []})
     monkeypatch.setattr(dps, "_market_ctx", lambda: {})
+    monkeypatch.setattr(dps, "_make_gateway", lambda: _FakeGateway())
     import api.services.daily_picks_synthesis as syn
     monkeypatch.setattr(syn, "synthesize", lambda agents, ctx: {"consensus": [], "contrarians": []})
     import api.services.option_picks_service as ops
