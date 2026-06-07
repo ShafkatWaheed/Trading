@@ -1,96 +1,90 @@
-"""Tests for daily_picks_service orchestrator."""
+"""Tests for daily_picks_service orchestrator (grounded discovery + synthesis)."""
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+import api.services.daily_picks_service as dps
+from src.utils.db import get_connection, init_db
 
-import pytest
+
+def _opps():
+    # Cards spanning several strategies so multiple lenses find a candidate.
+    return {"opportunities": [
+        {"symbol": "AAA", "strategy": "Momentum", "score": 88,
+         "secondary_strategies": [], "sub_scores": {}, "sector": "Tech", "price": 100},
+        {"symbol": "BBB", "strategy": "Insider Accumulation", "score": 80,
+         "secondary_strategies": [], "sub_scores": {}, "sector": "Tech", "price": 50},
+        {"symbol": "CCC", "strategy": "Oversold Bounce", "score": 60,
+         "secondary_strategies": [], "sub_scores": {}, "sector": "Health", "price": 30},
+        {"symbol": "DDD", "strategy": "Sector Leader", "score": 70,
+         "secondary_strategies": [], "sub_scores": {}, "sector": "Energy", "price": 20},
+        {"symbol": "EEE", "strategy": "Congress Buying", "score": 65,
+         "secondary_strategies": [], "sub_scores": {}, "sector": "Defense", "price": 40},
+    ]}
 
 
-def test_get_daily_picks_aggregates_all_agents(monkeypatch):
-    """Service runs all 8 agents, returns their picks + consensus."""
-    from api.services import daily_picks_service
-
-    # Fake Claude responses — each agent returns 5 picks
-    call_count = {"n": 0}
-
-    def fake_ask(prompt, **kw):
-        call_count["n"] += 1
-        # Different picks per call so we get variety
-        i = call_count["n"]
-        return {"picks": [
-            {"symbol": f"STK{i}A", "rationale": "...", "conviction": "high"},
-            {"symbol": f"STK{i}B", "rationale": "...", "conviction": "med"},
-            {"symbol": "NVDA", "rationale": "consensus", "conviction": "high"},  # consensus
-            {"symbol": f"STK{i}C", "rationale": "...", "conviction": "low"},
-            {"symbol": f"STK{i}D", "rationale": "...", "conviction": "med"},
-        ]}
-
-    monkeypatch.setattr(daily_picks_service, "ask_claude_json", fake_ask)
-    monkeypatch.setattr(daily_picks_service, "_market_ctx", lambda: {"vix": 15, "spy_3m_pct": 5})
-
-    # Bypass cache (and ensure the cache table exists in the temp DB)
-    from src.utils.db import cache_delete, init_db
+def _clear_cache():
     init_db()
-    cache_delete(f"daily_picks:v1:{daily_picks_service.date.today().isoformat()}")
+    c = get_connection()
+    c.execute("DELETE FROM cache WHERE key LIKE 'daily_picks:%'")
+    c.commit(); c.close()
 
-    out = daily_picks_service.get_daily_picks(force=True)
+
+def _patch_common(monkeypatch):
+    import api.services.discover_service as disc
+    import api.services.daily_picks_synthesis as syn
+    import api.services.option_picks_service as ops
+    monkeypatch.setattr(disc, "get_opportunities", lambda **kw: _opps())
+    monkeypatch.setattr(dps, "_market_ctx", lambda: {"vix": 15})
+    monkeypatch.setattr(syn, "synthesize",
+                        lambda agents, ctx: {"consensus": [{"symbol": "AAA", "agent_count": 1,
+                                                            "agents": ["momentum"], "rationale": "r"}],
+                                             "contrarians": []})
+    monkeypatch.setattr(ops, "enrich_symbols", lambda syms, **kw: {})
+
+
+def test_get_daily_picks_runs_all_agents(monkeypatch):
+    """Service runs all 8 agents over real candidates and returns consensus."""
+    _clear_cache()
+    _patch_common(monkeypatch)
+    out = dps.get_daily_picks(force=True)
     assert len(out["agents"]) == 8
-    # Each agent should have 5 picks
-    assert all(len(a["picks"]) == 5 for a in out["agents"])
-    # NVDA is in all 8 agents' picks → top consensus
-    # Skip the consensus assertion if the consensus module isn't built yet.
-    try:
-        from src.analysis.daily_picks_consensus import compute_consensus_and_contrarian  # noqa: F401
-        assert any(c["symbol"] == "NVDA" for c in out["consensus"])
-    except ImportError:
-        pytest.skip("consensus module not yet deployed; skipping consensus assertion")
-    assert out["as_of_date"]
-    assert "generated_at" in out
+    assert any(a["picks"] for a in out["agents"])      # at least some lenses matched
+    assert out["consensus"][0]["symbol"] == "AAA"
+    assert out["as_of_date"] and "generated_at" in out
 
 
-def test_get_daily_picks_handles_agent_failures(monkeypatch):
-    """If one agent's Claude call fails, others still produce picks."""
-    from api.services import daily_picks_service
+def test_get_daily_picks_isolates_agent_failure(monkeypatch):
+    """If one agent's discovery raises, others still produce; that agent records an error."""
+    _clear_cache()
+    _patch_common(monkeypatch)
+    import api.services.daily_picks_agents as dpa
+    real = dpa.discover_for_agent
 
-    call_count = {"n": 0}
+    def flaky(agent_key, **kw):
+        if agent_key == "momentum":
+            raise RuntimeError("boom")
+        return real(agent_key, **kw)
 
-    def flaky_ask(prompt, **kw):
-        call_count["n"] += 1
-        if call_count["n"] == 3:
-            raise RuntimeError("Claude timeout")
-        return {"picks": [{"symbol": "PFE", "rationale": "...", "conviction": "high"}]}
-
-    monkeypatch.setattr(daily_picks_service, "ask_claude_json", flaky_ask)
-    monkeypatch.setattr(daily_picks_service, "_market_ctx", lambda: {})
-
-    out = daily_picks_service.get_daily_picks(force=True)
-    failed = [a for a in out["agents"] if a["error"]]
-    assert len(failed) >= 1
-    # Other 7 still produced picks
-    succeeded = [a for a in out["agents"] if not a["error"]]
-    assert len(succeeded) >= 6
+    monkeypatch.setattr(dpa, "discover_for_agent", flaky)
+    out = dps.get_daily_picks(force=True)
+    assert len(out["agents"]) == 8
+    momentum = next(a for a in out["agents"] if a["agent_key"] == "momentum")
+    assert momentum["error"]                            # failure isolated to this agent
+    assert momentum["picks"] == []
 
 
 def test_get_daily_picks_uses_cache_within_day(monkeypatch):
-    """Second call same day returns cached payload (no Claude calls)."""
-    from api.services import daily_picks_service
+    """Second same-day call returns the cached payload (no re-discovery)."""
+    _clear_cache()
+    _patch_common(monkeypatch)
+    import api.services.discover_service as disc
+    calls = {"n": 0}
 
-    call_count = {"n": 0}
+    def counting(**kw):
+        calls["n"] += 1
+        return _opps()
 
-    def counting_ask(prompt, **kw):
-        call_count["n"] += 1
-        return {"picks": [{"symbol": "AAPL", "rationale": "x", "conviction": "high"}]}
-
-    monkeypatch.setattr(daily_picks_service, "ask_claude_json", counting_ask)
-    monkeypatch.setattr(daily_picks_service, "_market_ctx", lambda: {})
-
-    # Ensure the cache table exists in the session temp DB
-    from src.utils.db import init_db, cache_delete
-    init_db()
-    cache_delete(f"daily_picks:v1:{daily_picks_service.date.today().isoformat()}")
-
-    daily_picks_service.get_daily_picks(force=True)
-    first_calls = call_count["n"]
-
-    daily_picks_service.get_daily_picks(force=False)  # should hit cache
-    assert call_count["n"] == first_calls, "second call should not invoke Claude"
+    monkeypatch.setattr(disc, "get_opportunities", counting)
+    dps.get_daily_picks(force=True)
+    first = calls["n"]
+    dps.get_daily_picks(force=False)                    # should hit cache
+    assert calls["n"] == first, "second call should not re-run discovery"
