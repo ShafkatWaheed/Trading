@@ -51,6 +51,8 @@ def select_contract(chains, direction: str, *, dte_target: int = 35,
     # Candidate expiries: those with at least one priced contract on our side.
     scored = []
     for ch in chains:
+        if ch.underlying_price is None or ch.underlying_price <= 0:
+            continue
         side = ch.puts if want == "put" else ch.calls
         priced = [c for c in side if _premium(c) is not None]
         if not priced:

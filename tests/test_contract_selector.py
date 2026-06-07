@@ -75,3 +75,12 @@ def test_unpriced_contract_skipped():
     chain = _chain("2026-06-20", calls=[
         _contract("call", 100, "2026-06-20", 0, 0, 0, 0.0, 0.5)], puts=[])
     assert select_contract([chain], "bullish", now_date="2026-06-01") is None
+
+
+def test_zero_underlying_price_skips_chain():
+    # A chain with a priced call but underlying_price=0 (Polygon missing price)
+    # must not produce a misleading lowest-strike suggestion.
+    chain = _chain("2026-06-20", calls=[
+        _contract("call", 100, "2026-06-20", 3, 3.4, 3.2, 0.28, 0.5)],
+        puts=[], price=0)
+    assert select_contract([chain], "bullish", now_date="2026-06-01") is None
