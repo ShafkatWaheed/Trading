@@ -14,7 +14,7 @@ from src.data.congress import CongressDataProvider
 from src.data.news import NewsProvider
 from src.models.stock import Stock, StockQuote, StockFundamentals
 from src.models.data_types import (
-    MacroSnapshot, OptionsSummary, MicrostructureSummary,
+    MacroSnapshot, OptionsChain, OptionsSummary, MicrostructureSummary,
     InsiderSummary, InstitutionalSummary, CongressTradesSummary,
 )
 
@@ -115,6 +115,16 @@ class DataGateway:
             return self._get_polygon().get_options_summary(symbol)
         except Exception:
             return None
+
+    def get_options_chain(self, symbol: str) -> list[OptionsChain]:
+        """Full options chain (one OptionsChain per expiration) from Polygon.
+
+        Returns [] on any error (rate limit / no data) -- never fabricates.
+        """
+        try:
+            return self._get_polygon().get_options_chain(symbol)
+        except Exception:
+            return []
 
     def get_microstructure(self, symbol: str) -> MicrostructureSummary | None:
         try:
