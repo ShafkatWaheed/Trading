@@ -98,3 +98,29 @@ def test_momentum_matches_via_secondary_strategy():
     opps = [_card("SYN_SEC2", "Neutral", 77, secondary=["Momentum"])]
     picks = dpa.discover_for_agent("momentum", opportunities=opps, gateway=_FakeGateway())
     assert [p["symbol"] for p in picks] == ["SYN_SEC2"]
+
+
+def test_macro_selects_sector_leader():
+    picks = dpa.discover_for_agent("macro", opportunities=_OPPS, gateway=_FakeGateway())
+    assert [p["symbol"] for p in picks] == ["SYN_SEC"]
+
+
+def test_flow_selects_congress_buying():
+    picks = dpa.discover_for_agent("flow", opportunities=_OPPS, gateway=_FakeGateway())
+    assert [p["symbol"] for p in picks] == ["SYN_CON"]
+
+
+def test_value_gateway_calls_bounded_to_shortlist():
+    # 20 candidates, but value must only query fundamentals for the top 15 by score.
+    opps = [_card(f"SYN_{i:02d}", "Momentum", float(i)) for i in range(20)]
+    queried = []
+
+    class CountingGateway(_FakeGateway):
+        def get_fundamentals(self, symbol):
+            queried.append(symbol)
+            return super().get_fundamentals(symbol)
+
+    dpa.discover_for_agent("value", opportunities=opps, gateway=CountingGateway())
+    assert len(queried) == 15  # _SHORTLIST bound, not all 20
+    # the lowest-score names (00..04) must not be queried
+    assert "SYN_00" not in queried and "SYN_04" not in queried
