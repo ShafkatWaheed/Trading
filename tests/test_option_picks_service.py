@@ -93,3 +93,12 @@ def test_enrich_is_cached(monkeypatch):
     first = calls["n"]
     option_picks_service.enrich_symbols(["SYN_DDD"], gateway=gw)
     assert calls["n"] == first                 # second call served from cache
+
+
+def test_enrich_omits_symbol_with_insufficient_history():
+    class ShortGateway(_FakeGateway):
+        def get_historical(self, symbol, period_days=180):
+            return _df_uptrend().head(5)   # < 20 rows -> no levels
+
+    out = option_picks_service.enrich_symbols(["SYN_EEE"], gateway=ShortGateway())
+    assert "SYN_EEE" not in out
