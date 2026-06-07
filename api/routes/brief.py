@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from api.schemas import BriefResponse
-from api.services import _phase_cache, brief_service
+from api.services import _phase_cache, _profiler, brief_service
 from api.services._background_jobs import force_restart, get_job_status, kick
 from src.utils.db import cache_get
 
@@ -150,3 +150,17 @@ def restart_brief(
     force_restart(job_key)
     wiped = _phase_cache.invalidate("MARKET")
     return {"restarted": True, "job_key": job_key, "phases_invalidated": wiped}
+
+
+@router.get("/timings")
+def brief_timings(
+    limit: int = Query(20, ge=1, le=100, description="Number of recent runs to return."),
+) -> dict:
+    """Per-run phase breakdowns from the profiler.
+
+    Use this to see where the brief actually spends its time before
+    investing in pool/parallelize/cache work. Each run shows total
+    wall-clock plus per-phase durations.
+    """
+    runs = _profiler.get_recent_runs(limit=limit, label_prefix="brief")
+    return {"runs": runs, "count": len(runs)}

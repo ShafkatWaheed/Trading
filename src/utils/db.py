@@ -622,6 +622,24 @@ def init_db() -> None:
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_brief_phase_cache_created ON brief_phase_cache(created_at);
+
+        -- ── Phase profiler ────────────────────────────────────────────────
+        -- One row per (run_id, phase). Lets `GET /brief/timings` show where
+        -- seconds actually go so we can size optimization work (subprocess
+        -- pool vs. parallelization vs. caching) by real wall-clock impact
+        -- instead of guesswork.
+        CREATE TABLE IF NOT EXISTS phase_timings (
+            run_id      TEXT NOT NULL,
+            phase       TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT NOT NULL,
+            success     INTEGER NOT NULL,    -- 1 = clean exit, 0 = block raised
+            note        TEXT,
+            PRIMARY KEY (run_id, phase, started_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_phase_timings_run   ON phase_timings(run_id);
+        CREATE INDEX IF NOT EXISTS idx_phase_timings_start ON phase_timings(started_at);
     """)
     conn.commit()
     conn.close()

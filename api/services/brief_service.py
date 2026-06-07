@@ -62,7 +62,7 @@ from api.services import (
     market_service,
     smart_money_service,
 )
-from api.services import _phase_cache
+from api.services import _phase_cache, _profiler
 from api.services._background_jobs import heartbeat
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import cache_get, cache_set
@@ -1486,11 +1486,17 @@ def get_brief(
         if cached:
             return cached
 
+    # Profiling: one run_id per generation so the breakdown shows real
+    # wall-clock per phase. Read via GET /brief/timings or directly from
+    # the phase_timings table. Safe no-op on DB failure.
+    run_id = _profiler.start_run("brief")
+
     _hb("context", 5)
 
     # A — widened context: pulse 1M + 3M, disruption, geopolitical, breadth,
     # top movers, news, calendar, smart-money tape, congress tape — in parallel.
-    ctx = _market_context()
+    with _profiler.Timer(run_id, "context"):
+        ctx = _market_context()
     pulse = ctx.get("pulse") or {}
     regime = pulse.get("regime") or "unclear"
     regime_explanation = pulse.get("regime_explanation") or ""
@@ -1501,11 +1507,13 @@ def get_brief(
     # search query plus a `convergence` list naming the anchor sectors.
     # Falls back to the legacy rule-based chapters if Claude fails or returns
     # no usable query.
-    lens = _derive_search_query(ctx)
+    with _profiler.Timer(run_id, "lens"):
+        lens = _derive_search_query(ctx)
     used_fallback = lens is None
     if used_fallback:
         chapters = _derive_chapters(ctx)
-        chapter_results = _search_all_chapters(chapters)
+        with _profiler.Timer(run_id, "search", note="fallback"):
+            chapter_results = _search_all_chapters(chapters)
         candidates = _pool_candidates(chapter_results)
     else:
         # C — multi-anchor search: one context_search call per convergence
@@ -1526,21 +1534,25 @@ def get_brief(
                 "query": _anchor_query(a, lens["query"]),
                 "source": "claude",
             } for a in anchors[:_MAX_LENS_ANCHORS]]
-        chapter_results = _search_all_chapters(chapters)
+        with _profiler.Timer(run_id, "search"):
+            chapter_results = _search_all_chapters(chapters)
         candidates = _pool_candidates(chapter_results)
 
     _hb("score", 40)
 
     # E — hydrate fundamentals
-    funds = _hydrate_fundamentals([c["symbol"] for c in candidates])
+    with _profiler.Timer(run_id, "hydrate"):
+        funds = _hydrate_fundamentals([c["symbol"] for c in candidates])
 
     # F — classify (cache-only bubble peek here)
-    scored = _classify_all(candidates, funds)
+    with _profiler.Timer(run_id, "classify"):
+        scored = _classify_all(candidates, funds)
 
     _hb("score", 55)
 
     # H — select: 6 actionable (3 stable + 3 promising, max 2/sector) + 3 hype watch
-    actionable, hype_watch = _select_mix(scored, diversity_enabled=bool(diversity))
+    with _profiler.Timer(run_id, "select"):
+        actionable, hype_watch = _select_mix(scored, diversity_enabled=bool(diversity))
 
     _hb("enrich", 65)
 
@@ -1550,21 +1562,24 @@ def get_brief(
     # SINGLE ThreadPoolExecutor — previously these ran sequentially, leaving
     # workers idle in the second phase when its pick count fell below pool size.
     n_a = len(actionable)
-    combined = _enrich_all(actionable + hype_watch)
+    with _profiler.Timer(run_id, "enrich"):
+        combined = _enrich_all(actionable + hype_watch)
     actionable = combined[:n_a]
     hype_watch = combined[n_a:]
 
     # H.5 — VALIDATE each pick with web-enabled Claude (parallel, 24h cached).
     # Run validation on BOTH actionable and hype watch — fresh news matters
     # for hype names too ("this hype just got vindicated" or "the air is out").
-    _validate_all_picks(actionable + hype_watch, force=force)
+    with _profiler.Timer(run_id, "validate"):
+        _validate_all_picks(actionable + hype_watch, force=force)
 
     _hb("narrate", 80)
 
     # I — narrate (now informed by web_validation per pick + the Claude lens).
     # Hype watch picks are passed through so Claude can write a brief
     # warning-style note per pick alongside the actionable narrative.
-    prose = _narrate(ctx, chapters, actionable + hype_watch, lens=lens)
+    with _profiler.Timer(run_id, "narrate"):
+        prose = _narrate(ctx, chapters, actionable + hype_watch, lens=lens)
     if not prose:
         prose = _fallback_market_story(regime, regime_explanation)
 
@@ -1594,8 +1609,9 @@ def get_brief(
             "snapshot": p.get("snapshot") or {},
         }
 
-    final_picks = [_finalize(p) for p in actionable]
-    final_hype_watch = [_finalize(p) for p in hype_watch]
+    with _profiler.Timer(run_id, "finalize"):
+        final_picks = [_finalize(p) for p in actionable]
+        final_hype_watch = [_finalize(p) for p in hype_watch]
 
     sectors_in_focus = sorted({
         s["sector"] for s in (pulse.get("sectors") or [])
@@ -1646,4 +1662,7 @@ def get_brief(
     except Exception:
         pass
     _hb("done", 95)  # _finish_job_row will bump to 100 once the thread exits
+    # Stash the run_id on the payload so the UI can deep-link a "this brief"
+    # row in /brief/timings — also makes correlating logs trivial.
+    payload["_profiler_run_id"] = run_id
     return payload
