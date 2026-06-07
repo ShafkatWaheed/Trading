@@ -11,6 +11,8 @@ def _agents():
                    {"symbol": "BBB", "rationale": "", "conviction": "med"}], "error": None},
         {"agent_key": "insider", "agent_name": "Insider Shadow", "risk_tolerance": "moderate",
          "picks": [{"symbol": "AAA", "rationale": "", "conviction": "high"}], "error": None},
+        {"agent_key": "value", "agent_name": "Value Investor", "risk_tolerance": "conservative",
+         "picks": [{"symbol": "AAA", "rationale": "", "conviction": "high"}], "error": None},
     ]
 
 
