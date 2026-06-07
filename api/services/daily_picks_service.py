@@ -1,13 +1,13 @@
-"""Daily Picks — what to buy today, from 8 different agent perspectives.
+"""Daily Picks — what to buy today, grounded in real market data.
 
-Runs all 8 personalities in parallel via ThreadPoolExecutor (mirrors
-ai_analyst_service pattern). Each agent picks its top 5 stocks using
-the brief pipeline narrowed to that agent's lens. The service then
-computes consensus (stocks 3+ agents picked) and each agent's
-contrarian pick (their top stock no one else picked).
-
-Cached for 8 hours by day (so the picks are stable within a session
-but refresh overnight).
+Each of the 8 agents runs a deterministic per-lens screen over the real
+opportunity cards from discover_service (+ DataGateway for the value/options
+lenses) — see api/services/daily_picks_agents.py. A single Claude synthesis
+pass (api/services/daily_picks_synthesis.py) then ranks the agents' real
+candidates into consensus + contrarian picks with rationale, falling back to
+the deterministic compute_consensus_and_contrarian if the LLM is unavailable.
+Picks are enriched with option trade plans and cached per day (empty payloads
+are never cached). The brief pipeline is intentionally NOT used here.
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ _CACHE_TTL_HOURS = 8
 # Mirror the ai_analyst_service pattern: parallelize all personalities at
 # once so wall-clock equals the slowest agent, not a sum-of-batches.
 _MAX_PARALLEL = 8
-_PICKS_PER_AGENT = 5
 
 
 def _make_gateway():
