@@ -14,6 +14,13 @@ from src.utils.claude_cli import ask_claude_json
 from src.utils.db import init_db, log_api_call
 
 
+def _safe_log(*args, **kwargs) -> None:
+    try:
+        _safe_log(*args, **kwargs)
+    except Exception:
+        pass
+
+
 def _build_prompt(agent_results: list[dict], market_ctx: dict) -> str:
     lines = []
     for a in agent_results:
@@ -42,7 +49,10 @@ Contrarians = each agent's strongest pick no other agent chose.
 
 def synthesize(agent_results: list[dict], market_ctx: dict) -> dict:
     """Return {"consensus": [...], "contrarians": [...]}. Never raises."""
-    init_db()
+    try:
+        init_db()
+    except Exception:
+        pass
     has_picks = any((a.get("picks") for a in agent_results))
     if not has_picks:
         return {"consensus": [], "contrarians": []}
@@ -52,10 +62,10 @@ def synthesize(agent_results: list[dict], market_ctx: dict) -> dict:
                                  model="haiku", timeout=120, retries=1)
         if isinstance(result, dict) and isinstance(result.get("consensus"), list):
             result.setdefault("contrarians", [])
-            log_api_call("daily_picks_synth", "synthesize", "success")
+            _safe_log("daily_picks_synth", "synthesize", "success")
             return {"consensus": result["consensus"], "contrarians": result["contrarians"]}
     except Exception as exc:
-        log_api_call("daily_picks_synth", "synthesize", "error", error=str(exc)[:200])
+        _safe_log("daily_picks_synth", "synthesize", "error", error=str(exc)[:200])
 
-    log_api_call("daily_picks_synth", "synthesize", "fallback")
+    _safe_log("daily_picks_synth", "synthesize", "fallback")
     return compute_consensus_and_contrarian(agent_results)

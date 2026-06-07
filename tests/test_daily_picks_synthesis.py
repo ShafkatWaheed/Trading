@@ -41,3 +41,18 @@ def test_synthesize_empty_agents_returns_empty(monkeypatch):
     monkeypatch.setattr(syn, "ask_claude_json", lambda prompt, **kw: None)
     out = syn.synthesize([], {})
     assert out == {"consensus": [], "contrarians": []}
+
+
+def test_synthesize_falls_back_when_claude_raises(monkeypatch):
+    def boom(prompt, **kw):
+        raise RuntimeError("claude timeout")
+    monkeypatch.setattr(syn, "ask_claude_json", boom)
+    out = syn.synthesize(_agents(), {})
+    assert any(c["symbol"] == "AAA" for c in out["consensus"])  # deterministic fallback used
+
+
+def test_synthesize_falls_back_on_parse_miss(monkeypatch):
+    # dict returned but no usable "consensus" list -> fallback
+    monkeypatch.setattr(syn, "ask_claude_json", lambda prompt, **kw: {"rankings": [{"symbol": "AAA"}]})
+    out = syn.synthesize(_agents(), {})
+    assert any(c["symbol"] == "AAA" for c in out["consensus"])
