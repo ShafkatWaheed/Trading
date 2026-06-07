@@ -43,11 +43,19 @@ def _pick(card: dict, extra: dict | None = None) -> dict:
     }
 
 
+def _secondary_names(card: dict) -> list[str]:
+    """Return strategy names from secondary_strategies, handling both dict and string forms."""
+    out = []
+    for s in (card.get("secondary_strategies") or []):
+        out.append(s.get("name") if isinstance(s, dict) else s)
+    return out
+
+
 def _strategy_select(agent_key: str, opportunities: list[dict]) -> list[dict]:
     wanted = _STRATEGY_LENSES[agent_key]
     matched = [c for c in opportunities
                if c.get("strategy") in wanted
-               or any(s in wanted for s in (c.get("secondary_strategies") or []))]
+               or any(name in wanted for name in _secondary_names(c))]
     top = rank_candidates(matched, key="score", top_n=_PICKS_PER_AGENT)
     return [_pick(c) for c in top]
 

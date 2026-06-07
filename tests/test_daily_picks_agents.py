@@ -7,8 +7,9 @@ from api.services import daily_picks_agents as dpa
 
 
 def _card(symbol, strategy, score, sub_flow=0, secondary=None, sector="Tech"):
+    secs = [{"name": s, "icon": "", "description": ""} for s in (secondary or [])]
     return {"symbol": symbol, "strategy": strategy, "score": score,
-            "secondary_strategies": secondary or [],
+            "secondary_strategies": secs,
             "sub_scores": {"volume": 0, "price": 0, "flow": sub_flow, "risk_reward": 0},
             "sector": sector, "price": 100}
 
@@ -90,3 +91,10 @@ def test_gateway_error_in_value_yields_empty_not_crash():
             raise RuntimeError("rate limited")
     picks = dpa.discover_for_agent("value", opportunities=_OPPS, gateway=Boom())
     assert picks == []
+
+
+def test_momentum_matches_via_secondary_strategy():
+    # primary strategy is Neutral, but a SECONDARY strategy (dict-shaped) is Momentum
+    opps = [_card("SYN_SEC2", "Neutral", 77, secondary=["Momentum"])]
+    picks = dpa.discover_for_agent("momentum", opportunities=opps, gateway=_FakeGateway())
+    assert [p["symbol"] for p in picks] == ["SYN_SEC2"]
