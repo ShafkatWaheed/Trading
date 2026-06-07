@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from api.schemas import BriefResponse
-from api.services import _phase_cache, _profiler, brief_service
+from api.services import _partial_outputs, _phase_cache, _profiler, brief_service
 from api.services._background_jobs import force_restart, get_job_status, kick
 from src.utils.db import cache_get
 
@@ -72,30 +72,54 @@ def _stub_computing(diversity: bool) -> dict:
             job_error = job["error"]
             elapsed_s = job["elapsed_s"]
 
+    # Progressive-poll partials — whatever phases have completed so far get
+    # streamed back, so the UI can render the lens, then picks, then
+    # narrative as they land instead of waiting for the whole brief.
+    partials = _partial_outputs.get_partials(job_key)
+    lens_partial      = (partials.get("lens") or {})
+    picks_skel        = (partials.get("picks_skeleton") or {})
+    picks_validated   = (partials.get("picks_validated") or {})
+    narrate_partial   = (partials.get("narrate") or {})
+
+    # Pick the richest version of picks available so far: validated > skeleton.
+    p_src = picks_validated if picks_validated else picks_skel
+    streamed_picks      = p_src.get("picks") or []
+    streamed_hype_watch = p_src.get("hype_watch") or []
+
+    market_story = narrate_partial.get("market_story") or {
+        "headline": "Generating brief...",
+        "paragraphs": [],
+        "investment_angles": [],
+    }
+
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "regime": "unclear",
         "regime_explanation": "Brief is being generated — Claude is composing the lens, picks, and narrative. Polling will update automatically.",
-        "market_story": {"headline": "Generating brief...", "paragraphs": [], "investment_angles": []},
+        "market_story": market_story,
         "chapters": [],
-        "lens": None,
-        "picks": [],
-        "closing": "",
+        "lens": lens_partial.get("lens"),
+        "picks": streamed_picks,
+        "hype_watch": streamed_hype_watch,
+        "closing": narrate_partial.get("closing", ""),
         "meta": {
             "candidates_considered": 0,
             "sectors_in_focus": [],
             "themes_in_focus": [],
             "pulse_period": "1M",
-            "lens_fallback_used": False,
+            "lens_fallback_used": bool(lens_partial.get("used_fallback")),
         },
         "status": "computing",
-        # New progress fields — additive so the existing UI keeps working.
+        # Progress fields — additive so the existing UI keeps working.
         "current_phase": current_phase,
         "progress_pct": progress_pct,
         "elapsed_s": elapsed_s,
         "started_at": started_at,
         "job_status": job_status_str,
         "job_error": job_error,
+        # Which phase outputs have arrived so far. Lets the UI render only
+        # the sections that have real data and show skeletons for the rest.
+        "partial_phases": sorted(partials.keys()),
     }
 
 
@@ -149,7 +173,13 @@ def restart_brief(
     job_key = _job_key_for(diversity)
     force_restart(job_key)
     wiped = _phase_cache.invalidate("MARKET")
-    return {"restarted": True, "job_key": job_key, "phases_invalidated": wiped}
+    partials_wiped = _partial_outputs.clear(job_key)
+    return {
+        "restarted":           True,
+        "job_key":             job_key,
+        "phases_invalidated":  wiped,
+        "partials_wiped":      partials_wiped,
+    }
 
 
 @router.get("/timings")

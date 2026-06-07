@@ -2102,6 +2102,11 @@ class BriefResponse(BaseModel):
     started_at: str | None = None
     job_status: str | None = None    # 'computing' | 'failed' | None
     job_error: str | None = None
+    # Which phase outputs have arrived so far on the "computing" stub. Empty
+    # on the cold stub, grows to ["lens", "picks_skeleton", "picks_validated",
+    # "narrate"] as the pipeline progresses. Lets the UI know which sections
+    # already hold real data vs which are still placeholders.
+    partial_phases: list[str] = []
 
 
 # ── Trade Journal + Gap Finder ─────────────────────────────────────

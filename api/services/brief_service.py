@@ -62,7 +62,7 @@ from api.services import (
     market_service,
     smart_money_service,
 )
-from api.services import _phase_cache, _profiler
+from api.services import _partial_outputs, _phase_cache, _profiler
 from api.services._background_jobs import heartbeat
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import cache_get, cache_set
@@ -1486,6 +1486,17 @@ def get_brief(
                 # Never let a heartbeat write break the pipeline
                 pass
 
+    def _emit_partial(phase: str, payload) -> None:
+        """Record a phase output so the polling GET /brief can stream it
+        to the UI before the whole brief is done. Safe no-op when there's
+        no job_key (synchronous path) or DB write fails."""
+        if not job_key:
+            return
+        try:
+            _partial_outputs.set_partial(job_key, phase, payload)
+        except Exception:
+            pass
+
     cache_key = f"{_CACHE_KEY}:div={int(bool(diversity))}"
     if not force:
         cached = cache_get(cache_key)
@@ -1516,6 +1527,13 @@ def get_brief(
     with _profiler.Timer(run_id, "lens"):
         lens = _derive_search_query(ctx)
     used_fallback = lens is None
+    # Stream the lens to the UI as soon as we have it (~20-100s in). The
+    # progressive-poll path renders the lens chip + convergence sectors
+    # immediately so the user knows what angle today's brief took.
+    _emit_partial("lens", {
+        "lens": (None if used_fallback else lens),
+        "used_fallback": used_fallback,
+    })
     if used_fallback:
         chapters = _derive_chapters(ctx)
         with _profiler.Timer(run_id, "search", note="fallback"):
@@ -1560,6 +1578,28 @@ def get_brief(
     with _profiler.Timer(run_id, "select"):
         actionable, hype_watch = _select_mix(scored, diversity_enabled=bool(diversity))
 
+    # Stream the pick skeletons — symbols, names, buckets, sectors — without
+    # the deep-dive snapshots or web validation yet. UI can render the pick
+    # cards as placeholders and progressively fill them in as enrich/validate
+    # land. narrative="" + empty why_now satisfy the strict BriefPick schema
+    # without misleading the UI; the real narrative arrives in the "narrate"
+    # phase output.
+    def _skel(p: dict) -> dict:
+        return {
+            "symbol":           p.get("symbol"),
+            "name":             p.get("name"),
+            "bucket":           p.get("bucket") or "stable",
+            "sector":           p.get("sector"),
+            "is_profitable":    bool(p.get("is_profitable")),
+            "chapter_headlines": p.get("chapter_headlines") or [],
+            "narrative":        "",
+            "why_now":          [],
+        }
+    _emit_partial("picks_skeleton", {
+        "picks":      [_skel(p) for p in actionable],
+        "hype_watch": [_skel(p) for p in hype_watch],
+    })
+
     _hb("enrich", 65)
 
     # G — enrich finalists (deep-dive + macro fit + bubble fetch if needed).
@@ -1579,6 +1619,21 @@ def get_brief(
     with _profiler.Timer(run_id, "validate"):
         _validate_all_picks(actionable + hype_watch, force=force)
 
+    # Stream the picks WITH validation + enrich data attached. UI can now
+    # show the full pick cards including web_validation banner, fundamental
+    # score, macro fit, bubble label. Narrative is still pending.
+    def _enriched(p: dict) -> dict:
+        snap = p.get("snapshot") or {}
+        return {
+            **_skel(p),
+            "snapshot":  snap,
+            "reasoning": p.get("reasoning") or [],
+        }
+    _emit_partial("picks_validated", {
+        "picks":      [_enriched(p) for p in actionable],
+        "hype_watch": [_enriched(p) for p in hype_watch],
+    })
+
     _hb("narrate", 80)
 
     # I — narrate (now informed by web_validation per pick + the Claude lens).
@@ -1588,6 +1643,18 @@ def get_brief(
         prose = _narrate(ctx, chapters, actionable + hype_watch, lens=lens)
     if not prose:
         prose = _fallback_market_story(regime, regime_explanation)
+
+    # Stream the narrative — last big chunk to land. Once the UI sees this,
+    # it has everything except per-pick narrative attribution (finalize is
+    # local-only and finishes in <1s).
+    _emit_partial("narrate", {
+        "market_story": {
+            "headline":          prose.get("headline") or f"Market regime: {regime}",
+            "paragraphs":        prose.get("market_story") or [],
+            "investment_angles": prose.get("investment_angles") or [],
+        },
+        "closing": prose.get("closing") or "",
+    })
 
     claude_picks = {p.get("symbol"): p for p in (prose.get("picks") or []) if isinstance(p, dict)}
 

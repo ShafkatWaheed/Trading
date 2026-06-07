@@ -777,8 +777,10 @@ export default function BriefPage() {
         }
       />
 
-      {/* Loading — either initial fetch OR cold cache (server returned
-          status:"computing" while Claude generates in the background). */}
+      {/* Progressive-load: progress card stays visible while computing; the
+          main content tree below renders whatever partial phases have
+          arrived (lens, picks_skeleton, picks_validated, narrate). When no
+          partial data exists yet (cold stub), skeletons fill the page. */}
       {(isLoading || isComputing) && (!data || isComputing) && (
         <div className="space-y-6">
           {isComputing && (
@@ -832,16 +834,23 @@ export default function BriefPage() {
               </div>
             </div>
           )}
-          <div className="space-y-3">
-            <Skeleton className="h-3 w-32" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-4 w-5/6" />
-            <Skeleton className="h-4 w-4/6" />
-          </div>
-          <Skeleton className="h-24 w-full" />
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-44" />
-          ))}
+          {/* Show full skeleton only when NO partials have arrived yet.
+              Once any phase (lens, picks_skeleton, ...) has landed, the
+              content tree below renders it directly. */}
+          {!((data as Brief | undefined)?.partial_phases?.length) && (
+            <>
+              <div className="space-y-3">
+                <Skeleton className="h-3 w-32" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-4 w-4/6" />
+              </div>
+              <Skeleton className="h-24 w-full" />
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-44" />
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -853,8 +862,11 @@ export default function BriefPage() {
         </div>
       )}
 
-      {/* Content — only render once we have a real "ready" brief */}
-      {data && !isComputing && (
+      {/* Content — render whenever we have data, even partial during the
+          "computing" phase. The content tree handles missing/empty fields
+          gracefully (e.g. picks=[] shows the empty-state card; lens=null
+          shows the rule-based fallback). */}
+      {data && (isComputing ? (data.partial_phases?.length ?? 0) > 0 : true) && (
         <>
           {/* Defensive guard: if backend serves the legacy v1/v2 shape
               (intro + chapters but no market_story), render an upgrade notice

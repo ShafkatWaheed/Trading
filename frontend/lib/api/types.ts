@@ -1988,6 +1988,11 @@ export type Brief = {
   started_at?: string | null;
   job_status?: string | null;
   job_error?: string | null;
+  /** Names of phase outputs that have arrived on the "computing" stub so
+   *  far — e.g. ["lens"], then ["lens", "picks_skeleton"], etc. Empty on
+   *  the cold stub. Lets the UI know whether `lens`/`picks`/`market_story`
+   *  hold real data or are placeholders. */
+  partial_phases?: string[];
 };
 
 

@@ -640,6 +640,25 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_phase_timings_run   ON phase_timings(run_id);
         CREATE INDEX IF NOT EXISTS idx_phase_timings_start ON phase_timings(started_at);
+
+        -- ── Brief partial outputs (progressive polling) ──────────────────
+        -- As each phase of get_brief completes (lens → picks_skeleton →
+        -- picks_validated → narrate), it writes its output here. The polling
+        -- GET /brief reads whatever's landed so far so the UI can render the
+        -- lens chip the moment it's available, pick skeletons next, then
+        -- swap in validated picks, then narrative — instead of staring at a
+        -- progress bar for 7 minutes.
+        --
+        -- One row per (job_key, phase). Wiped by force_restart and by a
+        -- completed brief (the final cache_set wins; partials are scratch).
+        CREATE TABLE IF NOT EXISTS brief_partial_outputs (
+            job_key    TEXT NOT NULL,
+            phase      TEXT NOT NULL,
+            payload    TEXT NOT NULL,       -- JSON
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (job_key, phase)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bpo_job ON brief_partial_outputs(job_key);
     """)
     conn.commit()
     conn.close()
