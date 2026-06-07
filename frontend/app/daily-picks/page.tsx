@@ -171,7 +171,7 @@ function AgentColumn({ agent, plans }: { agent: DailyPicksAgentResult; plans: Re
                   {pk.rationale}
                 </span>
               </div>
-              <OptionPlanRow plan={plans[pk.symbol]} />
+              <OptionPlanRow plan={plans[pk.symbol.toUpperCase()]} />
             </li>
           ))}
         </ul>
@@ -286,7 +286,7 @@ export default function DailyPicksPage() {
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {data.consensus.slice(0, 6).map((c) => (
-                        <ConsensusCard key={c.symbol} row={c} plan={plans[c.symbol]} />
+                        <ConsensusCard key={c.symbol} row={c} plan={plans[c.symbol.toUpperCase()]} />
                       ))}
                     </div>
                   )}
@@ -308,7 +308,7 @@ export default function DailyPicksPage() {
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {data.contrarians.map((p) => (
-                        <ContrarianCard key={`${p.agent_key}:${p.symbol}`} pick={p} plan={plans[p.symbol]} />
+                        <ContrarianCard key={`${p.agent_key}:${p.symbol}`} pick={p} plan={plans[p.symbol.toUpperCase()]} />
                       ))}
                     </div>
                   )}
