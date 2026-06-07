@@ -16,7 +16,7 @@ from src.utils.db import init_db, log_api_call
 
 def _safe_log(*args, **kwargs) -> None:
     try:
-        _safe_log(*args, **kwargs)
+        log_api_call(*args, **kwargs)
     except Exception:
         pass
 

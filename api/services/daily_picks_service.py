@@ -39,8 +39,8 @@ def _market_ctx() -> dict:
 def _run_one_agent(agent_key: str, ctx: dict, opportunities: list[dict]) -> dict:
     """Discover this agent's picks from real data. Returns the agent_results shape."""
     p = AGENT_PERSONALITIES[agent_key]
-    from src.data.gateway import DataGateway
     try:
+        from src.data.gateway import DataGateway
         raw = daily_picks_agents.discover_for_agent(
             agent_key, opportunities=opportunities, gateway=DataGateway())
         picks = [{"symbol": r["symbol"], "rationale": "",
@@ -107,6 +107,7 @@ def get_daily_picks(*, force: bool = False) -> dict:
         for row in consensus_payload.get("contrarians", []):
             if row.get("symbol"):
                 symbols.append(row["symbol"])
+        symbols = list(dict.fromkeys(symbols))
         payload["option_plans"] = option_picks_service.enrich_symbols(symbols)
     except Exception:
         payload["option_plans"] = {}

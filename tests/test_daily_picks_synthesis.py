@@ -56,3 +56,11 @@ def test_synthesize_falls_back_on_parse_miss(monkeypatch):
     monkeypatch.setattr(syn, "ask_claude_json", lambda prompt, **kw: {"rankings": [{"symbol": "AAA"}]})
     out = syn.synthesize(_agents(), {})
     assert any(c["symbol"] == "AAA" for c in out["consensus"])
+
+
+def test_safe_log_calls_log_api_call(monkeypatch):
+    import api.services.daily_picks_synthesis as s
+    calls = []
+    monkeypatch.setattr(s, "log_api_call", lambda *a, **k: calls.append((a, k)))
+    s._safe_log("daily_picks_synth", "x", "success")
+    assert calls == [(("daily_picks_synth", "x", "success"), {})]
