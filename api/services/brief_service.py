@@ -109,7 +109,13 @@ _MAX_CHAPTERS = 5               # legacy fallback only
 _MAX_LENS_ANCHORS = 3           # number of context_search anchors Claude picks
 _CTX_SEARCH_LIMIT = 12          # stocks per anchor
 _FUND_FETCH_WORKERS = 6
-_BUBBLE_WORKERS = 4
+# Per-pick enrichment uses local + cached APIs; the actual web-validation
+# below is much heavier. These used to share `_BUBBLE_WORKERS = 4` which
+# created sequential waves once pick count exceeded 4 — profiler data showed
+# validate + enrich together dominated wall-clock (~230s of 500s) so both
+# pools now scale to cover a full 9-pick brief in a single wave.
+_ENRICH_WORKERS = 12
+_VALIDATE_WORKERS = 12
 
 _CTX_SEARCH_CACHE_TTL = 4 * 60  # 4h
 _LENS_CACHE_TTL = 30            # 30min — keep lens stable within a single brief refresh
@@ -937,7 +943,7 @@ def _enrich_pick(pick: dict) -> dict:
 def _enrich_all(picks: list[dict]) -> list[dict]:
     if not picks:
         return picks
-    with ThreadPoolExecutor(max_workers=min(_BUBBLE_WORKERS, len(picks))) as pool:
+    with ThreadPoolExecutor(max_workers=min(_ENRICH_WORKERS, len(picks))) as pool:
         return list(pool.map(_enrich_pick, picks))
 
 
@@ -1438,7 +1444,7 @@ def _validate_all_picks(picks: list[dict], *, force: bool = False) -> None:
     """
     if not picks:
         return
-    with ThreadPoolExecutor(max_workers=min(_BUBBLE_WORKERS, len(picks))) as pool:
+    with ThreadPoolExecutor(max_workers=min(_VALIDATE_WORKERS, len(picks))) as pool:
         validations = list(pool.map(
             lambda p: _validate_pick_with_web(p, force=force),
             picks,
