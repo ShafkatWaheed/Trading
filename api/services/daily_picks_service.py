@@ -141,6 +141,25 @@ def get_daily_picks(*, force: bool = False) -> dict:
         "from_cache": False,
     }
 
+    # Enrich the unique picked symbols with a bullish option trade plan.
+    # Best-effort: never break the picks payload if enrichment fails.
+    try:
+        from api.services import option_picks_service
+        symbols: list[str] = []
+        for a in agent_results:
+            for pk in a.get("picks", []) or []:
+                if isinstance(pk, dict) and pk.get("symbol"):
+                    symbols.append(pk["symbol"])
+        for row in consensus_payload.get("consensus", []):
+            if row.get("symbol"):
+                symbols.append(row["symbol"])
+        for row in consensus_payload.get("contrarians", []):
+            if row.get("symbol"):
+                symbols.append(row["symbol"])
+        payload["option_plans"] = option_picks_service.enrich_symbols(symbols)
+    except Exception:
+        payload["option_plans"] = {}
+
     try:
         cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_HOURS * 60)
     except Exception:
