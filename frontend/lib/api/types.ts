@@ -2246,6 +2246,31 @@ export type EarningsWeek = {
 
 // ── Daily Picks (8-agent multi-personality stock picks) ────────────
 
+export interface SuggestedContract {
+  type: "call" | "put";
+  strike: string | null;
+  expiry: string;
+  premium: string | null;
+  delta: string | null;
+  iv: string | null;
+  dte: number;
+}
+
+export interface OptionPlan {
+  direction: "bullish" | "bearish";
+  entry: string | null;
+  stop_loss: string | null;
+  take_profit: string | null;
+  technical_target: string | null;
+  support: string | null;
+  resistance: string | null;
+  atr: string | null;
+  rr_ratio: number | null;
+  rr_basis: "technical" | "ratio" | null;
+  contract: SuggestedContract | null;
+  contract_status: "ok" | "unavailable";
+}
+
 export type DailyPicksConviction = "high" | "med" | "medium" | "low";
 
 export type DailyPicksAgentPick = {
@@ -2291,4 +2316,5 @@ export type DailyPicks = {
   consensus: DailyPicksConsensusRow[];
   contrarians: DailyPicksContrarian[];
   from_cache?: boolean;
+  option_plans?: Record<string, OptionPlan>;
 };

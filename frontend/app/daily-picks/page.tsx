@@ -28,6 +28,7 @@ import type {
   DailyPicksAgentResult,
   DailyPicksConsensusRow,
   DailyPicksContrarian,
+  OptionPlan,
 } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -42,9 +43,33 @@ function convictionClass(c: string): string {
 }
 
 
+// ── option plan block ────────────────────────────────────────────────
+
+function OptionPlanRow({ plan }: { plan?: OptionPlan }) {
+  if (!plan) return null;
+  return (
+    <div className="mt-1 text-xs grid grid-cols-3 gap-x-3 gap-y-0.5">
+      <span className="inline-flex items-center rounded px-1.5 py-0.5 bg-emerald-900/40 text-emerald-300">
+        {plan.direction === "bullish" ? "Calls" : "Puts"}
+      </span>
+      <span>Entry <b>{plan.entry ?? "—"}</b></span>
+      <span>R:R <b>{plan.rr_ratio ?? "—"}</b></span>
+      <span className="text-emerald-400">Exit ▲ {plan.take_profit ?? "—"}</span>
+      <span className="text-red-400">Exit ▼ {plan.stop_loss ?? "—"}</span>
+      <span className="text-zinc-400">S/R {plan.support ?? "—"}–{plan.resistance ?? "—"}</span>
+      <span className="col-span-3 text-zinc-400">
+        {plan.contract_status === "ok" && plan.contract
+          ? `${plan.contract.type.toUpperCase()} ${plan.contract.strike} @ ${plan.contract.expiry} · prem ${plan.contract.premium ?? "—"} · IV ${plan.contract.iv ?? "—"}`
+          : "options data unavailable"}
+      </span>
+    </div>
+  );
+}
+
+
 // ── consensus row ────────────────────────────────────────────────────
 
-function ConsensusCard({ row }: { row: DailyPicksConsensusRow }) {
+function ConsensusCard({ row, plan }: { row: DailyPicksConsensusRow; plan?: OptionPlan }) {
   return (
     <div className="card-subtle p-4 border-l-4 border-accent-green/60">
       <div className="flex items-baseline justify-between mb-2">
@@ -78,6 +103,7 @@ function ConsensusCard({ row }: { row: DailyPicksConsensusRow }) {
           </li>
         ))}
       </ul>
+      <OptionPlanRow plan={plan} />
     </div>
   );
 }
@@ -85,7 +111,7 @@ function ConsensusCard({ row }: { row: DailyPicksConsensusRow }) {
 
 // ── contrarian card ──────────────────────────────────────────────────
 
-function ContrarianCard({ pick }: { pick: DailyPicksContrarian }) {
+function ContrarianCard({ pick, plan }: { pick: DailyPicksContrarian; plan?: OptionPlan }) {
   return (
     <div className="card-muted p-3">
       <div className="flex items-baseline justify-between mb-1 gap-2">
@@ -100,6 +126,7 @@ function ContrarianCard({ pick }: { pick: DailyPicksContrarian }) {
         </span>
       </div>
       <p className="text-[11px] text-text-primary leading-snug">{pick.rationale}</p>
+      <OptionPlanRow plan={plan} />
     </div>
   );
 }
@@ -107,7 +134,7 @@ function ContrarianCard({ pick }: { pick: DailyPicksContrarian }) {
 
 // ── full grid (one column per agent) ─────────────────────────────────
 
-function AgentColumn({ agent }: { agent: DailyPicksAgentResult }) {
+function AgentColumn({ agent, plans }: { agent: DailyPicksAgentResult; plans: Record<string, OptionPlan> }) {
   return (
     <div className="card-muted p-3 min-w-[240px] shrink-0">
       <h4 className="font-semibold mb-2 flex items-center gap-1.5 text-[13px]">
@@ -119,29 +146,32 @@ function AgentColumn({ agent }: { agent: DailyPicksAgentResult }) {
           <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" /> {agent.error}
         </p>
       ) : (
-        <ul className="space-y-1.5 text-[11px]">
+        <ul className="space-y-2 text-[11px]">
           {agent.picks.map((pk, i) => (
-            <li key={i} className="flex items-baseline gap-1.5">
-              <Link
-                href={`/deep-dive/${encodeURIComponent(pk.symbol)}`}
-                className="font-mono font-semibold hover:text-accent-blueSoft transition-colors"
-              >
-                ${pk.symbol}
-              </Link>
-              <span
-                className={cn(
-                  "text-[9px] px-1 rounded border",
-                  convictionClass(pk.conviction),
-                )}
-              >
-                {pk.conviction}
-              </span>
-              <span
-                className="text-text-secondary flex-1 truncate"
-                title={pk.rationale}
-              >
-                {pk.rationale}
-              </span>
+            <li key={i}>
+              <div className="flex items-baseline gap-1.5">
+                <Link
+                  href={`/deep-dive/${encodeURIComponent(pk.symbol)}`}
+                  className="font-mono font-semibold hover:text-accent-blueSoft transition-colors"
+                >
+                  ${pk.symbol}
+                </Link>
+                <span
+                  className={cn(
+                    "text-[9px] px-1 rounded border",
+                    convictionClass(pk.conviction),
+                  )}
+                >
+                  {pk.conviction}
+                </span>
+                <span
+                  className="text-text-secondary flex-1 truncate"
+                  title={pk.rationale}
+                >
+                  {pk.rationale}
+                </span>
+              </div>
+              <OptionPlanRow plan={plans[pk.symbol]} />
             </li>
           ))}
         </ul>
@@ -231,71 +261,82 @@ export default function DailyPicksPage() {
 
       {data && (
         <div className="space-y-8">
+          <p className="text-[11px] text-zinc-500 mt-1">
+            Option levels are model-derived from technicals for research only — not trading advice. Options carry substantial risk.
+          </p>
+
           {/* Consensus section */}
-          <section className="animate-rise">
-            <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
-              <Users className="w-4 h-4 text-accent-greenSoft" />
-              High Conviction
-              <span className="text-[12px] text-text-secondary font-normal">
-                stocks 3+ agents agree on
-              </span>
-            </h2>
-            {data.consensus.length === 0 ? (
-              <p className="text-[13px] text-text-secondary italic">
-                No strong consensus today. Each agent leaned their own
-                direction — see contrarian picks below.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {data.consensus.slice(0, 6).map((c) => (
-                  <ConsensusCard key={c.symbol} row={c} />
-                ))}
-              </div>
-            )}
-          </section>
+          {(() => {
+            const plans = data.option_plans ?? {};
+            return (
+              <>
+                <section className="animate-rise">
+                  <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-accent-greenSoft" />
+                    High Conviction
+                    <span className="text-[12px] text-text-secondary font-normal">
+                      stocks 3+ agents agree on
+                    </span>
+                  </h2>
+                  {data.consensus.length === 0 ? (
+                    <p className="text-[13px] text-text-secondary italic">
+                      No strong consensus today. Each agent leaned their own
+                      direction — see contrarian picks below.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {data.consensus.slice(0, 6).map((c) => (
+                        <ConsensusCard key={c.symbol} row={c} plan={plans[c.symbol]} />
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-          {/* Contrarian section */}
-          <section className="animate-rise">
-            <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-accent-violet" />
-              Each Agent&apos;s Edge
-              <span className="text-[12px] text-text-secondary font-normal">
-                best pick no one else saw
-              </span>
-            </h2>
-            {data.contrarians.length === 0 ? (
-              <p className="text-[13px] text-text-secondary italic">
-                No standout contrarian picks today — agents largely overlapped.
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {data.contrarians.map((p) => (
-                  <ContrarianCard key={`${p.agent_key}:${p.symbol}`} pick={p} />
-                ))}
-              </div>
-            )}
-          </section>
+                {/* Contrarian section */}
+                <section className="animate-rise">
+                  <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-accent-violet" />
+                    Each Agent&apos;s Edge
+                    <span className="text-[12px] text-text-secondary font-normal">
+                      best pick no one else saw
+                    </span>
+                  </h2>
+                  {data.contrarians.length === 0 ? (
+                    <p className="text-[13px] text-text-secondary italic">
+                      No standout contrarian picks today — agents largely overlapped.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {data.contrarians.map((p) => (
+                        <ContrarianCard key={`${p.agent_key}:${p.symbol}`} pick={p} plan={plans[p.symbol]} />
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-          {/* Full grid */}
-          <section className="animate-rise">
-            <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
-              All Picks
-              <span className="text-[12px] text-text-secondary font-normal">
-                full list per agent
-              </span>
-            </h2>
-            {data.agents.length === 0 ? (
-              <p className="text-[13px] text-text-secondary italic">
-                Agents haven&apos;t reported yet.
-              </p>
-            ) : (
-              <div className="overflow-x-auto flex gap-3 pb-3">
-                {data.agents.map((a) => (
-                  <AgentColumn key={a.agent_key} agent={a} />
-                ))}
-              </div>
-            )}
-          </section>
+                {/* Full grid */}
+                <section className="animate-rise">
+                  <h2 className="text-[15px] font-semibold mb-3 flex items-center gap-2">
+                    All Picks
+                    <span className="text-[12px] text-text-secondary font-normal">
+                      full list per agent
+                    </span>
+                  </h2>
+                  {data.agents.length === 0 ? (
+                    <p className="text-[13px] text-text-secondary italic">
+                      Agents haven&apos;t reported yet.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto flex gap-3 pb-3">
+                      {data.agents.map((a) => (
+                        <AgentColumn key={a.agent_key} agent={a} plans={plans} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            );
+          })()}
 
           <footer className="text-[11px] text-text-muted pt-4 border-t border-bg-divider">
             Generated{" "}
