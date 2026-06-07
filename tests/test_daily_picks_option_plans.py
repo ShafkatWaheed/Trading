@@ -17,11 +17,21 @@ def test_payload_includes_option_plans(monkeypatch):
          "picks": [{"symbol": "AAA", "rationale": "z", "conviction": "high"}],
          "error": None},
     ]
+    # _run_one_agent now takes (agent_key, ctx, opportunities) — 3 args
     monkeypatch.setattr(dps, "_run_one_agent",
-                        lambda k, ctx: fake_agents[0] if k == "a1" else fake_agents[1])
+                        lambda k, ctx, opps: fake_agents[0] if k == "a1" else fake_agents[1])
     monkeypatch.setattr(dps, "AGENT_PERSONALITIES", {"a1": {"name": "A1"},
                                                      "a2": {"name": "A2"}})
     monkeypatch.setattr(dps, "_market_ctx", lambda: {})
+
+    # Stub discover_service so no real DB/gateway call is made
+    import api.services.discover_service as disc
+    monkeypatch.setattr(disc, "get_opportunities", lambda **kw: {"opportunities": []})
+
+    # Stub synthesis so consensus reflects the fake agent picks
+    import api.services.daily_picks_synthesis as syn
+    monkeypatch.setattr(syn, "synthesize",
+                        lambda agents, ctx: {"consensus": [], "contrarians": []})
 
     captured = {}
 

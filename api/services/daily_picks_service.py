@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from typing import Any
 
+from api.services import daily_picks_agents, daily_picks_synthesis
 from src.personalities import AGENT_PERSONALITIES
-from src.utils.claude_cli import ask_claude_json
 from src.utils.db import cache_get, cache_set
 
 
@@ -25,30 +25,6 @@ _CACHE_TTL_HOURS = 8
 # once so wall-clock equals the slowest agent, not a sum-of-batches.
 _MAX_PARALLEL = 8
 _PICKS_PER_AGENT = 5
-
-
-def _build_agent_prompt(agent_key: str, market_ctx: dict) -> str:
-    """Build a personality-specific prompt asking the agent to pick 5 stocks."""
-    p = AGENT_PERSONALITIES[agent_key]
-    philosophy = (p.get("philosophy") or p.get("tagline") or "")[:400]
-    return f"""You are {p['name']}. {philosophy}
-
-Today's market context:
-- VIX: {market_ctx.get('vix', '?')}
-- S&P 500 3M: {market_ctx.get('spy_3m_pct', '?')}%
-- 10Y yield: {market_ctx.get('tnx', '?')}%
-- Top sector: {market_ctx.get('top_sector', '?')}
-
-Pick exactly 5 stocks to BUY today based on YOUR investment style.
-Bias hard toward your style — don't drift toward consensus.
-Each pick: ticker, 1-sentence rationale, conviction (high/med/low).
-
-Output JSON only:
-{{"picks":[
-  {{"symbol":"...","rationale":"...","conviction":"high"}},
-  ...
-]}}
-"""
 
 
 def _market_ctx() -> dict:
@@ -60,33 +36,21 @@ def _market_ctx() -> dict:
         return {}
 
 
-def _run_one_agent(agent_key: str, market_ctx: dict) -> dict:
-    """Run one agent. Returns {agent_key, agent_name, picks, error}."""
+def _run_one_agent(agent_key: str, ctx: dict, opportunities: list[dict]) -> dict:
+    """Discover this agent's picks from real data. Returns the agent_results shape."""
     p = AGENT_PERSONALITIES[agent_key]
-    prompt = _build_agent_prompt(agent_key, market_ctx)
+    from src.data.gateway import DataGateway
     try:
-        result = ask_claude_json(prompt, model="haiku", timeout=120, retries=1)
-        picks = result.get("picks", []) if isinstance(result, dict) else []
-        # Cap to 5, normalize
-        picks = picks[:_PICKS_PER_AGENT]
-        for pk in picks:
-            if isinstance(pk, dict):
-                pk["symbol"] = (pk.get("symbol") or "").upper().strip()
-        return {
-            "agent_key": agent_key,
-            "agent_name": p["name"],
-            "risk_tolerance": p.get("risk_tolerance", ""),
-            "picks": picks,
-            "error": None,
-        }
+        raw = daily_picks_agents.discover_for_agent(
+            agent_key, opportunities=opportunities, gateway=DataGateway())
+        picks = [{"symbol": r["symbol"], "rationale": "",
+                  "conviction": r.get("conviction", ""), "evidence": r.get("evidence", {})}
+                 for r in raw]
+        return {"agent_key": agent_key, "agent_name": p["name"],
+                "risk_tolerance": p.get("risk_tolerance", ""), "picks": picks, "error": None}
     except Exception as e:
-        return {
-            "agent_key": agent_key,
-            "agent_name": p["name"],
-            "risk_tolerance": p.get("risk_tolerance", ""),
-            "picks": [],
-            "error": str(e)[:200],
-        }
+        return {"agent_key": agent_key, "agent_name": p["name"],
+                "risk_tolerance": p.get("risk_tolerance", ""), "picks": [], "error": str(e)[:200]}
 
 
 def get_daily_picks(*, force: bool = False) -> dict:
@@ -104,32 +68,19 @@ def get_daily_picks(*, force: bool = False) -> dict:
             return cached
 
     ctx = _market_ctx()
-    agents = list(AGENT_PERSONALITIES.keys())
+    from api.services import discover_service
+    opportunities = (discover_service.get_opportunities(limit=60, period="1M") or {}).get("opportunities", [])
 
+    agents = list(AGENT_PERSONALITIES.keys())
     agent_results: list[dict] = []
-    # Mirrors ai_analyst_service.py:1234 — ThreadPoolExecutor with
-    # max_workers = number of personalities so all calls fire concurrently
-    # and total wall-clock equals the slowest single agent.
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL) as pool:
-        futures = {pool.submit(_run_one_agent, k, ctx): k for k in agents}
+        futures = {pool.submit(_run_one_agent, k, ctx, opportunities): k for k in agents}
         for f in as_completed(futures):
             agent_results.append(f.result())
-
-    # Stable order by personality key (insertion order of AGENT_PERSONALITIES)
     order = {k: i for i, k in enumerate(agents)}
     agent_results.sort(key=lambda r: order.get(r["agent_key"], 999))
 
-    # Compute consensus + contrarian via the pure function in
-    # src/analysis/daily_picks_consensus.py (built in Phase 1C).
-    # If that module isn't deployed yet, gracefully degrade with empty lists.
-    consensus_payload: dict[str, list] = {"consensus": [], "contrarians": []}
-    try:
-        from src.analysis.daily_picks_consensus import compute_consensus_and_contrarian
-        consensus_payload = compute_consensus_and_contrarian(agent_results)
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    consensus_payload = daily_picks_synthesis.synthesize(agent_results, ctx)
 
     payload: dict[str, Any] = {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -160,8 +111,10 @@ def get_daily_picks(*, force: bool = False) -> dict:
     except Exception:
         payload["option_plans"] = {}
 
-    try:
-        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_HOURS * 60)
-    except Exception:
-        pass
+    has_picks = bool(payload.get("consensus")) or any(a.get("picks") for a in agent_results)
+    if has_picks:
+        try:
+            cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_HOURS * 60)
+        except Exception:
+            pass
     return payload
