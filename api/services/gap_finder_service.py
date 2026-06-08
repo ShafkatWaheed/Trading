@@ -233,7 +233,7 @@ def _enrich_with_full_signals(ev: dict) -> None:
                 break
 
     # Recent earnings pattern from deep-dive cache (beat/miss history)
-    for dd_key in (f"deep_dive:v1:{sym}:3M:all:10000:2", f"deep_dive:v1:{sym}:1M:all:10000:2"):
+    for dd_key in (f"deep_dive:v2:{sym}:3M:all:10000:2.0", f"deep_dive:v2:{sym}:1M:all:10000:2.0", f"deep_dive:v2:{sym}:3M:all:10000:2", f"deep_dive:v2:{sym}:1M:all:10000:2"):
         dd = cache_get(dd_key)
         if dd:
             earnings = dd.get("earnings") or []
@@ -298,7 +298,7 @@ def _enrich_with_full_signals(ev: dict) -> None:
             }
 
     # Trade plan from cached deep-dive (entry / stop / target levels)
-    for dd_key in (f"deep_dive:v1:{sym}:3M:all:10000:2", f"deep_dive:v1:{sym}:1M:all:10000:2"):
+    for dd_key in (f"deep_dive:v2:{sym}:3M:all:10000:2.0", f"deep_dive:v2:{sym}:1M:all:10000:2.0", f"deep_dive:v2:{sym}:3M:all:10000:2", f"deep_dive:v2:{sym}:1M:all:10000:2"):
         dd_for_plan = cache_get(dd_key)
         if dd_for_plan and dd_for_plan.get("trade_plan"):
             tp = dd_for_plan["trade_plan"]
@@ -514,7 +514,7 @@ def _collect_evidence_for_held(holding: dict) -> dict:
                 ev["triggers"].append("congress_bearish")
 
     # Deep-dive verdict + price (cached only)
-    for k in (f"deep_dive:v1:{sym}:3M:all:10000:2", f"deep_dive:v1:{sym}:1M:all:10000:2"):
+    for k in (f"deep_dive:v2:{sym}:3M:all:10000:2.0", f"deep_dive:v2:{sym}:1M:all:10000:2.0", f"deep_dive:v2:{sym}:3M:all:10000:2", f"deep_dive:v2:{sym}:1M:all:10000:2"):
         dd = cache_get(k)
         if dd:
             ev["current"]["verdict"] = dd.get("verdict")

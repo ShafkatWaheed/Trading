@@ -885,7 +885,7 @@ def _enrich_pick(pick: dict) -> dict:
     }
 
     # Cached deep-dive verdict (try 3M and 1M periods)
-    for k in (f"deep_dive:v1:{sym}:3M:all:10000:2", f"deep_dive:v1:{sym}:1M:all:10000:2"):
+    for k in (f"deep_dive:v2:{sym}:3M:all:10000:2.0", f"deep_dive:v2:{sym}:1M:all:10000:2.0", f"deep_dive:v2:{sym}:3M:all:10000:2", f"deep_dive:v2:{sym}:1M:all:10000:2"):
         dd = cache_get(k)
         if dd:
             snapshot["verdict"] = dd.get("verdict")
@@ -936,6 +936,33 @@ def _enrich_pick(pick: dict) -> dict:
             snapshot["full_signals"] = full_signal_ev["full_signals"]
     except Exception as e:
         logger.info("brief: full-signal enrichment failed for %s: %r", sym, e)
+
+    # Quiver alt-data — dark-pool short flow (Tier 1) + gov contracts (Tier 2).
+    # Fetched here (cached 12-24h) rather than in the cache-only gap-finder
+    # helper, so finalists without a prior deep-dive still get these signals.
+    # Tier 3 (lobbying / flights) stays deep-dive-only — lower signal/noise.
+    try:
+        from src.data.gateway import DataGateway
+        _gw = DataGateway()
+        fs = snapshot.setdefault("full_signals", {})
+        dp = _gw.get_dark_pool(sym)
+        if dp:
+            fs["dark_pool"] = {
+                "direction": dp.get("direction"),
+                "recent_short_pct": dp.get("recent_short_pct"),
+                "baseline_short_pct": dp.get("baseline_short_pct"),
+                "trend": dp.get("trend"),
+            }
+        gc = _gw.get_gov_contracts(sym)
+        if gc:
+            fs["gov_contracts"] = {
+                "direction": gc.get("direction"),
+                "recent_4q_total": gc.get("recent_4q_total"),
+                "yoy_growth_pct": gc.get("yoy_growth_pct"),
+                "latest_period": gc.get("latest_period"),
+            }
+    except Exception as e:
+        logger.info("brief: quiver alt-data fetch failed for %s: %r", sym, e)
 
     return {**pick, "snapshot": snapshot}
 
