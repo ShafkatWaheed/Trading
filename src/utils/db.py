@@ -558,6 +558,35 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_hci_status ON house_clerk_index(status);
 
+        -- ── Unified congressional trades (House + Senate) ───────────────────
+        -- Single source of truth, populated by src.data.quiver_congress from the
+        -- Quiver Quantitative feed. Supersedes the house_clerk_*/senate_efd_*
+        -- scraper tables (kept above only for backward compatibility / old data).
+        -- Carries chamber + party, which the disclosure scrapers never had.
+        CREATE TABLE IF NOT EXISTS congress_trades (
+            filing_uuid         TEXT NOT NULL,
+            txn_index           INTEGER NOT NULL,
+            chamber             TEXT NOT NULL,   -- House | Senate
+            politician_name     TEXT NOT NULL,
+            party               TEXT,            -- Democrat | Republican | Independent | Unknown
+            state               TEXT,
+            bioguide_id         TEXT,
+            ticker              TEXT NOT NULL,
+            asset_type          TEXT,
+            transaction_type    TEXT,            -- buy | sell | exchange | unknown
+            transaction_date    TEXT,
+            filing_date         TEXT,
+            amount_low          INTEGER,
+            amount_high         INTEGER,
+            raw_text            TEXT,
+            source              TEXT,            -- e.g. 'quiver'
+            fetched_at          TEXT NOT NULL,
+            PRIMARY KEY (filing_uuid, txn_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ct_ticker     ON congress_trades(ticker);
+        CREATE INDEX IF NOT EXISTS idx_ct_date       ON congress_trades(transaction_date);
+        CREATE INDEX IF NOT EXISTS idx_ct_politician ON congress_trades(politician_name);
+
         -- ── Senate eFD PTR ingest (sibling to house_clerk_*) ──
         CREATE TABLE IF NOT EXISTS senate_efd_trades (
             filing_uuid        TEXT NOT NULL,

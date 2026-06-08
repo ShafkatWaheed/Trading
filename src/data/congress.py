@@ -1,20 +1,15 @@
 """Congressional stock trade data provider.
 
-Source: House Clerk PTR PDFs (disclosures-clerk.house.gov).
-
-Previously this module scraped Capitol Trades; in June 2026 the upstream
-flipped to a Vercel checkpoint that 403s every server request, so we now
-read the underlying STOCK Act disclosures straight from the House Clerk
-bulk index + per-PDF parse. The actual ingest lives in
-`src.data.house_clerk`; this module just adapts that layer into the
-existing `CongressTrade` / `CongressTradesSummary` shapes so
+Source: Quiver Quantitative (`src.data.quiver_congress`), which ingests both
+chambers' STOCK Act disclosures into the `congress_trades` table. This module
+adapts that layer into the `CongressTrade` / `CongressTradesSummary` shapes so
 `congress_signal_service`, `smart_money_service`, and `ai_analyst_service`
 keep working without changes.
 
-Both chambers are now ingested: House via `src.data.house_clerk` and Senate
-via `src.data.senate_efd`. Party affiliation is still "Unknown" for both --
-the disclosure feeds don't carry it; a separate roster-enrichment join will
-fill party + committees later.
+History: this used to scrape Capitol Trades, then the House Clerk PDFs +
+Senate eFD portal directly. Those sources became unreliable or IP-blocked
+(Akamai / CloudFront), so ingestion moved to Quiver, which uniquely carries
+party AND chamber for every trade.
 """
 
 from __future__ import annotations
@@ -22,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from src.data import house_clerk, senate_efd
+from src.data import quiver_congress
 from src.models.data_types import CongressTrade, CongressTradesSummary
 from src.utils.config import CACHE_TTL_FUNDAMENTALS
 from src.utils.db import cache_get, cache_set, log_api_call
@@ -73,45 +68,29 @@ class CongressDataProvider:
         if cached:
             return cached
 
-        counts: dict[str, int] = {}
-        for src in (house_clerk.get_top_traded_stocks(days=days, limit=50),
-                    senate_efd.get_top_traded_stocks(days=days, limit=50)):
-            for row in src:
-                counts[row["symbol"]] = counts.get(row["symbol"], 0) + row["trade_count"]
-        result = [{"symbol": s, "trade_count": c}
-                  for s, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)][:20]
+        result = quiver_congress.get_top_traded_stocks(days=days, limit=20)
         cache_set(cache_key, result, ttl_minutes=CACHE_TTL_FUNDAMENTALS)
         log_api_call("congress", "top_traded", "success")
         return result
 
-    # ── House Clerk + Senate eFD adapters ────────────────────────────
+    # ── Quiver (congress_trades) adapter ─────────────────────────────
 
     def _fetch_trades_by_symbol(self, symbol: str, days: int) -> list[CongressTrade]:
-        house = [self._row_to_trade(r, "House")
-                 for r in house_clerk.get_trades_by_symbol(symbol, days=days)]
-        senate = [self._row_to_trade(r, "Senate")
-                  for r in senate_efd.get_trades_by_symbol(symbol, days=days)]
-        return house + senate
+        return [self._row_to_trade(r)
+                for r in quiver_congress.get_trades_by_symbol(symbol, days=days)]
 
     def _fetch_trades_by_politician(self, name: str, days: int) -> list[CongressTrade]:
-        house = [self._row_to_trade(r, "House")
-                 for r in house_clerk.get_trades_by_politician(name, days=days)]
-        senate = [self._row_to_trade(r, "Senate")
-                  for r in senate_efd.get_trades_by_politician(name, days=days)]
-        return house + senate
+        return [self._row_to_trade(r)
+                for r in quiver_congress.get_trades_by_politician(name, days=days)]
 
-    def _row_to_trade(self, r: dict, chamber: str = "House") -> CongressTrade:
-        """Convert a house_clerk_trades or senate_efd_trades row dict to a CongressTrade.
+    def _row_to_trade(self, r: dict) -> CongressTrade:
+        """Convert a `congress_trades` row dict to a CongressTrade.
 
-        Party is left "Unknown" -- neither feed carries it. For House rows the
-        state is derived from state_dst (first 2 chars of e.g. "CA17"); for
-        Senate rows the state field is used directly.
+        Chamber and party come straight from the row (Quiver carries both).
         """
-        if chamber == "Senate":
-            state = (r.get("state") or "").strip()
-        else:
-            state_dst = (r.get("state_dst") or "").strip()
-            state = state_dst[:2] if len(state_dst) >= 2 else ""
+        chamber = (r.get("chamber") or "House").strip() or "House"
+        party = (r.get("party") or "Unknown").strip() or "Unknown"
+        state = (r.get("state") or "").strip()
 
         amount_low = Decimal(str(r.get("amount_low") or 0))
         amount_high = Decimal(str(r.get("amount_high") or 0))
@@ -135,11 +114,11 @@ class CongressDataProvider:
 
         return CongressTrade(
             politician=(r.get("politician_name") or "Unknown").strip() or "Unknown",
-            party="Unknown",  # not in either disclosure feed
+            party=party,
             chamber=chamber,
             state=state,
             symbol=(r.get("ticker") or "").upper(),
-            company="",  # not in PTR PDFs in machine-readable form
+            company="",  # not carried in the disclosure feed
             transaction_type=r.get("transaction_type") or "buy",
             amount_range=amount_range,
             amount_low=amount_low,

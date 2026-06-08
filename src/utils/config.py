@@ -12,6 +12,7 @@ POLYGON_API_KEY: str = os.getenv("POLYGON_API_KEY", "")
 FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
 TIINGO_API_KEY: str = os.getenv("TIINGO_API_KEY", "")
 FRED_API_KEY: str = os.getenv("FRED_API_KEY", "")
+QUIVER_API_TOKEN: str = os.getenv("QUIVER_API_TOKEN", "")
 
 DATABASE_PATH: Path = Path(os.getenv("DATABASE_PATH", "trading.db"))
 REPORT_OUTPUT_DIR: Path = Path(os.getenv("REPORT_OUTPUT_DIR", "reports"))
