@@ -11,7 +11,10 @@ from __future__ import annotations
 from src.analysis.daily_picks_scoring import conviction_from_score, rank_candidates
 
 _PICKS_PER_AGENT = 5
-_SHORTLIST = 15  # bound gateway calls for value/options lenses
+_SHORTLIST = 15  # bound gateway calls for the value lens (fundamentals, cached 24h)
+# Polygon options is rate-limited (free tier ~5/min), so keep the options lens
+# shortlist tiny — otherwise it dominates the synchronous daily-picks request.
+_OPTIONS_SHORTLIST = 5
 
 _STRATEGY_LENSES = {
     "momentum": {"Momentum", "Breakout", "Golden Cross", "Volume Spike", "Gap Fill"},
@@ -73,9 +76,11 @@ def _value_select(opportunities: list[dict], gateway) -> list[dict]:
 
 
 def _options_select(opportunities: list[dict], gateway) -> list[dict]:
-    shortlist = rank_candidates(opportunities, key="score", top_n=_SHORTLIST)
+    shortlist = rank_candidates(opportunities, key="score", top_n=_OPTIONS_SHORTLIST)
     out = []
     for c in shortlist:
+        if len(out) >= _PICKS_PER_AGENT:
+            break
         summ = gateway.get_options_summary(c["symbol"])
         pcr = getattr(summ, "put_call_ratio", None) if summ else None
         if pcr is not None and float(pcr) < 0.7:

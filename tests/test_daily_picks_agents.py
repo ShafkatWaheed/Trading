@@ -76,9 +76,11 @@ def test_value_uses_gateway_fundamentals():
 
 
 def test_options_uses_gateway_bullish_flow():
+    # bullish symbol must be within the top _OPTIONS_SHORTLIST(5) by score;
+    # SYN_MOM (88) is rank 1, so it's in the options shortlist.
     picks = dpa.discover_for_agent("options", opportunities=_OPPS,
-                                   gateway=_FakeGateway(bullish={"SYN_OVS"}))
-    assert [p["symbol"] for p in picks] == ["SYN_OVS"]
+                                   gateway=_FakeGateway(bullish={"SYN_MOM"}))
+    assert [p["symbol"] for p in picks] == ["SYN_MOM"]
 
 
 def test_unknown_agent_returns_empty():
