@@ -286,13 +286,16 @@ def _tier_ab_symbols() -> list[str]:
     scoring run never operates on nothing.
     """
     init_db()
+    syms: list[str] = []
     try:
         conn = get_connection()
-        rows = conn.execute(
-            "SELECT symbol FROM stocks_universe WHERE tier IN ('A','B') ORDER BY symbol"
-        ).fetchall()
-        conn.close()
-        syms = [r["symbol"] for r in rows]
+        try:
+            rows = conn.execute(
+                "SELECT symbol FROM stocks_universe WHERE tier IN ('A','B') ORDER BY symbol"
+            ).fetchall()
+            syms = [r["symbol"] for r in rows]
+        finally:
+            conn.close()
     except Exception:
         syms = []
     return syms or _all_target_symbols()
