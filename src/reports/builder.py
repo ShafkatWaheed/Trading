@@ -56,6 +56,10 @@ def build_report(
     community_buzz: dict | None = None,
     short_interest: dict | None = None,
     job_trend: dict | None = None,
+    dark_pool: dict | None = None,
+    gov_contracts: dict | None = None,
+    lobbying: dict | None = None,
+    corporate_flights: dict | None = None,
 ) -> Report:
     # Build sections
     sections = [
@@ -91,6 +95,14 @@ def build_report(
         sections.append(_short_interest_section(short_interest))
     if job_trend:
         sections.append(_job_trend_section(job_trend))
+    if dark_pool:
+        sections.append(_dark_pool_section(dark_pool))
+    if gov_contracts:
+        sections.append(_gov_contracts_section(gov_contracts))
+    if lobbying:
+        sections.append(_lobbying_section(lobbying))
+    if corporate_flights:
+        sections.append(_corporate_flights_section(corporate_flights))
     if confluence:
         sections.append(_confluence_section(confluence))
 
@@ -531,6 +543,57 @@ def _job_trend_section(data: dict) -> ReportSection:
         content=content,
         data={"score": score, "signal": trend, "summary": summary, "articles": articles},
     )
+
+
+def _dark_pool_section(data: dict) -> ReportSection:
+    """Off-exchange / dark-pool short-volume pressure (Quiver). Tier 1."""
+    pct = data.get("recent_short_pct")
+    trend = data.get("trend", "flat")
+    direction = data.get("direction", "neutral")
+    if direction == "bearish":
+        content = f"Elevated off-exchange short volume ({pct}% of dark-pool flow, {trend}) — bearish positioning."
+    elif direction == "bullish":
+        content = f"Low off-exchange short volume ({pct}% of dark-pool flow, {trend}) — possible short covering."
+    else:
+        content = f"Off-exchange short volume near normal ({pct}% of dark-pool flow, {trend})."
+    return ReportSection(title="Dark Pool Activity", content=content, data=data)
+
+
+def _gov_contracts_section(data: dict) -> ReportSection:
+    """Federal contract awards (Quiver). Tier 2 — sector-dependent."""
+    growth = data.get("yoy_growth_pct")
+    recent = data.get("recent_4q_total")
+    direction = data.get("direction", "neutral")
+    g = f"{growth:+.0f}% YoY" if growth is not None else "no prior-year baseline"
+    if direction == "bullish":
+        content = f"Government contract awards growing ({g}); ${recent:,.0f} over the last 4 quarters — fundamental tailwind."
+    elif direction == "bearish":
+        content = f"Government contract awards shrinking ({g}); ${recent:,.0f} over the last 4 quarters — revenue headwind."
+    else:
+        content = f"Steady government contract awards ({g}); ${recent:,.0f} over the last 4 quarters."
+    return ReportSection(title="Government Contracts", content=content, data=data)
+
+
+def _lobbying_section(data: dict) -> ReportSection:
+    """Corporate lobbying spend (Quiver). Tier 3 — context, low signal/noise."""
+    spend = data.get("recent_spend")
+    yr = data.get("recent_year", "")
+    trend = data.get("trend", "steady")
+    issues = data.get("top_issues", [])
+    content = f"Lobbying spend {trend} — ${spend:,.0f} in {yr}."
+    if issues:
+        content += f" Top issues: {', '.join(issues[:3])}."
+    return ReportSection(title="Lobbying Activity", content=content, data=data)
+
+
+def _corporate_flights_section(data: dict) -> ReportSection:
+    """Corporate private-jet activity (Quiver). Tier 3 — M&A novelty."""
+    n = data.get("flight_count", 0)
+    routes = data.get("recent_routes", [])
+    content = f"{n} recent corporate-jet flight(s) tracked — possible deal/operational activity (low-confidence signal)."
+    if routes:
+        content += f" Recent: {routes[-1]}."
+    return ReportSection(title="Corporate Flights", content=content, data=data)
 
 
 def _relative_value_section(rv: RelativeValueScore) -> ReportSection:

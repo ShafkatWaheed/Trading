@@ -119,13 +119,17 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
         )
 
     # Enrichment calls run in parallel (each is independent + I/O-bound)
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         f_geo = ex.submit(lambda: _safe(lambda: _fetch_geopolitical_for_stock(symbol, stock)))
         f_analyst = ex.submit(lambda: _safe(lambda: _fetch_analyst_data(symbol)))
         f_holders = ex.submit(lambda: _safe(lambda: _fetch_holders_data(symbol)))
         f_buzz = ex.submit(lambda: _safe(lambda: _fetch_community_buzz(symbol)))
         f_short = ex.submit(lambda: _safe(lambda: gw.get_short_interest(symbol)))
         f_job = ex.submit(lambda: _safe(lambda: _fetch_job_trend(symbol)))
+        f_darkpool = ex.submit(lambda: _safe(lambda: gw.get_dark_pool(symbol)))
+        f_govcon = ex.submit(lambda: _safe(lambda: gw.get_gov_contracts(symbol)))
+        f_lobby = ex.submit(lambda: _safe(lambda: gw.get_lobbying(symbol)))
+        f_flights = ex.submit(lambda: _safe(lambda: gw.get_corporate_flights(symbol)))
 
     geo_data = f_geo.result()
     analyst_data = f_analyst.result()
@@ -133,6 +137,10 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
     buzz_data = f_buzz.result()
     short_interest = f_short.result()
     job_trend = f_job.result()
+    dark_pool = f_darkpool.result()
+    gov_contracts = f_govcon.result()
+    lobbying = f_lobby.result()
+    corporate_flights = f_flights.result()
 
     report = build_report(
         stock=stock,
@@ -151,6 +159,10 @@ def analyze_stock(symbol: str, export: bool = True, pdf: bool = False) -> Report
         community_buzz=buzz_data,
         short_interest=short_interest,
         job_trend=job_trend,
+        dark_pool=dark_pool,
+        gov_contracts=gov_contracts,
+        lobbying=lobbying,
+        corporate_flights=corporate_flights,
     )
 
     # ── Export ──────────────────────────────────────────────────

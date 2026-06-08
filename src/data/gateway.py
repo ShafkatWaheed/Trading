@@ -154,6 +154,36 @@ class DataGateway:
         except Exception:
             return None
 
+    # ── Quiver alternative data (dark pool, gov contracts, …) ────
+
+    def get_dark_pool(self, symbol: str) -> dict | None:
+        from src.data import quiver_altdata
+        try:
+            return quiver_altdata.get_dark_pool(symbol)
+        except Exception:
+            return None
+
+    def get_gov_contracts(self, symbol: str) -> dict | None:
+        from src.data import quiver_altdata
+        try:
+            return quiver_altdata.get_gov_contracts(symbol)
+        except Exception:
+            return None
+
+    def get_lobbying(self, symbol: str) -> dict | None:
+        from src.data import quiver_altdata
+        try:
+            return quiver_altdata.get_lobbying(symbol)
+        except Exception:
+            return None
+
+    def get_corporate_flights(self, symbol: str) -> dict | None:
+        from src.data import quiver_altdata
+        try:
+            return quiver_altdata.get_corporate_flights(symbol)
+        except Exception:
+            return None
+
     # ── News & Sentiment ─────────────────────────────────────────
 
     def get_stock_news(self, symbol: str, days: int = 7) -> list[dict]:
