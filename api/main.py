@@ -73,11 +73,11 @@ async def _start_schedulers() -> None:
     # (the grounded agents have no candidates to screen).
     try:
         from api.services._scheduler import schedule_daily_at
-        from src.scheduler import refresh_scores as _refresh_scores
+        from src.scheduler import refresh_scores as _refresh_scores, _tier_ab_symbols
 
         def _refresh_opportunity_scores():
             try:
-                _refresh_scores()
+                _refresh_scores(symbols=_tier_ab_symbols())
             except Exception:
                 pass
 
