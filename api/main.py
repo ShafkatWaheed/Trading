@@ -67,6 +67,25 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("congress refresh scheduler failed: %r", e)
 
+    # Opportunity-score precompute — nightly at 5:30 ET so discover_service and
+    # daily_picks have a fresh scored universe (precomputed_scores). Without this
+    # the universe goes stale after 24h and the Daily Picks page empties out
+    # (the grounded agents have no candidates to screen).
+    try:
+        from api.services._scheduler import schedule_daily_at
+        from src.scheduler import refresh_scores as _refresh_scores
+
+        def _refresh_opportunity_scores():
+            try:
+                _refresh_scores()
+            except Exception:
+                pass
+
+        schedule_daily_at(5, 30, _refresh_opportunity_scores, name="opportunity_scores_refresh")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("opportunity scores scheduler failed: %r", e)
+
 app.include_router(market.router)
 app.include_router(discover.router)
 app.include_router(stocks.router)
