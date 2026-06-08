@@ -6,7 +6,7 @@ from datetime import datetime
 
 from src.orchestrator import analyze_stock
 from src.alerts import detect_alerts
-from src.utils.db import init_db, get_watchlist, get_alerts
+from src.utils.db import init_db, get_connection, get_watchlist, get_alerts
 from src.reports.exporter import export_json
 
 
@@ -279,6 +279,25 @@ def _all_target_symbols() -> list[str]:
     return sorted(syms)
 
 
+def _tier_ab_symbols() -> list[str]:
+    """Tier A+B symbols from stocks_universe (the liquid/tradeable slice).
+
+    Falls back to _all_target_symbols() if the table is empty/unavailable, so a
+    scoring run never operates on nothing.
+    """
+    init_db()
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT symbol FROM stocks_universe WHERE tier IN ('A','B') ORDER BY symbol"
+        ).fetchall()
+        conn.close()
+        syms = [r["symbol"] for r in rows]
+    except Exception:
+        syms = []
+    return syms or _all_target_symbols()
+
+
 def _fan_out(fn, symbols: list[str], max_workers: int = 6, label: str = "") -> None:
     """Run fn(symbol) for each symbol in parallel; log results."""
     ok, fail = 0, 0
@@ -374,8 +393,12 @@ def refresh_options() -> None:
     _fan_out(_one, _all_target_symbols(), max_workers=4, label="options")
 
 
-def refresh_scores() -> None:
-    """Pre-compute opportunity scores → write to precomputed_scores table. Daily 5 PM ET."""
+def refresh_scores(symbols: list[str] | None = None) -> None:
+    """Pre-compute opportunity scores → write to precomputed_scores table.
+
+    `symbols` defaults to _all_target_symbols() (watchlist + STOCK_DB) for the
+    legacy standalone scheduler; the API scheduler passes _tier_ab_symbols().
+    """
     from src.analysis import technical
     from src.analysis.opportunity import compute_opportunity
     from src.data.gateway import DataGateway
@@ -400,7 +423,8 @@ def refresh_scores() -> None:
             "label": score.label,
         })
 
-    _fan_out(_one, _all_target_symbols(), max_workers=4, label="scores")
+    scope = symbols if symbols is not None else _all_target_symbols()
+    _fan_out(_one, scope, max_workers=4, label="scores")
 
 
 def cleanup_old_cache() -> None:
