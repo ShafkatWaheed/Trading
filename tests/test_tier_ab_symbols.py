@@ -30,3 +30,12 @@ def test_tier_ab_falls_back_when_universe_empty():
     out = scheduler._tier_ab_symbols()
     assert out == scheduler._all_target_symbols()
     assert len(out) > 0
+
+
+def test_tier_ab_falls_back_on_query_error(monkeypatch):
+    # If the stocks_universe query raises, _tier_ab_symbols falls back gracefully.
+    def boom():
+        raise RuntimeError("db unavailable")
+    monkeypatch.setattr(scheduler, "get_connection", boom)
+    out = scheduler._tier_ab_symbols()
+    assert out == scheduler._all_target_symbols()
