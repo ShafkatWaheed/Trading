@@ -9,12 +9,15 @@ agent with the real evidence that justifies them. Per-agent errors degrade to
 from __future__ import annotations
 
 from src.analysis.daily_picks_scoring import conviction_from_score, rank_candidates
+from src.utils.db import get_connection, init_db
 
 _PICKS_PER_AGENT = 5
 _SHORTLIST = 15  # bound gateway calls for the value lens (fundamentals, cached 24h)
 # Polygon options is rate-limited (free tier ~5/min), so keep the options lens
 # shortlist tiny — otherwise it dominates the synchronous daily-picks request.
 _OPTIONS_SHORTLIST = 5
+_CONGRESS_BUY_MIN = 2     # >= this many recent congressional buys
+_INST_HOLDER_MIN = 5      # >= this many distinct 13F holders
 
 _STRATEGY_LENSES = {
     "momentum": {"Momentum", "Breakout", "Golden Cross", "Volume Spike", "Gap Fill"},
@@ -22,7 +25,6 @@ _STRATEGY_LENSES = {
     "macro": {"Sector Leader", "Dividend Play"},
     "disruption": {"Breakout", "Momentum", "Earnings Catalyst"},
     "insider": {"Insider Accumulation"},
-    "flow": {"Congress Buying"},
 }
 
 
@@ -63,6 +65,48 @@ def _strategy_select(agent_key: str, opportunities: list[dict]) -> list[dict]:
     return [_pick(c) for c in top]
 
 
+def _flow_signals() -> tuple[set[str], dict[str, int], dict[str, int]]:
+    """Bulk read: tickers with recent congressional buys + 13F breadth.
+
+    Returns (symbols, congress_counts, institution_counts). Empty on any error.
+    """
+    init_db()
+    congress: dict[str, int] = {}
+    inst: dict[str, int] = {}
+    try:
+        conn = get_connection()
+        try:
+            for r in conn.execute(
+                "SELECT ticker, COUNT(*) AS n FROM congress_trades "
+                "WHERE transaction_type='buy' AND transaction_date >= date('now','-180 day') "
+                "GROUP BY ticker HAVING n >= ?", (_CONGRESS_BUY_MIN,)
+            ):
+                if r["ticker"]:
+                    congress[r["ticker"].upper()] = r["n"]
+            for r in conn.execute(
+                "SELECT symbol, COUNT(DISTINCT cik) AS h FROM institution_holdings "
+                "GROUP BY symbol HAVING h >= ?", (_INST_HOLDER_MIN,)
+            ):
+                if r["symbol"]:
+                    inst[r["symbol"].upper()] = r["h"]
+        finally:
+            conn.close()
+    except Exception:
+        return set(), {}, {}
+    return set(congress) | set(inst), congress, inst
+
+
+def _flow_select(opportunities: list[dict]) -> list[dict]:
+    symbols, congress, inst = _flow_signals()
+    if not symbols:
+        return []
+    matched_cards = [c for c in opportunities if (c.get("symbol") or "").upper() in symbols]
+    top = rank_candidates(matched_cards, key="score", top_n=_PICKS_PER_AGENT)
+    return [_pick(c, {"congress_buys": congress.get((c.get("symbol") or "").upper()),
+                      "institutions": inst.get((c.get("symbol") or "").upper())})
+            for c in top]
+
+
 def _value_select(opportunities: list[dict], gateway) -> list[dict]:
     shortlist = rank_candidates(opportunities, key="score", top_n=_SHORTLIST)
     out = []
@@ -97,6 +141,8 @@ def discover_for_agent(agent_key: str, *, opportunities: list[dict], gateway) ->
             return _value_select(opportunities, gateway)
         if agent_key == "options":
             return _options_select(opportunities, gateway)
+        if agent_key == "flow":
+            return _flow_select(opportunities)
         return []
     except Exception:
         return []

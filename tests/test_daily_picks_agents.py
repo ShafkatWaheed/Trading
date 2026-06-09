@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from api.services import daily_picks_agents as dpa
+from src.utils.db import get_connection, init_db
 
 
 def _card(symbol, strategy, score, sub_flow=0, secondary=None, sector="Tech"):
@@ -108,6 +109,20 @@ def test_macro_selects_sector_leader():
 
 
 def test_flow_selects_congress_buying():
+    # Flow agent now queries the DB for real congressional buys; seed SYN_CON with 2 buys.
+    init_db()
+    c = get_connection()
+    c.execute("DELETE FROM congress_trades WHERE source='test_agents'")
+    c.execute("DELETE FROM institution_holdings WHERE source='test_agents'")
+    for i in range(2):
+        c.execute(
+            "INSERT INTO congress_trades (filing_uuid, txn_index, chamber, politician_name, "
+            "party, ticker, transaction_type, transaction_date, fetched_at, source) "
+            "VALUES (?,?,?,?,?,?,?,date('now','-10 day'),datetime('now'),'test_agents')",
+            (f"ta{i}", i, "House", "Rep X", "R", "SYN_CON", "buy"),
+        )
+    c.commit()
+    c.close()
     picks = dpa.discover_for_agent("flow", opportunities=_OPPS, gateway=_FakeGateway())
     assert [p["symbol"] for p in picks] == ["SYN_CON"]
 
