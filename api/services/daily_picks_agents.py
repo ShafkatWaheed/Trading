@@ -16,6 +16,7 @@ _SHORTLIST = 15  # bound gateway calls for the value lens (fundamentals, cached 
 # Polygon options is rate-limited (free tier ~5/min), so keep the options lens
 # shortlist tiny — otherwise it dominates the synchronous daily-picks request.
 _OPTIONS_SHORTLIST = 5
+_INSIDER_SHORTLIST = 15
 _CONGRESS_BUY_MIN = 2     # >= this many recent congressional buys
 _INST_HOLDER_MIN = 5      # >= this many distinct 13F holders
 _DIV_YIELD_MIN = 3.0      # % minimum dividend yield for macro dividend-play branch
@@ -24,7 +25,6 @@ _STRATEGY_LENSES = {
     "momentum": {"Momentum", "Breakout", "Golden Cross", "Volume Spike", "Gap Fill"},
     "contrarian": {"Oversold Bounce", "Mean Reversion", "Support Bounce"},
     "disruption": {"Breakout", "Momentum", "Earnings Catalyst"},
-    "insider": {"Insider Accumulation"},
 }
 
 
@@ -165,6 +165,28 @@ def _macro_select(opportunities: list[dict], gateway) -> list[dict]:
     return picks[:_PICKS_PER_AGENT]
 
 
+def _insider_select(opportunities: list[dict], gateway) -> list[dict]:
+    out = []
+    for c in rank_candidates(opportunities, key="score", top_n=_INSIDER_SHORTLIST):
+        if len(out) >= _PICKS_PER_AGENT:
+            break
+        try:
+            s = gateway.get_insider_summary(c["symbol"], days=90)
+        except Exception:
+            continue
+        if s is None:
+            continue
+        buying = (getattr(s, "cluster_buy", False)
+                  or getattr(s, "signal", "") in ("buy", "strong buy")
+                  or (getattr(s, "total_buys", 0) or 0) >= 3)
+        if buying:
+            out.append(_pick(c, {"signal": getattr(s, "signal", ""),
+                                 "cluster_buy": getattr(s, "cluster_buy", False),
+                                 "total_buys": getattr(s, "total_buys", 0),
+                                 "net_shares": getattr(s, "net_shares", 0)}))
+    return out
+
+
 def discover_for_agent(agent_key: str, *, opportunities: list[dict], gateway) -> list[dict]:
     """Return up to 5 picks for one agent. Degrades to [] on any error."""
     try:
@@ -178,6 +200,8 @@ def discover_for_agent(agent_key: str, *, opportunities: list[dict], gateway) ->
             return _flow_select(opportunities)
         if agent_key == "macro":
             return _macro_select(opportunities, gateway)
+        if agent_key == "insider":
+            return _insider_select(opportunities, gateway)
         return []
     except Exception:
         return []

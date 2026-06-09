@@ -63,9 +63,15 @@ def test_contrarian_selects_mean_reversion_family():
     assert syms == {"SYN_OVS", "SYN_MR"}
 
 
-def test_insider_selects_insider_accumulation():
-    picks = dpa.discover_for_agent("insider", opportunities=_OPPS, gateway=_FakeGateway())
-    assert [p["symbol"] for p in picks] == ["SYN_INS"]
+def test_insider_selects_via_gateway_summary():
+    # insider now queries gateway.get_insider_summary, not a strategy tag.
+    class _Sum:
+        cluster_buy = True; signal = "buy"; total_buys = 4; net_shares = 100
+    class _GW(_FakeGateway):
+        def get_insider_summary(self, sym, days=90):
+            return _Sum() if sym == "SYN_MOM" else None
+    picks = dpa.discover_for_agent("insider", opportunities=_OPPS, gateway=_GW())
+    assert [p["symbol"] for p in picks] == ["SYN_MOM"]
 
 
 def test_value_uses_gateway_fundamentals():
