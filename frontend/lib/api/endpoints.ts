@@ -627,3 +627,18 @@ export const flowsApi = {
   congressTape: (window: 90 | 180 | 365 = 180) =>
     api.get<import("./types").SectorTapeResponse>(`/congress/sector-tape?window=${window}`),
 };
+
+
+export const predictionsApi = {
+  today: () => api.get<import("./types").PredictionsPayload>("/predictions/today"),
+  forDate: (date: string) =>
+    api.get<import("./types").PredictionsPayload>(`/predictions/${date}`),
+  withActuals: (date: string) =>
+    api.get<import("./types").PredictionsPayload>(`/predictions/${date}/with-actuals`),
+  accuracy: (windowDays = 30, hitThreshold = 25) =>
+    api.get<import("./types").PredictionsAccuracyPayload>(
+      `/predictions/accuracy?window_days=${windowDays}&hit_threshold=${hitThreshold}`,
+    ),
+  activeStrategy: () =>
+    api.get<import("./types").PredictionStrategy>("/predictions/strategy/active"),
+};

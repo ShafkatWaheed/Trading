@@ -30,6 +30,7 @@ const PRIMARY = [
 const SECONDARY = [
   { href: "/graph",           label: "Graph",          icon: Network,   blurb: "Health, refresh controls, review queue — combined" },
   { href: "/track-record",    label: "Track Record",   icon: LineChart, blurb: "How often is the AI right — graded vs. real moves" },
+  { href: "/predictions",     label: "Predictions",    icon: Target,    blurb: "Top-10 picks scored daily + rolling hit rate" },
   { href: "/context-search",  label: "Context Search", icon: Search,    blurb: "Free-text scenario → ranked stocks via the graph" },
   { href: "/universe",        label: "Universe",       icon: Network,   blurb: "Tracked stock universe" },
   { href: "/data-sources",    label: "Data Sources",   icon: Radio,     blurb: "Connected feeds + rate limits" },

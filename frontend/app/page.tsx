@@ -167,6 +167,26 @@ export default function MarketPulsePage() {
           />
         </section>
 
+        {/* Promo to /predictions — keep this lightweight so it doesn't compete
+            with the catalyst section above. Full surface lives on its own page. */}
+        <Link
+          href="/predictions"
+          className="block mt-4 card p-4 border-l-4 border-accent-blue/40 hover:bg-bg-card2 transition-colors"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-accent-blueSoft">
+                Daily Top-10 Predictions
+              </div>
+              <p className="text-[12px] text-text-secondary mt-1">
+                Pre-open picks scored each morning, results stamped after close, rolling
+                accuracy tracked over time.
+              </p>
+            </div>
+            <span className="text-[11px] text-text-muted">View →</span>
+          </div>
+        </Link>
+
         {/* ── 07 · TRADING IMPLICATIONS ────────────────────────────────── */}
         {data?.implications && data.implications.length > 0 && (
           <>

@@ -78,6 +78,52 @@ export type CalendarPayload = {
   last_updated: string;
 };
 
+
+// ── Daily predictions ─────────────────────────────────────────────
+
+export type PredictionPick = {
+  rank: number;
+  symbol: string;
+  score: number | null;
+  reasoning: string | null;
+  strategy_version: number;
+  // Present on /with-actuals once the day has closed and actuals are stamped:
+  open_price?: number | null;
+  close_price?: number | null;
+  actual_change_pct?: number | null;
+  universe_rank?: number | null;
+  universe_size?: number | null;
+  actuals_recorded_at?: string | null;
+};
+
+export type PredictionsPayload = {
+  date: string;
+  strategy_version: number | null;
+  strategy_name: string | null;
+  picks: PredictionPick[];
+  universe_size?: number;
+  actuals_present?: boolean;
+};
+
+export type PredictionStrategy = {
+  version: number;
+  name: string;
+  description: string;
+  config: Record<string, unknown>;
+  created_at: string;
+  activated_at: string | null;
+};
+
+export type PredictionsAccuracyPayload = {
+  window_days: number;
+  hit_threshold: number;
+  days_evaluated: number;
+  predictions_total: number;
+  hits: number;
+  hit_rate: number;
+  by_strategy: Record<string, { predictions: number; hits: number; hit_rate: number }>;
+};
+
 export type GeopoliticalEvent = {
   type: string;
   icon: string;
