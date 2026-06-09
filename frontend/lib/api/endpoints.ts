@@ -477,6 +477,26 @@ export const graphApi = {
     ),
   discoverImpact: (req: DiscoverImpactRequest) =>
     api.post<DiscoverImpactResponse>("/graph/relevance", req),
+  // On-demand 10-K enrichment for a sparse symbol. Kicks a background
+  // job; poll status until done, then refetch neighborhood.
+  kickEnrich: (symbol: string) =>
+    api.post<{ kicked: boolean; already_running?: boolean; reason?: string; symbol: string }>(
+      `/graph/enrich/${encodeURIComponent(symbol)}`,
+      {},
+    ),
+  enrichStatus: (symbol: string) =>
+    api.get<{
+      symbol: string;
+      in_cooldown: boolean;
+      cooldown_hours: number;
+      job: {
+        status: string;
+        current_phase?: string | null;
+        progress_pct?: number | null;
+        elapsed_s?: number | null;
+        error?: string | null;
+      } | null;
+    }>(`/graph/enrich/${encodeURIComponent(symbol)}/status`),
 };
 
 export const freshnessApi = {

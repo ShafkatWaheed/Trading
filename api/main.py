@@ -12,7 +12,7 @@ from api.routes import (
     market, discover, stocks, backtest, agent, watchlist, compare, alerts, simulation,
     data_sources, universe, news_impact, graph, freshness, earnings, graph_relevance,
     refresh, track_record, context_search, brief, daily_picks, journal, flows,
-    predictions, admin_cache, premarket, digest,
+    predictions, admin_cache, premarket, digest, graph_enrich,
 )
 
 app = FastAPI(
@@ -248,6 +248,7 @@ app.include_router(predictions.router)
 app.include_router(admin_cache.router)
 app.include_router(premarket.router)
 app.include_router(digest.router)
+app.include_router(graph_enrich.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])

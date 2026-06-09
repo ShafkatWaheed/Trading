@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import {
-  GitBranch, ArrowLeftCircle, ArrowRightCircle, Users, Swords, Puzzle,
+  GitBranch, ArrowLeftCircle, ArrowRightCircle, Users, Swords, Puzzle, Sparkles,
 } from "lucide-react";
 import { graphApi } from "@/lib/api/endpoints";
 import type { NeighborEdge } from "@/lib/api/types";
@@ -165,13 +166,104 @@ function Lane({
   );
 }
 
+// Sparsity threshold — show the "Build connections" button when the
+// total edge count falls at or below this. Picked so AAPL/MSFT etc.
+// never see the button (rich hand-curated graph) while Tier B/C names
+// usually do.
+const SPARSE_THRESHOLD = 4;
+
+
+function BuildConnectionsButton({
+  symbol, onClick, pending, cooldownActive, phase, pct, errorReason, compact = false,
+}: {
+  symbol: string;
+  onClick: () => void;
+  pending: boolean;
+  cooldownActive: boolean;
+  phase?: string | null;
+  pct?: number;
+  errorReason?: string | null;
+  compact?: boolean;
+}) {
+  const disabled = pending || cooldownActive;
+  const label = pending
+    ? `Building… ${phase ? "· " + phase : ""} ${pct ? `· ${pct}%` : ""}`
+    : cooldownActive
+      ? `Recently enriched — try again tomorrow`
+      : `Build connections for ${symbol}`;
+
+  return (
+    <div className={cn("rounded-md", compact ? "" : "border border-bg-border bg-bg-base/40 p-3")}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(
+          "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium",
+          "transition-colors border",
+          disabled
+            ? "border-bg-border text-text-muted bg-bg-card cursor-not-allowed"
+            : "border-accent-violet/40 text-accent-violet bg-accent-violet/5 hover:bg-accent-violet/10",
+        )}
+      >
+        <Sparkles size={11} />
+        {label}
+      </button>
+      {!compact && !pending && !cooldownActive && (
+        <p className="text-[10px] text-text-muted mt-2 leading-relaxed max-w-xl">
+          Reads {symbol}'s latest 10-K Item 1A and extracts named suppliers /
+          customers / partners via Claude (Opus). Takes 1–3 minutes; the page
+          will refresh automatically when done. Hand-curated edges are never
+          overwritten — only new connections get added.
+        </p>
+      )}
+      {errorReason && (
+        <p className="text-[10px] text-accent-redSoft mt-2">
+          {errorReason}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function NeighborhoodCard({ symbol }: Props) {
+  const qc = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["neighborhood", symbol],
     queryFn: () => graphApi.neighborhood(symbol),
     staleTime: 24 * 60 * 60 * 1000,
     enabled: Boolean(symbol),
   });
+
+  // Track whether an enrichment is in flight + poll status while so.
+  const [isEnriching, setIsEnriching] = useState(false);
+  const statusQ = useQuery({
+    queryKey: ["graph-enrich-status", symbol],
+    queryFn: () => graphApi.enrichStatus(symbol),
+    enabled: Boolean(symbol) && isEnriching,
+    refetchInterval: isEnriching ? 4000 : false,
+    refetchIntervalInBackground: false,
+  });
+
+  // When the polled status flips from running → done|failed, stop polling
+  // and refetch the neighborhood so any new edges appear.
+  const jobStatus = statusQ.data?.job?.status;
+  if (isEnriching && jobStatus && jobStatus !== "running") {
+    setIsEnriching(false);
+    qc.invalidateQueries({ queryKey: ["neighborhood", symbol] });
+  }
+
+  const enrichMutation = useMutation({
+    mutationFn: () => graphApi.kickEnrich(symbol),
+    onSuccess: (res) => {
+      if (res.kicked || res.already_running) {
+        setIsEnriching(true);
+      }
+    },
+  });
+
+  const cooldownActive = Boolean(statusQ.data?.in_cooldown);
+  const enrichPhase = statusQ.data?.job?.current_phase;
+  const enrichPct = statusQ.data?.job?.progress_pct ?? 0;
 
   if (isLoading) {
     return (
@@ -243,17 +335,44 @@ export function NeighborhoodCard({ symbol }: Props) {
         </p>
 
         {total === 0 ? (
-          <p className="text-text-muted text-sm italic">
-            No graph edges yet for {symbol}. Suppliers, customers, peers, and
-            substitutes are extracted from 10-Ks and curated peer maps — coverage
-            grows as we ingest more filings.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {LANE_ORDER.map((k) => (
-              <Lane key={k} laneKey={k} edges={lanes[k]} />
-            ))}
+          <div className="space-y-3">
+            <p className="text-text-muted text-sm italic">
+              No graph edges yet for {symbol}. Suppliers, customers, peers, and
+              substitutes are extracted from 10-Ks and curated peer maps —
+              coverage grows as we ingest more filings.
+            </p>
+            <BuildConnectionsButton
+              symbol={symbol}
+              onClick={() => enrichMutation.mutate()}
+              pending={enrichMutation.isPending || isEnriching}
+              cooldownActive={cooldownActive}
+              phase={enrichPhase}
+              pct={enrichPct}
+              errorReason={statusQ.data?.job?.error || enrichMutation.error?.message}
+            />
           </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {LANE_ORDER.map((k) => (
+                <Lane key={k} laneKey={k} edges={lanes[k]} />
+              ))}
+            </div>
+            {total <= SPARSE_THRESHOLD && (
+              <div className="mt-4">
+                <BuildConnectionsButton
+                  symbol={symbol}
+                  onClick={() => enrichMutation.mutate()}
+                  pending={enrichMutation.isPending || isEnriching}
+                  cooldownActive={cooldownActive}
+                  phase={enrichPhase}
+                  pct={enrichPct}
+                  errorReason={statusQ.data?.job?.error || enrichMutation.error?.message}
+                  compact
+                />
+              </div>
+            )}
+          </>
         )}
 
         <div className="mt-5 pt-3 border-t border-bg-border flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-text-muted">
