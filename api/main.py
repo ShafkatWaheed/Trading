@@ -86,6 +86,38 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("opportunity scores scheduler failed: %r", e)
 
+    # Startup self-heal — an out-of-hours restart misses the 5:30 ET scoring job,
+    # leaving the universe stale and daily-picks empty. If scores are stale at
+    # boot, score Tier A+B once in a daemon thread (non-blocking — startup must
+    # not wait on the ~minutes-long scoring run).
+    try:
+        import logging
+        import threading
+        from src.scheduler import (
+            refresh_scores as _refresh_scores,
+            _tier_ab_symbols,
+            scores_need_refresh,
+        )
+
+        if scores_need_refresh():
+            def _startup_score_selfheal():
+                try:
+                    _refresh_scores(symbols=_tier_ab_symbols())
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=_startup_score_selfheal,
+                name="startup_score_selfheal",
+                daemon=True,
+            ).start()
+            logging.getLogger(__name__).info(
+                "startup self-heal: scores stale, scoring Tier A+B in background"
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("startup score self-heal failed: %r", e)
+
 app.include_router(market.router)
 app.include_router(discover.router)
 app.include_router(stocks.router)

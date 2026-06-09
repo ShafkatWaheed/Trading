@@ -301,6 +301,21 @@ def _tier_ab_symbols() -> list[str]:
     return syms or _all_target_symbols()
 
 
+def scores_need_refresh(min_fresh: int = 100) -> bool:
+    """True when fewer than `min_fresh` opportunity scores are <24h old.
+
+    Used at API startup to self-heal: an out-of-hours restart misses the 5:30 ET
+    scoring job, leaving the universe stale (and daily-picks empty) until the
+    next run. A healthy universe has ~1,000 fresh scores; empty/stale/legacy-69
+    all fall under the threshold.
+    """
+    from src.utils.db import get_all_precomputed_scores
+    try:
+        return len(get_all_precomputed_scores(max_age_minutes=24 * 60)) < min_fresh
+    except Exception:
+        return False
+
+
 def _fan_out(fn, symbols: list[str], max_workers: int = 6, label: str = "") -> None:
     """Run fn(symbol) for each symbol in parallel; log results."""
     ok, fail = 0, 0
