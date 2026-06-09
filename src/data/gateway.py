@@ -111,8 +111,17 @@ class DataGateway:
     # ── Options & Level 2 ────────────────────────────────────────
 
     def get_options_summary(self, symbol: str) -> OptionsSummary | None:
+        """Options summary. Polygon first (paid); falls back to the free
+        yfinance summary when Polygon is unconfigured/empty. None if both fail."""
         try:
-            return self._get_polygon().get_options_summary(symbol)
+            summ = self._get_polygon().get_options_summary(symbol)
+            if summ is not None:
+                return summ
+        except Exception:
+            pass
+        try:
+            from src.data import yf_options
+            return yf_options.get_options_summary(symbol)
         except Exception:
             return None
 
