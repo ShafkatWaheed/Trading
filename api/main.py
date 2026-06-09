@@ -149,6 +149,25 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("predictions scheduler failed: %r", e)
 
+    # Nightly trading.db backup at 4:00 ET — well before any morning
+    # scoring jobs touch the DB. CLAUDE.md documents two prior incidents
+    # where stocks_universe was wiped by test fixtures and recovery had
+    # to rebuild from cached ETF holdings. This eliminates that risk.
+    try:
+        from api.services._scheduler import schedule_daily_at
+        from scripts.backup_db import run_backup as _run_db_backup
+
+        def _nightly_db_backup():
+            try:
+                _run_db_backup()
+            except Exception:
+                pass
+
+        schedule_daily_at(4, 0, _nightly_db_backup, name="db_backup_nightly")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("db backup scheduler failed: %r", e)
+
     # Startup self-heal — an out-of-hours restart misses the 5:30 ET scoring job,
     # leaving the universe stale and daily-picks empty. If scores are stale at
     # boot, score Tier A+B once in a daemon thread (non-blocking — startup must
