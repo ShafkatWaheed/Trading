@@ -688,6 +688,57 @@ def init_db() -> None:
             PRIMARY KEY (job_key, phase)
         );
         CREATE INDEX IF NOT EXISTS idx_bpo_job ON brief_partial_outputs(job_key);
+
+        -- ── Daily top-10 gainers predictions ────────────────────────────
+        -- Each morning we score Tier A symbols by the active strategy and
+        -- store the top 10 picks. After 4pm ET we record the actual
+        -- closing % move so accuracy can be computed over time. Claude
+        -- reviews wins/losses weekly and proposes new strategies; old
+        -- strategies are kept (deactivated_at set) so we can compare.
+        --
+        -- POINT-IN-TIME GUARANTEE: predictions are written ONCE per date
+        -- at pre-open with no current-day data. Actuals are stamped
+        -- AFTER market close. Strategy reviews look only at rows where
+        -- the actual is recorded — never at in-flight days.
+        CREATE TABLE IF NOT EXISTS prediction_strategies (
+            version          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT NOT NULL,
+            description      TEXT NOT NULL,
+            config_json      TEXT NOT NULL,
+            created_at       TEXT NOT NULL,
+            activated_at     TEXT,
+            deactivated_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pred_strat_active
+            ON prediction_strategies(deactivated_at);
+
+        CREATE TABLE IF NOT EXISTS daily_predictions (
+            prediction_date  TEXT NOT NULL,        -- YYYY-MM-DD (the day to be measured)
+            rank             INTEGER NOT NULL,     -- 1..10
+            symbol           TEXT NOT NULL,
+            score            REAL,
+            reasoning        TEXT,
+            strategy_version INTEGER NOT NULL,
+            created_at       TEXT NOT NULL,
+            PRIMARY KEY (prediction_date, rank),
+            FOREIGN KEY (strategy_version)
+                REFERENCES prediction_strategies(version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dp_date    ON daily_predictions(prediction_date);
+        CREATE INDEX IF NOT EXISTS idx_dp_symbol  ON daily_predictions(symbol);
+
+        CREATE TABLE IF NOT EXISTS daily_prediction_actuals (
+            prediction_date     TEXT NOT NULL,
+            symbol              TEXT NOT NULL,
+            open_price          REAL,
+            close_price         REAL,
+            change_pct          REAL,             -- (close-open)/open*100
+            universe_rank       INTEGER,           -- rank among Tier A this day
+            universe_size       INTEGER,           -- |Tier A scored this day|
+            recorded_at         TEXT NOT NULL,
+            PRIMARY KEY (prediction_date, symbol)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dpa_date ON daily_prediction_actuals(prediction_date);
     """)
     conn.commit()
     conn.close()
