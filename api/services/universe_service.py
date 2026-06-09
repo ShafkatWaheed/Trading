@@ -7,6 +7,74 @@ from typing import Iterable
 from src.utils.db import get_connection, init_db
 
 
+_SEARCH_LIMIT = 20
+
+
+def _primary_sectors(conn, symbols: list[str]) -> dict[str, str | None]:
+    """{symbol: sector} from each symbol's primary industry (sector via industries map,
+    falling back to the raw industry_code). Symbols with no industry row are absent."""
+    if not symbols:
+        return {}
+    ph = ",".join("?" * len(symbols))
+    rows = conn.execute(
+        f"""
+        SELECT si.symbol, COALESCE(i.sector, si.industry_code) AS sector
+        FROM stock_industry si
+        LEFT JOIN industries i ON i.code = si.industry_code
+        WHERE si.symbol IN ({ph})
+        ORDER BY si.symbol, si.is_primary DESC, si.weight DESC
+        """,
+        symbols,
+    ).fetchall()
+    out: dict[str, str | None] = {}
+    for r in rows:
+        out.setdefault(r["symbol"], r["sector"])  # first row per symbol = primary
+    return out
+
+
+def search(q: str, *, limit: int = _SEARCH_LIMIT) -> list[dict]:
+    """Universe-wide ticker/name autocomplete over the full stocks_universe.
+
+    Matches symbol or company name (case-insensitive). Ranks exact-symbol →
+    symbol-prefix → symbol-contains → name-only, then tier (A→D), then symbol.
+    Returns up to `limit` {symbol, name, sector} dicts; sector is a display hint
+    (primary industry's sector), None when unmapped.
+    """
+    q = (q or "").strip()
+    if not q:
+        return []
+    init_db()
+    conn = get_connection()
+    try:
+        like = f"%{q}%"
+        prefix = f"{q}%"
+        rows = conn.execute(
+            """
+            SELECT symbol, name, tier
+            FROM stocks_universe
+            WHERE symbol LIKE ? OR name LIKE ?
+            ORDER BY
+              CASE
+                WHEN symbol = ? COLLATE NOCASE THEN 0
+                WHEN symbol LIKE ? THEN 1
+                WHEN symbol LIKE ? THEN 2
+                ELSE 3
+              END,
+              CASE tier WHEN 'A' THEN 0 WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END,
+              symbol
+            LIMIT ?
+            """,
+            (like, like, q, prefix, like, int(limit)),
+        ).fetchall()
+        sectors = _primary_sectors(conn, [r["symbol"] for r in rows])
+        return [
+            {"symbol": r["symbol"], "name": r["name"], "sector": sectors.get(r["symbol"])}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 def _industries_for_symbols(conn, symbols: list[str]) -> dict[str, list[dict]]:
     """Return {symbol: [{code, sector, weight, is_primary}, ...]} for given symbols."""
     if not symbols:

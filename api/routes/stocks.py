@@ -17,11 +17,12 @@ from api.schemas import (
 from api.services import (
     analyst_consensus_service, benchmarks_service, bubble_score_service,
     bull_narrative_service, catalyst_calendar_service, co_holders_service,
-    deep_dive_service, discover_service, estimate_revisions_service,
+    deep_dive_service, estimate_revisions_service,
     fundamentals_service, macro_fit_service, news_feed_service,
     options_flow_service, peer_valuation_service,
     pre_earnings_setup_service, recommendation_service,
     risk_narrative_service, signal_evidence_service, smart_money_service,
+    universe_service,
 )
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
@@ -29,17 +30,8 @@ router = APIRouter(prefix="/stocks", tags=["stocks"])
 
 @router.get("/search", response_model=list[StockSearchResult])
 def search(q: str = Query(..., min_length=1)) -> list[dict]:
-    """Search known stocks by ticker or name fragment."""
-    meta = discover_service._load_stock_meta()
-    q_upper = q.upper()
-    q_lower = q.lower()
-    results = []
-    for sym, info in meta.items():
-        if q_upper in sym or q_lower in (info.get("name") or "").lower():
-            results.append({"symbol": sym, **info})
-            if len(results) >= 20:
-                break
-    return results
+    """Autocomplete over the full stocks_universe (~4,300 tickers) by ticker or name."""
+    return universe_service.search(q)
 
 
 @router.get("/{ticker}/deep-dive", response_model=DeepDiveResponse)

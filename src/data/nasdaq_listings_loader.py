@@ -22,6 +22,7 @@ Run from the refresh page (kind `nasdaq_listings`) or via:
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from pathlib import Path
 
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/symdir/nasdaqlisted.txt"
+# otherlisted.txt covers NYSE / NYSE American / NYSE Arca / IEX — the non-NASDAQ
+# venues. Together with nasdaqlisted.txt it names ~every US-listed security.
+OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt"
 
 # Cache the raw file for a day — the upstream refreshes nightly so re-fetching
 # within the day is wasted bandwidth.
@@ -44,19 +48,23 @@ _HTTP_TIMEOUT = 30
 # ── fetch + parse ───────────────────────────────────────────────────
 
 
-def fetch_nasdaqlisted(*, cache_dir: Path | str = DEFAULT_CACHE_DIR,
-                       force: bool = False) -> str:
-    """Return the raw text of nasdaqlisted.txt, caching the response on disk."""
+def _fetch_symdir(filename: str, url: str, *,
+                  cache_dir: Path | str = DEFAULT_CACHE_DIR,
+                  force: bool = False) -> str:
+    """Return the raw text of a Nasdaq Trader symdir file, caching on disk.
+
+    Falls back to a stale cached copy if the network fetch fails.
+    """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "nasdaqlisted.txt"
+    cache_path = cache_dir / filename
 
     if cache_path.exists() and not force:
         return cache_path.read_text(encoding="utf-8")
 
     try:
         resp = httpx.get(
-            NASDAQ_LISTED_URL,
+            url,
             timeout=_HTTP_TIMEOUT,
             follow_redirects=True,
             headers={"User-Agent": "TradingApp/1.0"},
@@ -64,15 +72,29 @@ def fetch_nasdaqlisted(*, cache_dir: Path | str = DEFAULT_CACHE_DIR,
         resp.raise_for_status()
         text = resp.text
         cache_path.write_text(text, encoding="utf-8")
-        log_api_call("nasdaq_listings", "nasdaqlisted.txt", "success")
+        log_api_call("nasdaq_listings", filename, "success")
         return text
     except Exception as e:
-        log_api_call("nasdaq_listings", "nasdaqlisted.txt", "error", str(e))
+        log_api_call("nasdaq_listings", filename, "error", str(e))
         # Fall back to a stale cached copy if available — better than nothing.
         if cache_path.exists():
-            logger.warning("nasdaq fetch failed, using stale cache: %r", e)
+            logger.warning("symdir fetch failed (%s), using stale cache: %r", filename, e)
             return cache_path.read_text(encoding="utf-8")
         raise
+
+
+def fetch_nasdaqlisted(*, cache_dir: Path | str = DEFAULT_CACHE_DIR,
+                       force: bool = False) -> str:
+    """Return the raw text of nasdaqlisted.txt, caching the response on disk."""
+    return _fetch_symdir("nasdaqlisted.txt", NASDAQ_LISTED_URL,
+                         cache_dir=cache_dir, force=force)
+
+
+def fetch_otherlisted(*, cache_dir: Path | str = DEFAULT_CACHE_DIR,
+                      force: bool = False) -> str:
+    """Return the raw text of otherlisted.txt (NYSE/AMEX/Arca), caching on disk."""
+    return _fetch_symdir("otherlisted.txt", OTHER_LISTED_URL,
+                         cache_dir=cache_dir, force=force)
 
 
 def parse_nasdaqlisted(text: str) -> list[dict]:
@@ -128,6 +150,63 @@ def parse_nasdaqlisted(text: str) -> list[dict]:
             "is_test": False,
         })
     return rows
+
+
+def parse_otherlisted(text: str) -> list[dict]:
+    """Parse otherlisted.txt (NYSE / NYSE American / Arca / IEX) into rows.
+
+    Uses the `ACT Symbol` column. Skips the header, the footer, ETFs
+    (`ETF == 'Y'`), and test issues (`Test Issue == 'Y'`).
+    Returns dicts with: symbol, security_name.
+    """
+    rows: list[dict] = []
+    lines = text.splitlines()
+    if not lines:
+        return rows
+
+    header = lines[0].split("|")
+    try:
+        idx_sym  = header.index("ACT Symbol")
+        idx_name = header.index("Security Name")
+        idx_etf  = header.index("ETF")
+        idx_test = header.index("Test Issue")
+    except ValueError as e:
+        logger.warning("otherlisted file format unexpected: %r", e)
+        return rows
+
+    for line in lines[1:]:
+        if line.startswith("File Creation Time") or "|" not in line:
+            continue
+        parts = line.split("|")
+        if len(parts) <= max(idx_sym, idx_name, idx_etf, idx_test):
+            continue
+        if parts[idx_test].strip().upper() == "Y":
+            continue
+        if parts[idx_etf].strip().upper() == "Y":
+            continue
+        symbol = parts[idx_sym].strip()
+        if not symbol:
+            continue
+        rows.append({"symbol": symbol, "security_name": parts[idx_name].strip()})
+    return rows
+
+
+# Trailing security-type descriptors to drop for a clean display name.
+_SECURITY_TYPE_TAIL = re.compile(
+    r"\s+(?:Common Stock|Common Shares|Ordinary Shares)\s*$", re.IGNORECASE
+)
+
+
+def _clean_security_name(raw: str) -> str:
+    """Light cleanup → a display name in the curated tier-A style.
+
+    Drops the directory's security-type descriptor: the part after ` - `
+    (nasdaqlisted form, e.g. `X - Common Stock`) and a trailing
+    `Common Stock`/`Common Shares`/`Ordinary Shares` (otherlisted form).
+    """
+    name = (raw or "").split(" - ")[0].strip()
+    name = _SECURITY_TYPE_TAIL.sub("", name).strip()
+    return name
 
 
 _MARKET_CATEGORY_TO_TIER_INPUT = {
@@ -241,6 +320,71 @@ def refresh_nasdaq_listings(*, force_fetch: bool = False,
     text = fetch_nasdaqlisted(force=force_fetch)
     rows = parse_nasdaqlisted(text)
     return apply_nasdaq_listings(rows, only_capital_market=only_capital_market)
+
+
+# ── name backfill (nasdaqlisted + otherlisted → symbol→name map) ────
+
+
+def build_name_map(*, force: bool = False) -> dict[str, str]:
+    """Merge nasdaqlisted + otherlisted into {SYMBOL: clean display name}.
+
+    Either file being unavailable degrades to whatever the other provides
+    (never raises). Names are lightly cleaned via `_clean_security_name`.
+    """
+    name_map: dict[str, str] = {}
+    # Both directories are authoritative; either order is fine. nasdaq second
+    # so a symbol present on both ends up with the NASDAQ-form name.
+    for fetch, parse in (
+        (fetch_otherlisted, parse_otherlisted),
+        (fetch_nasdaqlisted, parse_nasdaqlisted),
+    ):
+        try:
+            for r in parse(fetch(force=force)):
+                clean = _clean_security_name(r["security_name"])
+                if clean:
+                    name_map[r["symbol"].upper()] = clean
+        except Exception as e:
+            logger.warning("name-map source unavailable: %r", e)
+    return name_map
+
+
+def backfill_universe_names(
+    name_map: dict[str, str], *, conn: sqlite3.Connection | None = None
+) -> dict[str, int]:
+    """Fill `stocks_universe.name` for rows currently missing a name.
+
+    Only touches rows where name IS NULL or empty — never overwrites an
+    existing name. Returns {total_missing, filled, remaining}.
+    """
+    init_db()
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
+    try:
+        missing = conn.execute(
+            "SELECT symbol FROM stocks_universe WHERE name IS NULL OR TRIM(name) = ''"
+        ).fetchall()
+        filled = 0
+        for row in missing:
+            symbol = row["symbol"]
+            new_name = name_map.get(symbol.upper())
+            if not new_name:
+                continue
+            conn.execute(
+                "UPDATE stocks_universe SET name = ? "
+                "WHERE symbol = ? AND (name IS NULL OR TRIM(name) = '')",
+                (new_name, symbol),
+            )
+            filled += 1
+        conn.commit()
+        return {
+            "total_missing": len(missing),
+            "filled": filled,
+            "remaining": len(missing) - filled,
+        }
+    finally:
+        if own_conn:
+            conn.close()
 
 
 if __name__ == "__main__":
