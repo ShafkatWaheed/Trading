@@ -17,6 +17,9 @@ from api.services import ownership_service
 
 _CACHE_TTL_MINUTES = 6 * 60
 _TAPE_CACHE_TTL_MINUTES = 6 * 60
+# A summary whose section(s) errored (e.g. a transient SEC 500) is cached only
+# briefly so it self-heals on the next view instead of sticking for the full TTL.
+_ERROR_CACHE_TTL_MINUTES = 5
 
 
 def _to_float(v) -> float | None:
@@ -450,8 +453,13 @@ def get_smart_money(symbol: str, force: bool = False) -> dict:
         "from_cache":    False,
     }
 
+    sections_errored = any(
+        isinstance(sec, dict) and sec.get("error")
+        for sec in (institutional, insider, congress)
+    )
+    ttl = _ERROR_CACHE_TTL_MINUTES if sections_errored else _CACHE_TTL_MINUTES
     try:
-        cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_MINUTES)
+        cache_set(cache_key, payload, ttl_minutes=ttl)
     except Exception:
         pass
     return payload
