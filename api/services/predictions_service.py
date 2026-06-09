@@ -1599,7 +1599,11 @@ def review_and_propose_strategy(*, window_days: int = 14, force: bool = False) -
         }
 
     try:
-        raw = ask_claude_json(prompt, model="haiku", timeout=120, retries=1)
+        # Opus (most capable) for strategy review — picking weights from
+        # a 17-factor space and citing evidence is high-reasoning work.
+        # Runs once weekly + on-demand from the UI, so the cost is fine.
+        # 4-minute timeout because Opus is slower per response.
+        raw = ask_claude_json(prompt, model="opus", timeout=240, retries=1)
     except Exception as e:
         logger.info("predictions: Claude review call failed: %r", e)
         raw = None
@@ -1985,9 +1989,13 @@ def update_prediction_skills(*, window_days: int = 30, force: bool = False) -> d
     prompt = _build_skills_update_prompt(current, history, accuracy.get("by_strategy") or {})
 
     try:
-        # No retries — if Claude fails, fall through cleanly. The current
-        # playbook stays as-is rather than being half-overwritten.
-        raw = ask_claude_json(prompt, model="haiku", timeout=120, retries=0)
+        # Opus for skills update — writing nuanced playbook observations
+        # ("Tech stocks with options-bullish + analyst-up hit 8 of 11 in
+        # bull regime") is exactly the kind of synthesis where the more
+        # capable model matters most. Runs once weekly + on-demand.
+        # No retries — if Opus fails, fall through cleanly and leave the
+        # current playbook as-is rather than half-overwriting it.
+        raw = ask_claude_json(prompt, model="opus", timeout=240, retries=0)
     except Exception as e:
         logger.info("predictions: skills update Claude call failed: %r", e)
         raw = None
@@ -2004,7 +2012,7 @@ def update_prediction_skills(*, window_days: int = 30, force: bool = False) -> d
         # Fall back to direct ask_claude (returns string)
         from src.utils.claude_cli import ask_claude
         try:
-            new_content = ask_claude(prompt, model="haiku", timeout=120) or ""
+            new_content = ask_claude(prompt, model="opus", timeout=240) or ""
         except Exception as e:
             logger.info("predictions: skills update text-mode call failed: %r", e)
             new_content = ""
