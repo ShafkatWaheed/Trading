@@ -57,11 +57,24 @@ def _run_one_agent(agent_key: str, ctx: dict, opportunities: list[dict], gateway
                 "risk_tolerance": p.get("risk_tolerance", ""), "picks": [], "error": str(e)[:200]}
 
 
-def get_daily_picks(*, force: bool = False) -> dict:
+def get_daily_picks(*, force: bool = False, job_key: str | None = None) -> dict:
     """Run all 8 agents in parallel, return consolidated payload.
 
     Cache key includes today's date — picks reset overnight.
+
+    `job_key` — when set, emits heartbeat(job_key, phase, progress_pct)
+    between phases so the background-jobs tracker can surface progress
+    and the 5-min watchdog can reap stuck Claude subprocesses. No-op
+    when called synchronously (force=True from a user click).
     """
+    def _hb(phase: str, pct: int) -> None:
+        if not job_key:
+            return
+        try:
+            from api.services._background_jobs import heartbeat
+            heartbeat(job_key, phase=phase, progress_pct=pct)
+        except Exception:
+            pass
     today = date.today().isoformat()
     cache_key = f"daily_picks:v1:{today}"
 
@@ -71,19 +84,27 @@ def get_daily_picks(*, force: bool = False) -> dict:
             cached["from_cache"] = True
             return cached
 
+    _hb("context", 5)
     ctx = _market_ctx()
     from api.services import discover_service
     opportunities = (discover_service.get_opportunities(limit=60, period="1M") or {}).get("opportunities", [])
     gateway = _make_gateway()
     agents = list(AGENT_PERSONALITIES.keys())
     agent_results: list[dict] = []
+
+    _hb("agents", 20)
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL) as pool:
         futures = {pool.submit(_run_one_agent, k, ctx, opportunities, gateway): k for k in agents}
+        completed = 0
         for f in as_completed(futures):
             agent_results.append(f.result())
+            completed += 1
+            # Each agent completion ticks progress 20→70 across the 8 agents.
+            _hb("agents", 20 + int((completed / max(len(agents), 1)) * 50))
     order = {k: i for i, k in enumerate(agents)}
     agent_results.sort(key=lambda r: order.get(r["agent_key"], 999))
 
+    _hb("synthesis", 75)
     consensus_payload = daily_picks_synthesis.synthesize(agent_results, ctx)
 
     payload: dict[str, Any] = {
@@ -95,6 +116,8 @@ def get_daily_picks(*, force: bool = False) -> dict:
         "contrarians": consensus_payload.get("contrarians", []),
         "from_cache": False,
     }
+
+    _hb("enrich", 85)
 
     # Enrich the unique picked symbols with a bullish option trade plan.
     # Best-effort: never break the picks payload if enrichment fails.
@@ -122,4 +145,5 @@ def get_daily_picks(*, force: bool = False) -> dict:
             cache_set(cache_key, payload, ttl_minutes=_CACHE_TTL_HOURS * 60)
         except Exception:
             pass
+    _hb("done", 95)
     return payload

@@ -190,6 +190,11 @@ export default function DailyPicksPage() {
     queryFn: () => dailyPicksApi.get(),
     staleTime: 8 * 60 * 60 * 1000, // 8h — matches backend cache lifetime
     retry: false, // endpoint isn't wired yet; don't burn retries while skeleton
+    // Auto-poll every 10s while the backend is still generating (the
+    // route returns status: "computing" + kicks generation in background
+    // same pattern as /brief).
+    refetchInterval: (q) =>
+      ((q.state.data as { status?: string } | undefined)?.status === "computing" ? 10000 : false),
   });
 
   const refresh = useMutation({
