@@ -72,6 +72,15 @@ class CalendarEvent(BaseModel):
     impact: str    # "high" | "medium" | "low"
     days_away: int
     warning: str = ""
+    # Most recent release of this series, formatted for display:
+    #   CPI         "3.4% YoY"
+    #   NFP         "+175K jobs"
+    #   FOMC        "4.33% Fed Funds"
+    #   GDP         "+2.4% (Q1, annualized)"
+    # None when FRED is unconfigured or the series fetch fails — UI hides
+    # the row when last_result is null.
+    last_result: str | None = None
+    last_result_date: str | None = None   # YYYY-MM-DD of the prior release
 
 
 class CalendarResponse(BaseModel):

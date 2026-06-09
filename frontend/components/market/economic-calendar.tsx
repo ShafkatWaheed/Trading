@@ -75,6 +75,17 @@ export function EconomicCalendar({ events, loading }: { events?: CalendarEvent[]
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-text-primary">{e.name}</div>
               <div className="text-[11px] text-text-muted mt-0.5 tabular-nums">{e.date}</div>
+              {e.last_result && (
+                <div className="text-[11px] text-text-secondary mt-1 tabular-nums flex items-baseline gap-1.5">
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-text-muted">
+                    Last
+                  </span>
+                  <span className="font-semibold">{e.last_result}</span>
+                  {e.last_result_date && (
+                    <span className="text-text-muted">· {e.last_result_date}</span>
+                  )}
+                </div>
+              )}
               {e.warning && (
                 <div className="text-[11px] text-accent-amber mt-1.5 flex items-start gap-1.5">
                   <AlertTriangle size={11} className="mt-0.5 shrink-0" strokeWidth={2.4} />

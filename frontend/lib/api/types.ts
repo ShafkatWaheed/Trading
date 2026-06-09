@@ -63,6 +63,12 @@ export type CalendarEvent = {
   impact: "high" | "medium" | "low";
   days_away: number;
   warning?: string;
+  /** Most recent prior release of this series, formatted for display.
+   *  e.g. "3.4% YoY" (CPI), "+175K jobs" (NFP), "4.33% Fed Funds" (FOMC),
+   *  "+2.4% (Q1, ann.)" (GDP). null when FRED isn't available. */
+  last_result?: string | null;
+  /** Release date (YYYY-MM-DD) of the prior reading shown in last_result. */
+  last_result_date?: string | null;
 };
 
 export type CalendarPayload = {
