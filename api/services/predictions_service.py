@@ -41,7 +41,7 @@ from typing import Any
 
 from src.data.gateway import DataGateway
 from src.utils.claude_cli import ask_claude_json
-from src.utils.db import get_connection, init_db
+from src.utils.db import cache_get, cache_set, get_connection, init_db
 
 # market_service is imported lazily inside _pulse_context to avoid a circular
 # import (market_service → other services → predictions_service in some paths).
@@ -393,6 +393,112 @@ def _bulk_fundamentals_signals(symbols: list[str]) -> dict[str, float]:
     return _bulk_cache_signal(symbols, "fundamentals_story:v1", _extract)
 
 
+def _bulk_premarket_signals(symbols: list[str], *, cache_ttl_min: int = 30) -> dict[str, float]:
+    """Pre-market gap signal → -1..+1.
+
+    Computes (pre_market_price − previous_close) / previous_close × 100,
+    then normalizes by clipping to ±5% (a 5% pre-market move is huge
+    and saturates the signal — we don't want a single 30% gapper to
+    dwarf every other factor).
+
+    Cached for 30 min — pre-market values shift through the morning
+    but only need to be fresh-ish at generation time. After 9:30 ET the
+    pre-market price freezes at the open and the signal stops changing.
+
+    Uses yfinance Ticker.info per symbol — about 0.3s each, parallelized
+    with 16 workers → ~10s for 500 Tier A symbols. Errors are swallowed
+    silently so a flaky Yahoo response on one symbol doesn't kill the
+    whole bulk load.
+    """
+    if not symbols:
+        return {}
+
+    # Try cache first — generation may run twice within 30 min (manual
+    # trigger after the scheduled one) so we don't want N×500 yfinance
+    # calls every time.
+    cached: dict[str, float] = {}
+    misses: list[str] = []
+    for s in symbols:
+        v = cache_get(f"premarket_signal:v1:{s}")
+        if v is not None and isinstance(v, dict) and "score" in v:
+            cached[s] = float(v["score"])
+        else:
+            misses.append(s)
+
+    if not misses:
+        return cached
+
+    def _fetch(sym: str) -> tuple[str, float | None]:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(sym).info or {}
+            pre = info.get("preMarketPrice")
+            prev = info.get("regularMarketPreviousClose") or info.get("previousClose")
+            if pre is None or prev is None or float(prev) <= 0:
+                return sym, None
+            gap_pct = ((float(pre) - float(prev)) / float(prev)) * 100.0
+            return sym, max(-1.0, min(1.0, gap_pct / 5.0))    # ±5% saturation
+        except Exception:
+            return sym, None
+
+    fetched: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for sym, score in pool.map(_fetch, misses):
+            if score is not None:
+                fetched[sym] = score
+                try:
+                    cache_set(f"premarket_signal:v1:{sym}", {"score": score}, ttl_minutes=cache_ttl_min)
+                except Exception:
+                    pass
+
+    return {**cached, **fetched}
+
+
+def _bulk_reddit_signals(symbols: list[str], *, cache_ttl_min: int = 60) -> dict[str, float]:
+    """Reddit/WSB mention-spike signal → 0..+1.
+
+    Pulls the apewisdom top-mentioned-tickers list (free, no auth) and
+    maps the symbols we care about onto its `mentions` count, then
+    normalizes by rank (1st place = 1.0, 100th place = 0.0).
+
+    One HTTP call covers the whole universe. apewisdom updates every
+    ~10 min so 60-min caching is plenty.
+    """
+    if not symbols:
+        return {}
+
+    cache_key = "reddit_signal:v1:apewisdom_universe"
+    cached = cache_get(cache_key)
+    if cached is None or not isinstance(cached, dict):
+        try:
+            import httpx
+            resp = httpx.get(
+                "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json() or {}
+        except Exception as e:
+            logger.info("predictions: apewisdom fetch failed: %r", e)
+            data = {}
+        # apewisdom returns {"count": N, "pages": M, "results": [{"ticker", "mentions", ...}, ...]}
+        results = data.get("results") or []
+        # Map ticker → normalized rank score (rank 1 = highest)
+        ranks: dict[str, float] = {}
+        for i, item in enumerate(results[:100]):
+            sym = (item.get("ticker") or "").upper()
+            if not sym:
+                continue
+            ranks[sym] = max(0.0, 1.0 - (i / 100.0))
+        cached = ranks
+        try:
+            cache_set(cache_key, ranks, ttl_minutes=cache_ttl_min)
+        except Exception:
+            pass
+
+    return {s: cached.get(s.upper(), 0.0) for s in symbols if cached.get(s.upper(), 0.0) > 0}
+
+
 def _bulk_congress_buys(symbols: list[str], *, days: int = 30) -> dict[str, float]:
     """Per-symbol congress-buy signal → 0..1.
 
@@ -559,6 +665,8 @@ def _score_one(
     macro_fit_signal: float = 0.0,
     analyst_consensus_signal: float = 0.0,
     fundamentals_signal: float = 0.0,
+    premarket_signal: float = 0.0,
+    reddit_signal: float = 0.0,
 ) -> dict | None:
     """Compute one symbol's score under the active strategy.
 
@@ -598,6 +706,8 @@ def _score_one(
             "macro_fit":            0.0,
             "analyst_consensus":    0.0,
             "fundamentals":         0.0,
+            "premarket":            0.0,
+            "reddit":               0.0,
         }, **(weights or {})}
         top_sectors = set((pulse or {}).get("top_sectors") or [])
         sector_flows = (pulse or {}).get("all_sector_flows") or {}
@@ -623,6 +733,8 @@ def _score_one(
             + w["macro_fit"]        * macro_fit_signal        * 10.0
             + w["analyst_consensus"] * analyst_consensus_signal * 10.0
             + w["fundamentals"]     * fundamentals_signal     * 10.0
+            + w["premarket"]        * premarket_signal        * 10.0
+            + w["reddit"]           * reddit_signal           * 10.0
         )
 
         bits: list[str] = [f"{change_pct:+.1f}% 5d"]
@@ -664,6 +776,12 @@ def _score_one(
             bits.append("fundamentals+")
         elif fundamentals_signal < -0.3:
             bits.append("fundamentals-")
+        if premarket_signal > 0.2:
+            bits.append(f"premkt +{premarket_signal*5:.1f}%")
+        elif premarket_signal < -0.2:
+            bits.append(f"premkt {premarket_signal*5:.1f}%")
+        if reddit_signal > 0.1:
+            bits.append("wsb-trending")
 
         return {
             "symbol":    symbol,
@@ -686,6 +804,8 @@ def _score_one(
                 "macro_fit_signal":          macro_fit_signal,
                 "analyst_consensus_signal":  analyst_consensus_signal,
                 "fundamentals_signal":       fundamentals_signal,
+                "premarket_signal":          premarket_signal,
+                "reddit_signal":             reddit_signal,
             },
         }
 
@@ -746,6 +866,8 @@ def _rank_universe(symbols: list[str], config: dict, *,
                 macro_fit_signal          = _sigs_for(s).get("macro_fit", 0.0),
                 analyst_consensus_signal  = _sigs_for(s).get("analyst_consensus", 0.0),
                 fundamentals_signal       = _sigs_for(s).get("fundamentals", 0.0),
+                premarket_signal          = _sigs_for(s).get("premarket", 0.0),
+                reddit_signal             = _sigs_for(s).get("reddit", 0.0),
             ),
             symbols,
         ):
@@ -779,6 +901,9 @@ def _bulk_all_signals(symbols: list[str]) -> dict[str, dict]:
         ("macro_fit",         _bulk_macro_fit_signals(symbols)),
         ("analyst_consensus", _bulk_analyst_consensus_signals(symbols)),
         ("fundamentals",      _bulk_fundamentals_signals(symbols)),
+        # Phase 8 — attention/retail signals
+        ("premarket",         _bulk_premarket_signals(symbols)),
+        ("reddit",            _bulk_reddit_signals(symbols)),
     ]
     for key, data in sources:
         for sym, val in data.items():
@@ -1313,6 +1438,10 @@ Other config keys you can set:
     - macro_fit           does this stock fit the current macro regime + sector signal
     - analyst_consensus   target-price upside (clipped at ±20%)
     - fundamentals        overall_score (0-100) centered to [-1, +1]
+    - premarket           pre-market % gap vs prior close (clipped at ±5%)
+                          — directly predictive of same-day open direction
+    - reddit              WSB/apewisdom mention rank (1.0 = top spot)
+                          — captures viral retail attention
 
 Propose ONE new strategy. Goals:
   1. Beat the current strategy's recent hit rate
@@ -1422,6 +1551,9 @@ def _validate_proposed_strategy(proposal: object) -> dict | None:
             "macro_fit":          _w("macro_fit",          0.0),
             "analyst_consensus":  _w("analyst_consensus",  0.0),
             "fundamentals":       _w("fundamentals",       0.0),
+            # Phase 8 — attention / retail signals (daily-horizon edge)
+            "premarket":          _w("premarket",          0.0),
+            "reddit":             _w("reddit",             0.0),
         }
 
     return {

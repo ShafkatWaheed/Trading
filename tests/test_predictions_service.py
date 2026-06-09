@@ -1053,6 +1053,142 @@ def test_validate_composite_v1_includes_phase7_weights_with_zero_defaults():
         assert w[k] == 0.0
 
 
+# ── Phase 8: attention / retail signals ─────────────────────────────
+
+
+def test_bulk_premarket_signals_uses_cache_when_present():
+    """When premarket_signal:v1:* exists in cache, no yfinance call is made."""
+    _seed_cache("premarket_signal:v1:SYN_A", {"score": 0.4})
+    _seed_cache("premarket_signal:v1:SYN_B", {"score": -0.6})
+
+    # Patch yfinance to detect any accidental real fetch
+    with patch("yfinance.Ticker", side_effect=AssertionError("yfinance should not be called")):
+        out = predictions_service._bulk_premarket_signals(["SYN_A", "SYN_B"])
+
+    assert abs(out["SYN_A"] - 0.4) < 0.001
+    assert abs(out["SYN_B"] - (-0.6)) < 0.001
+
+
+def test_bulk_premarket_signals_fetches_misses():
+    """Cache miss → fetch via yfinance, normalize to ±5% saturation."""
+    from unittest.mock import MagicMock
+
+    def _fake_ticker(sym):
+        m = MagicMock()
+        # SYN_GAPPER: pre-market 105, prev close 100 → +5% → score 1.0
+        # SYN_FALLER: pre-market 97, prev close 100 → -3% → score -0.6
+        m.info = {
+            "SYN_GAPPER": {"preMarketPrice": 105.0, "regularMarketPreviousClose": 100.0},
+            "SYN_FALLER": {"preMarketPrice": 97.0,  "regularMarketPreviousClose": 100.0},
+        }.get(sym, {})
+        return m
+
+    with patch("yfinance.Ticker", side_effect=_fake_ticker):
+        out = predictions_service._bulk_premarket_signals(["SYN_GAPPER", "SYN_FALLER"])
+
+    assert out["SYN_GAPPER"] == 1.0          # saturated at +5%
+    assert abs(out["SYN_FALLER"] - (-0.6)) < 0.01
+
+
+def test_bulk_premarket_signals_swallows_missing_fields():
+    """If preMarketPrice or prevClose is missing, symbol is silently dropped."""
+    from unittest.mock import MagicMock
+
+    def _fake_ticker(sym):
+        m = MagicMock()
+        m.info = {}    # no pre-market data
+        return m
+
+    with patch("yfinance.Ticker", side_effect=_fake_ticker):
+        out = predictions_service._bulk_premarket_signals(["SYN_X"])
+
+    assert "SYN_X" not in out
+
+
+def test_bulk_reddit_signals_maps_apewisdom_rank():
+    """Top-of-list ticker → 1.0; further down → lower; not in list → not returned."""
+    fake_response = {
+        "results": [
+            {"ticker": "NVDA", "mentions": 1500},
+            {"ticker": "TSLA", "mentions": 1200},
+            {"ticker": "AAPL", "mentions": 800},
+        ],
+    }
+
+    from unittest.mock import MagicMock
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = fake_response
+    fake_resp.raise_for_status.return_value = None
+
+    # Clear cache so we go to the network mock
+    init_db()
+    conn = get_connection()
+    conn.execute("DELETE FROM cache WHERE key LIKE 'reddit_signal:%'")
+    conn.commit()
+    conn.close()
+
+    with patch("httpx.get", return_value=fake_resp):
+        out = predictions_service._bulk_reddit_signals(["NVDA", "TSLA", "AAPL", "ZZZ_UNTRENDED"])
+
+    assert out["NVDA"] == 1.0
+    assert 0.98 < out["TSLA"] < 1.0    # rank 2 of 100
+    assert 0.97 < out["AAPL"] < 0.99   # rank 3 of 100
+    assert "ZZZ_UNTRENDED" not in out
+
+
+def test_bulk_reddit_signals_handles_apewisdom_error():
+    """apewisdom 5xx or timeout → empty dict, no crash."""
+    init_db()
+    conn = get_connection()
+    conn.execute("DELETE FROM cache WHERE key LIKE 'reddit_signal:%'")
+    conn.commit()
+    conn.close()
+
+    with patch("httpx.get", side_effect=Exception("network unreachable")):
+        out = predictions_service._bulk_reddit_signals(["NVDA", "AAPL"])
+
+    assert out == {}
+
+
+def test_composite_uses_premarket_signal():
+    """High pre-market weight + +5% gap stock outranks flat-gap stock."""
+    pulse = {"regime": "neutral", "top_sectors": [], "top_sectors_flow": {}, "all_sector_flows": {}}
+    hist = _fake_history([100, 100, 100, 100, 100, 102])
+    weights = {"momentum": 0.3, "premarket": 0.7}
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        gapper = predictions_service._score_one(
+            "SYN_GAP", lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, premarket_signal=1.0,
+        )
+        flat = predictions_service._score_one(
+            "SYN_FLAT", lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, premarket_signal=0.0,
+        )
+
+    assert gapper["score"] > flat["score"]
+
+
+def test_validate_includes_phase8_weights():
+    out = predictions_service._validate_proposed_strategy({
+        "name": "composite-attention",
+        "description": "leans on premarket + reddit",
+        "config": {
+            "ranking_signal": "composite_v1",
+            "lookback_days": 5,
+            "top_n": 10,
+            "universe_tier": "A",
+            "weights": {"premarket": 0.6, "reddit": 0.4},
+        },
+    })
+    assert out is not None
+    w = out["config"]["weights"]
+    assert abs(w["premarket"] - 0.6) < 0.01
+    assert abs(w["reddit"] - 0.4) < 0.01
+
+
 def test_score_one_uses_news_signal_with_nonzero_weight():
     """End-to-end: high news_signal weight + bullish news ranks higher than
     same-momentum stock with bearish news."""
