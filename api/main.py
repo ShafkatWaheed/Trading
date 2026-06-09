@@ -81,6 +81,14 @@ async def _start_schedulers() -> None:
                 _refresh_scores(symbols=_tier_ab_symbols())
             except Exception:
                 pass
+            # Pre-warm the daily-picks payload (incl. option contracts) right
+            # after scoring, so the first morning load is served from cache
+            # instead of a ~3-minute cold regeneration.
+            try:
+                from api.services import daily_picks_service
+                daily_picks_service.get_daily_picks(force=True)
+            except Exception:
+                pass
 
         schedule_daily_at(5, 30, _refresh_opportunity_scores, name="opportunity_scores_refresh")
     except Exception as e:
@@ -145,6 +153,13 @@ async def _start_schedulers() -> None:
             def _startup_score_selfheal():
                 try:
                     _refresh_scores(symbols=_tier_ab_symbols())
+                except Exception:
+                    pass
+                # Warm daily-picks too, so the page is ready right after an
+                # out-of-hours restart, not on the user's first (cold) load.
+                try:
+                    from api.services import daily_picks_service
+                    daily_picks_service.get_daily_picks(force=True)
                 except Exception:
                     pass
 
