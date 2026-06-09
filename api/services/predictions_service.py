@@ -324,3 +324,232 @@ def get_predictions_today() -> dict:
     """
     today = datetime.now(tz=timezone.utc).date().isoformat()
     return generate_predictions_for_date(today)
+
+
+# ── Actuals + accuracy (Phase 2) ─────────────────────────────────────────
+
+
+def _eod_change_pct(symbol: str, date: str) -> tuple[float | None, float | None, float | None]:
+    """Open / close / change_pct for `symbol` on `date`.
+
+    Returns (open, close, change_pct) or (None, None, None) on any miss.
+    Used by `record_actuals_for_date` AFTER market close — calling it
+    earlier in the day yields incomplete data and the row gets stamped
+    with None values.
+    """
+    try:
+        gw = DataGateway()
+        # 90 days of history gives us plenty of buffer to find `date`.
+        df = gw.get_historical(symbol, period_days=90)
+    except Exception as e:
+        logger.info("predictions: get_historical failed for %s: %r", symbol, e)
+        return None, None, None
+    if df is None or len(df) == 0:
+        return None, None, None
+
+    # The DataFrame index is a DatetimeIndex; match the date.
+    try:
+        target_rows = df[df.index.astype(str).str.startswith(date)]
+    except Exception:
+        return None, None, None
+    if len(target_rows) == 0:
+        return None, None, None
+    row = target_rows.iloc[-1]
+    try:
+        open_ = float(row["Open"] if "Open" in row.index else row["open"])
+        close = float(row["Close"] if "Close" in row.index else row["close"])
+    except Exception:
+        return None, None, None
+    if open_ <= 0:
+        return None, None, None
+    return open_, close, ((close - open_) / open_) * 100.0
+
+
+def record_actuals_for_date(date: str) -> dict:
+    """Record open/close/change_pct for every symbol predicted on `date`,
+    plus the actual universe ranks (for hit/miss computation).
+
+    Idempotent — re-running for the same date overwrites the rows so a
+    later EOD fetch (when more bars are settled) supersedes an earlier one.
+
+    POINT-IN-TIME GUARANTEE: only call AFTER market close for `date`. The
+    helper does not check this — caller (scheduler / manual route) must.
+    """
+    init_db()
+
+    # 1. Pull the predictions for this date.
+    preds = get_predictions_for_date(date)
+    if not preds["picks"]:
+        return {"date": date, "recorded": 0, "reason": "no_predictions"}
+
+    # 2. Score the FULL Tier A universe for the same date so we know
+    #    where each predicted pick ranked among actual winners.
+    universe = _load_universe("A")
+    universe_changes: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = pool.map(
+            lambda s: (s, _eod_change_pct(s, date)),
+            universe,
+        )
+        for sym, (_o, _c, change) in results:
+            if change is not None:
+                universe_changes[sym] = change
+
+    # Rank universe by change desc; symbol → rank (1-based).
+    sorted_universe = sorted(universe_changes.items(), key=lambda kv: kv[1], reverse=True)
+    rank_by_sym = {sym: i + 1 for i, (sym, _) in enumerate(sorted_universe)}
+    universe_size = len(rank_by_sym)
+
+    # 3. Persist actuals row per predicted pick.
+    now = _now_iso()
+    conn = get_connection()
+    recorded = 0
+    try:
+        for pick in preds["picks"]:
+            sym = pick["symbol"]
+            # If we scored the symbol while ranking the universe, reuse
+            # the change directly. Otherwise it's missing data — None values.
+            if sym in universe_changes:
+                # Re-derive open/close from the freshly-fetched bar so the
+                # row has the exact prices the universe rank used.
+                open_, close, change = _eod_change_pct(sym, date)
+            else:
+                open_, close, change = None, None, None
+            rank = rank_by_sym.get(sym)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_prediction_actuals
+                  (prediction_date, symbol, open_price, close_price,
+                   change_pct, universe_rank, universe_size, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (date, sym, open_, close, change, rank, universe_size, now),
+            )
+            recorded += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "date":          date,
+        "recorded":      recorded,
+        "universe_size": universe_size,
+    }
+
+
+def get_accuracy_window(*, window_days: int = 30, hit_threshold: int = 25) -> dict:
+    """Rolling accuracy over the last `window_days` of COMPLETED predictions.
+
+    "Completed" = prediction has a matching actuals row. In-flight days
+    (today, weekend predictions where market hasn't closed) are excluded.
+
+    Hit definition: a predicted symbol "hit" if its actual rank in the
+    scored universe for that day was <= `hit_threshold`.
+
+    Returns:
+      {
+        "window_days":       30,
+        "hit_threshold":     25,
+        "days_evaluated":    N,
+        "predictions_total": N * 10,
+        "hits":              count of picks with universe_rank <= 25,
+        "hit_rate":          hits / predictions_total,
+        "by_strategy":       {version: {predictions, hits, hit_rate}}
+      }
+    """
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT dp.prediction_date     AS date,
+                   dp.symbol              AS symbol,
+                   dp.strategy_version    AS strategy_version,
+                   dpa.universe_rank      AS universe_rank,
+                   dpa.universe_size      AS universe_size,
+                   dpa.change_pct         AS change_pct
+              FROM daily_predictions dp
+              JOIN daily_prediction_actuals dpa
+                ON dp.prediction_date = dpa.prediction_date
+               AND dp.symbol = dpa.symbol
+             WHERE dpa.universe_rank IS NOT NULL
+             ORDER BY dp.prediction_date DESC, dp.rank
+             LIMIT ?
+            """,
+            (window_days * 10,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    total = len(rows)
+    hits = sum(1 for r in rows if r["universe_rank"] and r["universe_rank"] <= hit_threshold)
+    days_evaluated = len({r["date"] for r in rows})
+
+    # Per-strategy breakdown
+    by_strategy: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        v = r["strategy_version"]
+        if v not in by_strategy:
+            by_strategy[v] = {"predictions": 0, "hits": 0}
+        by_strategy[v]["predictions"] += 1
+        if r["universe_rank"] and r["universe_rank"] <= hit_threshold:
+            by_strategy[v]["hits"] += 1
+    for v, b in by_strategy.items():
+        b["hit_rate"] = b["hits"] / b["predictions"] if b["predictions"] else 0.0
+
+    return {
+        "window_days":       window_days,
+        "hit_threshold":     hit_threshold,
+        "days_evaluated":    days_evaluated,
+        "predictions_total": total,
+        "hits":              hits,
+        "hit_rate":          (hits / total) if total else 0.0,
+        "by_strategy":       by_strategy,
+    }
+
+
+def get_predictions_with_actuals(date: str) -> dict:
+    """Return predictions for a date enriched with actuals (when present).
+
+    Used by the UI to show "yesterday's predictions and how they did".
+    Picks without an actuals row get None values — the UI can show "TBD".
+    """
+    preds = get_predictions_for_date(date)
+    if not preds["picks"]:
+        return preds
+
+    init_db()
+    conn = get_connection()
+    try:
+        actuals = {
+            r["symbol"]: dict(r)
+            for r in conn.execute(
+                """
+                SELECT symbol, open_price, close_price, change_pct,
+                       universe_rank, universe_size, recorded_at
+                  FROM daily_prediction_actuals
+                 WHERE prediction_date = ?
+                """,
+                (date,),
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    enriched = []
+    for pick in preds["picks"]:
+        a = actuals.get(pick["symbol"], {})
+        enriched.append({
+            **pick,
+            "open_price":     a.get("open_price"),
+            "close_price":    a.get("close_price"),
+            "actual_change_pct": a.get("change_pct"),
+            "universe_rank":  a.get("universe_rank"),
+            "universe_size":  a.get("universe_size"),
+            "actuals_recorded_at": a.get("recorded_at"),
+        })
+    return {
+        **preds,
+        "picks": enriched,
+        "actuals_present": bool(actuals),
+    }

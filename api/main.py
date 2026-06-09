@@ -87,6 +87,34 @@ async def _start_schedulers() -> None:
         import logging
         logging.getLogger(__name__).warning("opportunity scores scheduler failed: %r", e)
 
+    # Daily top-10 predictions — generate pre-open at 6:30 ET, record actuals
+    # after market close at 16:15 ET. Both calls degrade gracefully on
+    # failure (the routes can lazy-generate on first request).
+    try:
+        from datetime import datetime, timezone
+        from api.services._scheduler import schedule_daily_at
+        from api.services import predictions_service
+
+        def _generate_predictions_today():
+            try:
+                today = datetime.now(tz=timezone.utc).date().isoformat()
+                predictions_service.generate_predictions_for_date(today)
+            except Exception:
+                pass
+
+        def _record_predictions_actuals():
+            try:
+                today = datetime.now(tz=timezone.utc).date().isoformat()
+                predictions_service.record_actuals_for_date(today)
+            except Exception:
+                pass
+
+        schedule_daily_at(6, 30, _generate_predictions_today, name="predictions_generate")
+        schedule_daily_at(16, 15, _record_predictions_actuals, name="predictions_actuals")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("predictions scheduler failed: %r", e)
+
     # Startup self-heal — an out-of-hours restart misses the 5:30 ET scoring job,
     # leaving the universe stale and daily-picks empty. If scores are stale at
     # boot, score Tier A+B once in a daemon thread (non-blocking — startup must

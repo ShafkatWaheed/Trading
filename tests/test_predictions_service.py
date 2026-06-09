@@ -213,3 +213,127 @@ def test_empty_universe_returns_no_picks_without_crashing():
 
 def test_get_predictions_for_date_returns_empty_on_miss():
     assert predictions_service.get_predictions_for_date("1999-01-01")["picks"] == []
+
+
+# ── Phase 2: actuals + accuracy ─────────────────────────────────────
+
+
+def _seed_actuals(date: str, picks_with_ranks: list[tuple[str, int, float]],
+                  universe_size: int = 100) -> None:
+    """Insert daily_prediction_actuals rows directly.
+
+    Each tuple: (symbol, universe_rank, change_pct). Saves wiring real
+    historical-bar mocks for every actuals test.
+    """
+    init_db()
+    conn = get_connection()
+    try:
+        for sym, rank, change in picks_with_ranks:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_prediction_actuals
+                  (prediction_date, symbol, open_price, close_price,
+                   change_pct, universe_rank, universe_size, recorded_at)
+                VALUES (?, ?, 100.0, ?, ?, ?, ?, datetime('now'))
+                """,
+                (date, sym, 100.0 + change, change, rank, universe_size),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_predictions_directly(date: str, picks: list[tuple[str, int]],
+                                strategy_version: int) -> None:
+    """Insert daily_predictions rows directly. Tuple: (symbol, rank)."""
+    init_db()
+    conn = get_connection()
+    try:
+        for sym, rank in picks:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_predictions
+                  (prediction_date, rank, symbol, score, reasoning,
+                   strategy_version, created_at)
+                VALUES (?, ?, ?, 0, '', ?, datetime('now'))
+                """,
+                (date, rank, sym, strategy_version),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_get_predictions_with_actuals_includes_open_close_and_rank():
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-08", [("SYN_X", 1), ("SYN_Y", 2)], strat["version"])
+    _seed_actuals("2026-06-08", [
+        ("SYN_X", 7, 4.2),    # ranked 7th in universe with +4.2% return
+        ("SYN_Y", 88, -1.1),
+    ])
+
+    out = predictions_service.get_predictions_with_actuals("2026-06-08")
+    assert out["actuals_present"] is True
+    syms = {p["symbol"]: p for p in out["picks"]}
+    assert syms["SYN_X"]["universe_rank"] == 7
+    assert abs(syms["SYN_X"]["actual_change_pct"] - 4.2) < 0.001
+    assert syms["SYN_Y"]["universe_rank"] == 88
+
+
+def test_get_predictions_with_actuals_handles_missing_actuals():
+    """Picks without an actuals row get None values, not crashes."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-08", [("SYN_X", 1)], strat["version"])
+
+    out = predictions_service.get_predictions_with_actuals("2026-06-08")
+    assert out["actuals_present"] is False
+    assert out["picks"][0]["universe_rank"] is None
+    assert out["picks"][0]["actual_change_pct"] is None
+
+
+def test_accuracy_window_computes_hit_rate():
+    """3 days × 2 picks each; hit_threshold=25. Pin both counts and per-strategy
+    breakdown."""
+    strat = predictions_service.get_active_strategy()
+    for d in ["2026-06-05", "2026-06-06", "2026-06-07"]:
+        _seed_predictions_directly(d, [("SYN_A", 1), ("SYN_B", 2)], strat["version"])
+    # Day 1: both hit (rank 5, 20)
+    # Day 2: one hit, one miss (rank 10, 50)
+    # Day 3: both miss (rank 80, 90)
+    _seed_actuals("2026-06-05", [("SYN_A", 5, 3.1), ("SYN_B", 20, 2.0)])
+    _seed_actuals("2026-06-06", [("SYN_A", 10, 1.5), ("SYN_B", 50, -0.5)])
+    _seed_actuals("2026-06-07", [("SYN_A", 80, -2.0), ("SYN_B", 90, -3.1)])
+
+    acc = predictions_service.get_accuracy_window(window_days=10, hit_threshold=25)
+    assert acc["predictions_total"] == 6
+    assert acc["hits"] == 3            # day1 both + day2 SYN_A
+    assert abs(acc["hit_rate"] - 0.5) < 0.001
+    assert acc["days_evaluated"] == 3
+    assert strat["version"] in acc["by_strategy"]
+    assert acc["by_strategy"][strat["version"]]["hits"] == 3
+
+
+def test_accuracy_window_only_counts_completed_predictions():
+    """Predictions WITHOUT an actuals row must not appear in totals."""
+    strat = predictions_service.get_active_strategy()
+    # 2 days predicted; only one has actuals
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1)], strat["version"])
+    _seed_predictions_directly("2026-06-06", [("SYN_A", 1)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 3, 5.0)])
+
+    acc = predictions_service.get_accuracy_window(window_days=30)
+    assert acc["predictions_total"] == 1
+    assert acc["hits"] == 1
+    assert acc["days_evaluated"] == 1
+
+
+def test_accuracy_window_hit_threshold_tunable():
+    """Tightening the threshold reduces hits without recomputing actuals."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1), ("SYN_B", 2)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 10, 5.0), ("SYN_B", 30, 4.0)])
+
+    loose = predictions_service.get_accuracy_window(window_days=30, hit_threshold=50)
+    tight = predictions_service.get_accuracy_window(window_days=30, hit_threshold=15)
+    assert loose["hits"] == 2     # both within rank 50
+    assert tight["hits"] == 1     # only SYN_A within rank 15
