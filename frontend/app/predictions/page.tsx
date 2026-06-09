@@ -15,7 +15,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Target, TrendingUp, Calendar as CalendarIcon, Activity, Sparkles, CheckCircle2 } from "lucide-react";
+import { Target, TrendingUp, Calendar as CalendarIcon, Activity, Sparkles, CheckCircle2, BookOpen } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { predictionsApi } from "@/lib/api/endpoints";
 import type {
@@ -200,6 +200,26 @@ export default function PredictionsPage() {
     },
   });
 
+  // Playbook (skills.md) — Claude's evolving notes on what works
+  const skillsQ = useQuery<{ content: string; last_updated: string | null; path: string }>({
+    queryKey: ["predictions", "skills"],
+    queryFn: () => predictionsApi.skills(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const [skillsMessage, setSkillsMessage] = useState<string | null>(null);
+  const updateSkillsM = useMutation({
+    mutationFn: () => predictionsApi.updateSkills(30, false),
+    onSuccess: (res) => {
+      if (res.updated) {
+        setSkillsMessage(`Playbook refreshed — ${res.history_rows} prediction rows, ${res.bytes} bytes.`);
+      } else {
+        setSkillsMessage(`Not refreshed — ${res.reason ?? "unknown"}.`);
+      }
+      qc.invalidateQueries({ queryKey: ["predictions", "skills"] });
+    },
+    onError: (e: Error) => setSkillsMessage(`Refresh failed: ${e.message}`),
+  });
+
   const activeStrategy = today.data?.strategy_name || "—";
 
   return (
@@ -330,6 +350,48 @@ export default function PredictionsPage() {
         )}
         {accuracy.data && accuracy.data.predictions_total > 0 && (
           <AccuracyCard acc={accuracy.data} />
+        )}
+      </section>
+
+      {/* ── Section: Playbook (Claude-maintained skills) ─────────── */}
+      <section className="mb-8">
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <div className="flex items-baseline gap-3">
+            <BookOpen size={14} className="text-accent-blueSoft translate-y-[2px]" />
+            <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-accent-blueSoft">
+              Playbook
+            </span>
+            <span className="text-[11px] text-text-muted">
+              Claude's evolving notes — read each strategy review
+            </span>
+          </div>
+          <button
+            onClick={() => updateSkillsM.mutate()}
+            disabled={updateSkillsM.isPending}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
+              "bg-bg-card hover:bg-bg-card2 border border-bg-borderHi text-text-secondary hover:text-text-primary",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            <Sparkles size={11} />
+            {updateSkillsM.isPending ? "Updating…" : "Refresh playbook"}
+          </button>
+        </div>
+        {skillsMessage && (
+          <div className="card-subtle p-3 mb-3 text-[11px] text-text-secondary">{skillsMessage}</div>
+        )}
+        {skillsQ.data && (
+          <div className="card p-4 border-l-4 border-accent-blue/30">
+            <pre className="whitespace-pre-wrap font-mono text-[11px] text-text-secondary leading-relaxed max-h-[500px] overflow-y-auto">
+              {skillsQ.data.content}
+            </pre>
+            {skillsQ.data.last_updated && (
+              <div className="mt-3 pt-2 border-t border-bg-divider font-mono text-[10px] text-text-muted">
+                file: {skillsQ.data.path} · last updated: {skillsQ.data.last_updated}
+              </div>
+            )}
+          </div>
         )}
       </section>
 

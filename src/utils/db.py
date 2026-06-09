@@ -720,6 +720,13 @@ def init_db() -> None:
             reasoning        TEXT,
             strategy_version INTEGER NOT NULL,
             created_at       TEXT NOT NULL,
+            -- Phase 6: richer per-pick context so Claude's weekly playbook
+            -- review can correlate hits/misses with macro state and per-
+            -- signal contribution. Both columns nullable — old rows have
+            -- NULL and the analysis path treats absent fields as "unknown
+            -- regime" / "components missing".
+            pulse_snapshot_json TEXT,    -- regime + top sectors at gen time
+            components_json     TEXT,    -- per-pick {momentum, sector_match, ...}
             PRIMARY KEY (prediction_date, rank),
             FOREIGN KEY (strategy_version)
                 REFERENCES prediction_strategies(version)

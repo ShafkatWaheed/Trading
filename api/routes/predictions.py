@@ -112,3 +112,26 @@ def activate_strategy(
 ) -> dict:
     """Activate a strategy by version. Deactivates whatever was active."""
     return predictions_service.activate_strategy(version)
+
+
+# ── Playbook (Phase 6) ────────────────────────────────────────────────
+
+
+@router.get("/skills")
+def get_skills() -> dict:
+    """Current prediction playbook (markdown) + last-updated timestamp."""
+    return predictions_service.get_skills()
+
+
+@router.post("/skills/update")
+def update_skills(
+    window_days: int = Query(30, ge=7, le=90),
+    force: bool = Query(False),
+) -> dict:
+    """Ask Claude to rewrite the playbook from the last `window_days` of
+    completed predictions. Skips when no completed predictions exist
+    unless force=True (mostly for manual testing).
+    """
+    return predictions_service.update_prediction_skills(
+        window_days=window_days, force=force,
+    )

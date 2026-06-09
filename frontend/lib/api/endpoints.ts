@@ -653,4 +653,11 @@ export const predictionsApi = {
       `/predictions/strategy/activate?version=${version}`,
       undefined,
     ),
+  skills: () =>
+    api.get<{ content: string; last_updated: string | null; path: string }>("/predictions/skills"),
+  updateSkills: (windowDays = 30, force = false) =>
+    api.post<{ updated: boolean; reason?: string; history_rows?: number; bytes?: number }>(
+      `/predictions/skills/update?window_days=${windowDays}${force ? "&force=true" : ""}`,
+      undefined,
+    ),
 };

@@ -578,17 +578,24 @@ def generate_predictions_for_date(date: str, *, force: bool = False) -> dict:
         # Replace any prior rows for this date — safe because predictions
         # are owned by (date, rank) and the new run is for the same date.
         conn.execute("DELETE FROM daily_predictions WHERE prediction_date = ?", (date,))
+        # Phase 6: serialize pulse once per generation (same for all 10
+        # picks) and components per-pick. Weekly playbook review reads
+        # these to correlate hits with macro state + signal contribution.
+        pulse_json = json.dumps(pulse, default=str) if pulse else None
         for rank, row in enumerate(top, start=1):
+            comp_json = json.dumps(row.get("components") or {}, default=str)
             conn.execute(
                 """
                 INSERT INTO daily_predictions
                   (prediction_date, rank, symbol, score, reasoning,
-                   strategy_version, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                   strategy_version, created_at,
+                   pulse_snapshot_json, components_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     date, rank, row["symbol"], row["score"],
                     row["reasoning"], strategy["version"], now,
+                    pulse_json, comp_json,
                 ),
             )
         conn.commit()
@@ -972,6 +979,10 @@ def _build_strategy_review_prompt(history: list[dict], current: dict) -> str:
 
     vocab_lines = "\n".join(f"  - {k}: {v}" for k, v in _ALLOWED_RANKING_SIGNALS.items())
 
+    # Include the playbook so the proposal sits on top of accumulated
+    # wisdom rather than starting from scratch each week.
+    playbook = _read_skills()
+
     # Show Claude the current Market Pulse so it can decide whether
     # composite_v1's pulse-aware signals are worth leaning into.
     pulse = _pulse_context()
@@ -988,6 +999,11 @@ def _build_strategy_review_prompt(history: list[dict], current: dict) -> str:
 Current strategy (v{current['version']} — "{current['name']}"):
   {current['description']}
   Config: {json.dumps(current['config'])}
+
+Current playbook (your accumulated observations across prior weeks):
+```
+{playbook}
+```
 
 Market Pulse context the predictor will see at run time:
 {pulse_blurb}
@@ -1269,3 +1285,322 @@ def list_strategies() -> list[dict]:
             "is_active":       r["deactivated_at"] is None and r["activated_at"] is not None,
         })
     return out
+
+
+# ── Phase 6: Prediction Skills playbook ─────────────────────────────────
+
+
+import os
+from pathlib import Path
+
+
+_SKILLS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "predictions" / "skills.md"
+_SKILLS_VERSION_TAG = "<!-- prediction-skills-v1 -->"
+
+_SKILLS_TEMPLATE = f"""{_SKILLS_VERSION_TAG}
+# Prediction Playbook
+
+_This file is maintained by Claude. The weekly review reads completed
+predictions + actuals and rewrites this playbook with new observations.
+The playbook is fed back into strategy proposals so each iteration
+builds on the prior week's evidence._
+
+## Active patterns (currently believed)
+
+_Patterns confirmed by recent data. Each entry should cite the evidence
+window and approximate hit-rate impact._
+
+- (none yet — needs ≥7 days of completed predictions to populate)
+
+## Hypotheses under test
+
+_Patterns we suspect but haven't confirmed. These can be carried over
+multiple reviews while evidence accumulates._
+
+- (none yet)
+
+## Invalidated patterns
+
+_Patterns we used to believe that the data has refuted. Keep these
+listed so Claude doesn't re-propose strategies based on them._
+
+- (none yet)
+
+## Per-regime notes
+
+### Bull regime
+- (no data yet)
+
+### Bear regime
+- (no data yet)
+
+### Neutral / unclear
+- (no data yet)
+
+## Per-sector notes
+
+_Which sectors over- or under-perform under the current strategy mix._
+
+- (no data yet)
+
+## Open questions
+
+_Things Claude wants to investigate but doesn't have enough data on yet._
+
+- (none yet)
+
+---
+_Last updated: never_
+"""
+
+
+def _ensure_skills_file() -> Path:
+    """Create the skills file with the default template if missing.
+
+    The parent directory is created on first call. Returns the path.
+    """
+    _SKILLS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not _SKILLS_PATH.exists():
+        _SKILLS_PATH.write_text(_SKILLS_TEMPLATE, encoding="utf-8")
+    return _SKILLS_PATH
+
+
+def _read_skills() -> str:
+    """Read the current playbook. Auto-creates on first read."""
+    p = _ensure_skills_file()
+    try:
+        return p.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("predictions: failed to read skills file: %r", e)
+        return _SKILLS_TEMPLATE
+
+
+def _write_skills(content: str) -> None:
+    """Atomically replace the playbook with `content`.
+
+    Writes to a temp file in the same directory then renames — that
+    way an interrupted write can never leave a half-written playbook
+    on disk.
+    """
+    p = _ensure_skills_file()
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def get_skills() -> dict:
+    """Return the current playbook + metadata for the UI."""
+    p = _ensure_skills_file()
+    content = _read_skills()
+    try:
+        mtime = p.stat().st_mtime
+        from datetime import datetime
+        last_updated = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        last_updated = None
+    return {
+        "content":      content,
+        "last_updated": last_updated,
+        "path":         str(p),
+    }
+
+
+def _build_skills_update_prompt(current_skills: str, history: list[dict],
+                                 by_strategy: dict) -> str:
+    """Compose the prompt for Claude's weekly playbook rewrite.
+
+    Pulls in the existing playbook, the recent prediction record, and
+    per-strategy hit rates. Asks Claude to rewrite the playbook in place,
+    promoting confirmed hypotheses, retiring invalidated ones, and adding
+    new observations from the data.
+    """
+    # Compress recent history into a per-day summary with regime + signal
+    # contributions so Claude sees the dimensions to slice on.
+    by_date: dict[str, list[dict]] = {}
+    for r in history:
+        by_date.setdefault(r["date"], []).append(r)
+
+    history_lines: list[str] = []
+    for date in sorted(by_date.keys(), reverse=True):
+        rows = by_date[date]
+        rows.sort(key=lambda r: r["rank"])
+        # Pull pulse + signal contributions from the first pick (same for all).
+        pulse = rows[0].get("pulse_snapshot") or {}
+        regime = pulse.get("regime") or "?"
+        top_sectors = (pulse.get("top_sectors") or [])[:3]
+        avg_return = sum((r.get("actual_change_pct") or 0) for r in rows) / max(len(rows), 1)
+        hits_25 = sum(1 for r in rows if (r.get("universe_rank") or 999) <= 25)
+        hits_10 = sum(1 for r in rows if (r.get("universe_rank") or 999) <= 10)
+        history_lines.append(
+            f"{date}  regime={regime}  top_sectors={','.join(top_sectors) or '—'}  "
+            f"avg_actual={avg_return:+.2f}%  hits10={hits_10}/{len(rows)}  hits25={hits_25}/{len(rows)}"
+        )
+        for r in rows[:5]:
+            comp = r.get("components") or {}
+            comp_bits = []
+            if comp.get("sector_match"):
+                comp_bits.append("sector_match")
+            if (comp.get("bubble_signal") or 0) > 0:
+                comp_bits.append("undervalued")
+            elif (comp.get("bubble_signal") or 0) < 0:
+                comp_bits.append("overheated")
+            if (comp.get("analyst_signal") or 0) > 0:
+                comp_bits.append("analyst_up")
+            if (comp.get("congress_signal") or 0) > 0:
+                comp_bits.append("congress_buy")
+            history_lines.append(
+                f"   #{r['rank']:>2} {r['symbol']:<8}  actual={r.get('actual_change_pct') or 0:+.2f}%  "
+                f"rank={r.get('universe_rank') or '?'}/{r.get('universe_size') or '?'}  "
+                f"({', '.join(comp_bits) or 'momentum only'})"
+            )
+
+    by_strat_lines = [
+        f"  v{v}: {b['predictions']} preds, {b['hits']} hits, "
+        f"hit_rate={b['hit_rate']*100:.1f}%"
+        for v, b in (by_strategy or {}).items()
+    ]
+
+    return f"""You are maintaining the prediction playbook (a markdown file)
+for a daily top-10 gainers predictor.
+
+CURRENT PLAYBOOK (verbatim):
+```
+{current_skills}
+```
+
+RECENT PREDICTION RECORD (most-recent-first, summary + top 5 picks per day):
+{chr(10).join(history_lines) or '(no completed predictions yet)'}
+
+PER-STRATEGY HIT RATES:
+{chr(10).join(by_strat_lines) or '(none)'}
+
+Rewrite the playbook in place. Rules:
+  1. Keep the same SECTION HEADERS so the file stays parseable.
+  2. The first line MUST be exactly: {_SKILLS_VERSION_TAG}
+  3. Be SPECIFIC — every claim should be quantified (hit-rate impact,
+     sector, regime) and cite evidence ("12 of 14 picks in Technology
+     during bull regime hit top-25").
+  4. Be concise — promote confirmed hypotheses, retire invalidated ones.
+     Don't bloat the file with low-signal noise.
+  5. If you don't have enough data for a section, say so plainly
+     (e.g. "Not enough bear-regime days yet — only 1 sampled").
+  6. The bottom MUST end with a "_Last updated: ..._" line with today's
+     ISO date.
+
+Return ONLY the new markdown content. No backticks, no preamble. The
+content MUST start with the version tag line {_SKILLS_VERSION_TAG}."""
+
+
+def _load_history_with_context(window_days: int = 30) -> list[dict]:
+    """Like _completed_predictions_window but also pulls pulse + components.
+
+    Each row gets pulse_snapshot (dict) and components (dict) parsed from
+    JSON so the prompt builder doesn't have to.
+    """
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT dp.prediction_date     AS date,
+                   dp.rank                AS rank,
+                   dp.symbol              AS symbol,
+                   dp.score               AS predicted_score,
+                   dp.reasoning           AS reasoning,
+                   dp.strategy_version    AS strategy_version,
+                   dp.pulse_snapshot_json AS pulse_snapshot_json,
+                   dp.components_json     AS components_json,
+                   dpa.change_pct         AS actual_change_pct,
+                   dpa.universe_rank      AS universe_rank,
+                   dpa.universe_size      AS universe_size
+              FROM daily_predictions dp
+              JOIN daily_prediction_actuals dpa
+                ON dp.prediction_date = dpa.prediction_date
+               AND dp.symbol = dpa.symbol
+             WHERE dpa.universe_rank IS NOT NULL
+             ORDER BY dp.prediction_date DESC, dp.rank
+             LIMIT ?
+            """,
+            (window_days * 10,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        row = dict(r)
+        try:
+            row["pulse_snapshot"] = json.loads(row["pulse_snapshot_json"]) if row.get("pulse_snapshot_json") else {}
+        except Exception:
+            row["pulse_snapshot"] = {}
+        try:
+            row["components"] = json.loads(row["components_json"]) if row.get("components_json") else {}
+        except Exception:
+            row["components"] = {}
+        out.append(row)
+    return out
+
+
+def update_prediction_skills(*, window_days: int = 30, force: bool = False) -> dict:
+    """Ask Claude to rewrite the playbook from current data.
+
+    Returns {updated: bool, reason: str | None}. On success, the new
+    content is written to data/predictions/skills.md atomically.
+    """
+    history = _load_history_with_context(window_days)
+    if not history and not force:
+        return {
+            "updated": False,
+            "reason": "no_completed_predictions_in_window",
+            "history_rows": 0,
+        }
+
+    accuracy = get_accuracy_window(window_days=window_days, hit_threshold=25)
+    current = _read_skills()
+
+    prompt = _build_skills_update_prompt(current, history, accuracy.get("by_strategy") or {})
+
+    try:
+        # No retries — if Claude fails, fall through cleanly. The current
+        # playbook stays as-is rather than being half-overwritten.
+        raw = ask_claude_json(prompt, model="haiku", timeout=120, retries=0)
+    except Exception as e:
+        logger.info("predictions: skills update Claude call failed: %r", e)
+        raw = None
+
+    # Claude is asked for raw text, not JSON — but ask_claude_json tries
+    # to JSON-decode. We handle either shape: if it came back as a dict
+    # with a "content" key (alternate response shape) use that; if it's a
+    # bare string with the version tag, use it; otherwise reject.
+    if isinstance(raw, dict) and isinstance(raw.get("content"), str):
+        new_content = raw["content"]
+    elif isinstance(raw, str):
+        new_content = raw
+    else:
+        # Fall back to direct ask_claude (returns string)
+        from src.utils.claude_cli import ask_claude
+        try:
+            new_content = ask_claude(prompt, model="haiku", timeout=120) or ""
+        except Exception as e:
+            logger.info("predictions: skills update text-mode call failed: %r", e)
+            new_content = ""
+
+    if _SKILLS_VERSION_TAG not in new_content:
+        return {
+            "updated": False,
+            "reason": "claude_response_missing_version_tag",
+            "history_rows": len(history),
+        }
+
+    # Trim anything before the version tag (Claude sometimes adds
+    # explanatory preamble despite being asked not to).
+    tag_idx = new_content.find(_SKILLS_VERSION_TAG)
+    if tag_idx > 0:
+        new_content = new_content[tag_idx:]
+
+    _write_skills(new_content)
+    return {
+        "updated":      True,
+        "history_rows": len(history),
+        "bytes":        len(new_content.encode("utf-8")),
+    }

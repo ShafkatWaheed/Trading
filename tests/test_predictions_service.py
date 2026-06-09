@@ -829,6 +829,149 @@ def test_composite_uses_congress_signal():
     assert bought["score"] > plain["score"]
 
 
+# ── Phase 6: Playbook (skills.md) ────────────────────────────────────
+
+
+@pytest.fixture
+def _isolated_skills(tmp_path, monkeypatch):
+    """Redirect _SKILLS_PATH to a per-test temp file so tests don't touch
+    the real data/predictions/skills.md."""
+    monkeypatch.setattr(
+        predictions_service, "_SKILLS_PATH", tmp_path / "skills.md"
+    )
+    return tmp_path / "skills.md"
+
+
+def test_ensure_skills_file_creates_template(_isolated_skills):
+    p = predictions_service._ensure_skills_file()
+    assert p.exists()
+    content = p.read_text(encoding="utf-8")
+    assert predictions_service._SKILLS_VERSION_TAG in content
+    assert "Prediction Playbook" in content
+    assert "Active patterns" in content
+
+
+def test_read_skills_returns_template_on_first_read(_isolated_skills):
+    content = predictions_service._read_skills()
+    assert predictions_service._SKILLS_VERSION_TAG in content
+
+
+def test_write_skills_round_trip(_isolated_skills):
+    new = predictions_service._SKILLS_VERSION_TAG + "\n# Custom playbook\n_Last updated: 2026-06-09_\n"
+    predictions_service._write_skills(new)
+    assert predictions_service._read_skills() == new
+
+
+def test_get_skills_returns_metadata(_isolated_skills):
+    out = predictions_service.get_skills()
+    assert "content" in out
+    assert "last_updated" in out
+    assert "path" in out
+    assert predictions_service._SKILLS_VERSION_TAG in out["content"]
+
+
+def test_update_skills_returns_reason_when_no_history(_isolated_skills):
+    out = predictions_service.update_prediction_skills(window_days=30)
+    assert out["updated"] is False
+    assert out["reason"] == "no_completed_predictions_in_window"
+
+
+def test_update_skills_writes_claude_response(_isolated_skills):
+    """End-to-end: history exists → Claude returns valid markdown → file
+    gets rewritten with the new content."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 8, 4.2)])
+
+    new_content = (
+        predictions_service._SKILLS_VERSION_TAG +
+        "\n# Updated playbook\n\n"
+        "## Active patterns\n- 1/1 picks hit top-25 in bull regime\n\n"
+        "_Last updated: 2026-06-09_\n"
+    )
+    with patch.object(predictions_service, "ask_claude_json", return_value=new_content):
+        out = predictions_service.update_prediction_skills(window_days=30)
+
+    assert out["updated"] is True
+    assert "Updated playbook" in predictions_service._read_skills()
+
+
+def test_update_skills_rejects_response_missing_version_tag(_isolated_skills):
+    """Defensive: if Claude doesn't return the version tag, we leave the
+    existing playbook intact rather than overwriting with junk."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 8, 4.2)])
+
+    original = predictions_service._read_skills()
+    bad_response = "# No version tag here\nblah blah"
+    with patch.object(predictions_service, "ask_claude_json", return_value=bad_response), \
+         patch("src.utils.claude_cli.ask_claude", return_value=bad_response):
+        out = predictions_service.update_prediction_skills(window_days=30)
+
+    assert out["updated"] is False
+    assert out["reason"] == "claude_response_missing_version_tag"
+    # Playbook unchanged
+    assert predictions_service._read_skills() == original
+
+
+def test_update_skills_trims_preamble_before_version_tag(_isolated_skills):
+    """Claude sometimes adds explanatory preamble despite being told not to.
+    Trim it as long as the version tag is present somewhere in the response."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 8, 4.2)])
+
+    response_with_preamble = (
+        "Here's the new playbook:\n\n```markdown\n"
+        + predictions_service._SKILLS_VERSION_TAG +
+        "\n# Cleaned\n_Last updated: 2026-06-09_\n```"
+    )
+    with patch.object(predictions_service, "ask_claude_json", return_value=response_with_preamble):
+        out = predictions_service.update_prediction_skills(window_days=30)
+
+    assert out["updated"] is True
+    saved = predictions_service._read_skills()
+    assert saved.startswith(predictions_service._SKILLS_VERSION_TAG)
+    assert "Cleaned" in saved
+    # Preamble was trimmed
+    assert "Here's the new playbook" not in saved
+
+
+def test_generate_persists_pulse_and_components_json():
+    """Phase 6 schema: each pick row should store pulse_snapshot_json and
+    components_json so the weekly playbook review has the macro context."""
+    _seed_tier_a_synthetic(["SYN_X"])
+
+    def _fake_get_historical(self, symbol, period_days=180):
+        return _fake_history([100, 100, 100, 100, 100, 110])
+
+    fake_pulse = {
+        "regime": "bull",
+        "top_sectors": ["Technology"],
+        "top_sectors_flow": {"Technology": 2.0},
+        "all_sector_flows": {"Technology": 2.0},
+    }
+
+    with patch.object(predictions_service.DataGateway, "get_historical", _fake_get_historical), \
+         patch.object(predictions_service, "_pulse_context", return_value=fake_pulse):
+        predictions_service.generate_predictions_for_date("2026-06-09", force=True)
+
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT pulse_snapshot_json, components_json FROM daily_predictions "
+        "WHERE prediction_date = '2026-06-09'"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    import json as _j
+    pulse_back = _j.loads(row["pulse_snapshot_json"])
+    assert pulse_back["regime"] == "bull"
+    # Components is an empty {} for change_5d signal (it only fills for composite)
+    assert row["components_json"] is not None
+
+
 def test_phase5_signals_zero_by_default_in_composite():
     """With default weights, the new factors contribute 0 — composite_v1
     behaves exactly like the phase-4 momentum+sector recipe."""

@@ -132,6 +132,19 @@ async def _start_schedulers() -> None:
                 pass
 
         schedule_daily_at(7, 0, _weekly_strategy_review, name="predictions_strategy_review")
+
+        # Weekly playbook (skills.md) update at Sunday 7:30 ET. Runs AFTER
+        # the strategy review so the new proposal can land in the playbook
+        # context when Claude does its next weekly pass.
+        def _weekly_skills_update():
+            try:
+                if datetime.now().weekday() != 6:    # 6 = Sunday
+                    return
+                predictions_service.update_prediction_skills(window_days=30)
+            except Exception:
+                pass
+
+        schedule_daily_at(7, 30, _weekly_skills_update, name="predictions_skills_update")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("predictions scheduler failed: %r", e)
