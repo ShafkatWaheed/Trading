@@ -37,3 +37,6 @@ cache/
 
 # Local DB backups (kept 14 days, ~1.4GB at full retention)
 data/db_backups/
+
+# Daily digest files (rebuildable from DB)
+data/digests/

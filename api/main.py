@@ -12,7 +12,7 @@ from api.routes import (
     market, discover, stocks, backtest, agent, watchlist, compare, alerts, simulation,
     data_sources, universe, news_impact, graph, freshness, earnings, graph_relevance,
     refresh, track_record, context_search, brief, daily_picks, journal, flows,
-    predictions,
+    predictions, admin_cache, premarket, digest,
 )
 
 app = FastAPI(
@@ -145,6 +145,20 @@ async def _start_schedulers() -> None:
                 pass
 
         schedule_daily_at(7, 30, _weekly_skills_update, name="predictions_skills_update")
+
+        # Daily morning digest at 7:15 ET — after predictions generate
+        # (6:30) but before the user typically opens the brief. Writes
+        # data/digests/YYYY-MM-DD.md always; sends email when SMTP
+        # env vars are configured.
+        from api.services import daily_digest_service
+
+        def _morning_digest():
+            try:
+                daily_digest_service.send_daily_digest()
+            except Exception:
+                pass
+
+        schedule_daily_at(7, 15, _morning_digest, name="daily_digest")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("predictions scheduler failed: %r", e)
@@ -231,6 +245,9 @@ app.include_router(daily_picks.router)
 app.include_router(journal.router)
 app.include_router(flows.router)
 app.include_router(predictions.router)
+app.include_router(admin_cache.router)
+app.include_router(premarket.router)
+app.include_router(digest.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
