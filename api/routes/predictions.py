@@ -123,6 +123,27 @@ def get_skills() -> dict:
     return predictions_service.get_skills()
 
 
+@router.post("/strategy/backtest")
+def backtest_strategy(
+    version: int | None = Query(None, ge=1, description="Saved strategy version to backtest"),
+    days: int = Query(30, ge=5, le=180, description="How many trading days to evaluate"),
+    hit_threshold: int = Query(25, ge=1, le=500),
+    top_n: int = Query(10, ge=1, le=50),
+) -> dict:
+    """Backtest a saved strategy version against the last N trading days.
+
+    IMPORTANT: This is a SIGNAL-FROZEN backtest. Only momentum is
+    point-in-time correct; all other signals reflect TODAY's cached
+    values. Use for relative weight comparison between strategies, NOT
+    as a forecast of future returns. The response carries a `caveat`
+    field with the same warning so callers can surface it.
+    """
+    from api.services import predictions_backtest_service
+    return predictions_backtest_service.backtest_strategy(
+        version=version, days=days, hit_threshold=hit_threshold, top_n=top_n,
+    )
+
+
 @router.post("/skills/update")
 def update_skills(
     window_days: int = Query(30, ge=7, le=90),
