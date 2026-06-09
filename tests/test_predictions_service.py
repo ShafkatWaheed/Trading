@@ -938,6 +938,143 @@ def test_update_skills_trims_preamble_before_version_tag(_isolated_skills):
     assert "Here's the new playbook" not in saved
 
 
+# ── Phase 7: full signal bundle ──────────────────────────────────────
+
+
+def test_bulk_options_signals_maps_signal_field():
+    _seed_cache("options_flow:v1:SYN_BULL", {"available": True, "signal": "bullish"})
+    _seed_cache("options_flow:v1:SYN_BEAR", {"available": True, "signal": "bearish"})
+    _seed_cache("options_flow:v1:SYN_NA",   {"available": False})
+
+    out = predictions_service._bulk_options_signals(["SYN_BULL", "SYN_BEAR", "SYN_NA"])
+    assert out["SYN_BULL"] == 1.0
+    assert out["SYN_BEAR"] == -1.0
+    assert "SYN_NA" not in out
+
+
+def test_bulk_news_signals_clamps_net_sentiment():
+    _seed_cache("news_feed:v1:SYN_POS",  {"net_sentiment": 0.7})
+    _seed_cache("news_feed:v1:SYN_NEG",  {"net_sentiment": -0.4})
+    _seed_cache("news_feed:v1:SYN_HOT",  {"net_sentiment": 1.6})    # clipped → 1.0
+
+    out = predictions_service._bulk_news_signals(["SYN_POS", "SYN_NEG", "SYN_HOT"])
+    assert abs(out["SYN_POS"] - 0.7) < 0.01
+    assert abs(out["SYN_NEG"] - (-0.4)) < 0.01
+    assert out["SYN_HOT"] == 1.0
+
+
+def test_bulk_peer_valuation_signals_returns_discount():
+    _seed_cache("peer_valuation:v1:SYN_CHEAP", {
+        "rows": [{"is_self": True, "pe_ratio": 12.0}],
+        "medians": {"pe_ratio": 20.0},   # 1 - 12/20 = 0.4 → cheap
+    })
+    _seed_cache("peer_valuation:v1:SYN_RICH", {
+        "rows": [{"is_self": True, "pe_ratio": 40.0}],
+        "medians": {"pe_ratio": 20.0},   # 1 - 40/20 = -1.0 → expensive (clipped)
+    })
+
+    out = predictions_service._bulk_peer_valuation_signals(["SYN_CHEAP", "SYN_RICH"])
+    assert abs(out["SYN_CHEAP"] - 0.4) < 0.01
+    assert out["SYN_RICH"] == -1.0
+
+
+def test_bulk_catalyst_signals_only_counts_high_weight_within_horizon():
+    _seed_cache("catalyst_calendar:v1:SYN_HIT", {
+        "events": [
+            {"days_out": 12, "weight": "high",   "title": "earnings"},
+            {"days_out": 99, "weight": "high",   "title": "too far"},
+        ],
+    })
+    _seed_cache("catalyst_calendar:v1:SYN_LOW", {
+        "events": [{"days_out": 5, "weight": "low", "title": "investor day"}],
+    })
+
+    out = predictions_service._bulk_catalyst_signals(["SYN_HIT", "SYN_LOW"])
+    assert out["SYN_HIT"] == 1.0
+    assert out["SYN_LOW"] == 0.0
+
+
+def test_bulk_recommendation_signals_maps_actions():
+    _seed_cache("recommendation:v1:SYN_BUY",   {"action": "buy"})
+    _seed_cache("recommendation:v1:SYN_HOLD",  {"action": "hold"})
+    _seed_cache("recommendation:v1:SYN_SELL",  {"action": "sell"})
+    _seed_cache("recommendation:v1:SYN_UNKW",  {"action": "weird"})
+
+    out = predictions_service._bulk_recommendation_signals(
+        ["SYN_BUY", "SYN_HOLD", "SYN_SELL", "SYN_UNKW"]
+    )
+    assert out["SYN_BUY"] == 1.0
+    assert out["SYN_HOLD"] == 0.0
+    assert out["SYN_SELL"] == -1.0
+    assert "SYN_UNKW" not in out
+
+
+def test_bulk_fundamentals_signals_centers_at_50():
+    _seed_cache("fundamentals_story:v1:SYN_STRONG", {"available": True, "overall_score": 80})
+    _seed_cache("fundamentals_story:v1:SYN_AVG",    {"available": True, "overall_score": 50})
+    _seed_cache("fundamentals_story:v1:SYN_WEAK",   {"available": True, "overall_score": 20})
+
+    out = predictions_service._bulk_fundamentals_signals(["SYN_STRONG", "SYN_AVG", "SYN_WEAK"])
+    assert abs(out["SYN_STRONG"] - 0.6) < 0.01   # (80-50)/50
+    assert out["SYN_AVG"] == 0.0
+    assert abs(out["SYN_WEAK"] - (-0.6)) < 0.01
+
+
+def test_bulk_all_signals_unions_each_source():
+    """Single sym with rows in 3 different caches → bundle has all 3 keys."""
+    _seed_cache("bubble_score:v1:SYN_X",       {"label": "Undervalued"})
+    _seed_cache("news_feed:v1:SYN_X",          {"net_sentiment": 0.5})
+    _seed_cache("recommendation:v1:SYN_X",     {"action": "buy"})
+
+    bundle = predictions_service._bulk_all_signals(["SYN_X"])
+    assert bundle["SYN_X"]["bubble"] == 1.0
+    assert abs(bundle["SYN_X"]["news"] - 0.5) < 0.01
+    assert bundle["SYN_X"]["recommendation"] == 1.0
+
+
+def test_validate_composite_v1_includes_phase7_weights_with_zero_defaults():
+    """All Phase 7 weights must be present in the cleaned config so the
+    runtime _score_one never crashes on a missing key."""
+    out = predictions_service._validate_proposed_strategy({
+        "name": "composite-min",
+        "description": "no weights",
+        "config": {
+            "ranking_signal": "composite_v1",
+            "lookback_days": 5,
+            "top_n": 10,
+            "universe_tier": "A",
+        },
+    })
+    w = out["config"]["weights"]
+    for k in ("options", "news", "pre_earnings", "peer_valuation",
+              "catalyst", "recommendation", "macro_fit",
+              "analyst_consensus", "fundamentals"):
+        assert k in w
+        assert w[k] == 0.0
+
+
+def test_score_one_uses_news_signal_with_nonzero_weight():
+    """End-to-end: high news_signal weight + bullish news ranks higher than
+    same-momentum stock with bearish news."""
+    pulse = {"regime": "neutral", "top_sectors": [], "top_sectors_flow": {}, "all_sector_flows": {}}
+    hist = _fake_history([100, 100, 100, 100, 100, 105])
+    weights = {"momentum": 0.5, "news": 0.5}
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        good_news = predictions_service._score_one(
+            "SYN_GOOD", lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, news_signal=0.8,
+        )
+        bad_news = predictions_service._score_one(
+            "SYN_BAD", lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, news_signal=-0.8,
+        )
+
+    assert good_news["score"] > bad_news["score"]
+
+
 def test_generate_persists_pulse_and_components_json():
     """Phase 6 schema: each pick row should store pulse_snapshot_json and
     components_json so the weekly playbook review has the macro context."""
