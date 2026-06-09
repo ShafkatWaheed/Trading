@@ -18,11 +18,11 @@ _SHORTLIST = 15  # bound gateway calls for the value lens (fundamentals, cached 
 _OPTIONS_SHORTLIST = 5
 _CONGRESS_BUY_MIN = 2     # >= this many recent congressional buys
 _INST_HOLDER_MIN = 5      # >= this many distinct 13F holders
+_DIV_YIELD_MIN = 3.0      # % minimum dividend yield for macro dividend-play branch
 
 _STRATEGY_LENSES = {
     "momentum": {"Momentum", "Breakout", "Golden Cross", "Volume Spike", "Gap Fill"},
     "contrarian": {"Oversold Bounce", "Mean Reversion", "Support Bounce"},
-    "macro": {"Sector Leader", "Dividend Play"},
     "disruption": {"Breakout", "Momentum", "Earnings Catalyst"},
     "insider": {"Insider Accumulation"},
 }
@@ -132,6 +132,39 @@ def _options_select(opportunities: list[dict], gateway) -> list[dict]:
     return out[:_PICKS_PER_AGENT]
 
 
+def _macro_select(opportunities: list[dict], gateway) -> list[dict]:
+    # Inflow sectors from the cached sector tape (case-insensitive match).
+    inflow: set[str] = set()
+    try:
+        from api.services import smart_money_service
+        tape = smart_money_service.get_sector_tape() or {}
+        inflow = {(s.get("sector") or "").lower()
+                  for s in tape.get("sectors", []) if s.get("direction") == "inflow"}
+    except Exception:
+        inflow = set()
+
+    chosen: dict[str, dict] = {}   # symbol -> _pick dict (dedup)
+    if inflow:
+        for c in opportunities:
+            if (c.get("sector") or "").lower() in inflow:
+                sym = (c.get("symbol") or "").upper()
+                chosen[sym] = _pick(c, {"sector": c.get("sector"), "sector_inflow": True})
+    for c in rank_candidates(opportunities, key="score", top_n=_SHORTLIST):
+        sym = (c.get("symbol") or "").upper()
+        if sym in chosen:
+            continue
+        try:
+            f = gateway.get_fundamentals(c["symbol"])
+            dy = getattr(f, "dividend_yield", None)
+            if dy is not None and float(dy) >= _DIV_YIELD_MIN:
+                chosen[sym] = _pick(c, {"sector": c.get("sector"), "dividend_yield": float(dy)})
+        except Exception:
+            continue
+    picks = sorted(chosen.values(),
+                   key=lambda p: float(p["evidence"].get("score") or 0), reverse=True)
+    return picks[:_PICKS_PER_AGENT]
+
+
 def discover_for_agent(agent_key: str, *, opportunities: list[dict], gateway) -> list[dict]:
     """Return up to 5 picks for one agent. Degrades to [] on any error."""
     try:
@@ -143,6 +176,8 @@ def discover_for_agent(agent_key: str, *, opportunities: list[dict], gateway) ->
             return _options_select(opportunities, gateway)
         if agent_key == "flow":
             return _flow_select(opportunities)
+        if agent_key == "macro":
+            return _macro_select(opportunities, gateway)
         return []
     except Exception:
         return []

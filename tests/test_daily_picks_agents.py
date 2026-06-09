@@ -103,9 +103,14 @@ def test_momentum_matches_via_secondary_strategy():
     assert [p["symbol"] for p in picks] == ["SYN_SEC2"]
 
 
-def test_macro_selects_sector_leader():
+def test_macro_selects_inflow_sector(monkeypatch):
+    # macro now keys off the sector tape (inflow), not a "Sector Leader" tag.
+    import api.services.smart_money_service as sm
+    monkeypatch.setattr(sm, "get_sector_tape",
+                        lambda **kw: {"sectors": [{"sector": "Tech", "direction": "inflow"}]})
+    # _OPPS cards are all sector="Tech"; the highest-score one should surface.
     picks = dpa.discover_for_agent("macro", opportunities=_OPPS, gateway=_FakeGateway())
-    assert [p["symbol"] for p in picks] == ["SYN_SEC"]
+    assert picks and picks[0]["symbol"] == "SYN_MOM"   # Tech inflow, top score 88
 
 
 def test_flow_selects_congress_buying():
