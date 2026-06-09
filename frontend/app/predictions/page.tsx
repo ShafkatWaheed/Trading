@@ -220,7 +220,7 @@ export default function PredictionsPage() {
 
       {/* ── Section 1: Today ────────────────────────────────────── */}
       <section className="mb-8">
-        <div className="flex items-baseline gap-3 mb-3">
+        <div className="flex items-baseline gap-3 mb-3 flex-wrap">
           <TrendingUp size={14} className="text-accent-blue translate-y-[2px]" />
           <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-accent-blueSoft">
             Today · {today.data?.date ?? "…"}
@@ -229,6 +229,33 @@ export default function PredictionsPage() {
             scored from {today.data?.universe_size ?? "—"} Tier A candidates
           </span>
         </div>
+
+        {/* Market Pulse context — shows the regime + top sectors the
+            scorer saw. Composite strategies use these as inputs;
+            change_Nd strategies don't but the context is still useful. */}
+        {today.data?.pulse_context && (today.data.pulse_context.regime || (today.data.pulse_context.top_sectors?.length ?? 0) > 0) && (
+          <div className="card-subtle p-3 mb-3 flex items-baseline gap-3 flex-wrap text-[11px]">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-text-muted">
+              Pulse
+            </span>
+            {today.data.pulse_context.regime && (
+              <span>
+                regime:{" "}
+                <span className="font-semibold text-text-primary">
+                  {today.data.pulse_context.regime}
+                </span>
+              </span>
+            )}
+            {(today.data.pulse_context.top_sectors?.length ?? 0) > 0 && (
+              <span>
+                top sectors:{" "}
+                <span className="font-semibold text-text-primary">
+                  {today.data.pulse_context.top_sectors!.join(" · ")}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
         {today.isLoading && (
           <div className="card p-6 text-text-muted text-[12px] italic">
             Scoring Tier A universe… first call of the day takes ~1 min.

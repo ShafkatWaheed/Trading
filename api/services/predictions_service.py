@@ -43,6 +43,9 @@ from src.data.gateway import DataGateway
 from src.utils.claude_cli import ask_claude_json
 from src.utils.db import get_connection, init_db
 
+# market_service is imported lazily inside _pulse_context to avoid a circular
+# import (market_service → other services → predictions_service in some paths).
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +64,76 @@ _BASELINE_STRATEGY = {
         "top_n": 10,
     },
 }
+
+
+# ── Market Pulse context (Phase 4) ─────────────────────────────────────
+
+
+_PULSE_TOP_SECTORS_N = 3
+
+
+def _pulse_context() -> dict:
+    """Pull the current Market Pulse and extract the bits relevant to
+    prediction scoring: regime + top-N sectors by flow.
+
+    Returns:
+      {
+        "regime":           "bull" | "bear" | "neutral" | "unclear",
+        "top_sectors":      ["Technology", "Energy", "Healthcare"],
+        "top_sectors_flow": {"Technology": 1.2, "Energy": 0.8, ...},
+      }
+    Returns an empty dict if the pulse is unavailable — callers must
+    treat that as "no pulse signal available".
+    """
+    try:
+        from api.services import market_service
+        pulse = market_service.get_pulse(period="1M") or {}
+    except Exception as e:
+        logger.info("predictions: pulse fetch failed: %r", e)
+        return {}
+
+    regime = pulse.get("regime") or "unclear"
+    flows = pulse.get("sector_flows") or []
+    # Highest change_pct first; ignore sectors with missing data.
+    flows_sorted = sorted(
+        (f for f in flows if isinstance(f, dict) and f.get("sector")),
+        key=lambda f: float(f.get("change_pct") or 0.0),
+        reverse=True,
+    )
+    top = flows_sorted[:_PULSE_TOP_SECTORS_N]
+    return {
+        "regime":           regime,
+        "top_sectors":      [f["sector"] for f in top],
+        "top_sectors_flow": {f["sector"]: float(f.get("change_pct") or 0) for f in top},
+        "all_sector_flows": {
+            f["sector"]: float(f.get("change_pct") or 0)
+            for f in flows
+            if isinstance(f, dict) and f.get("sector")
+        },
+    }
+
+
+def _symbol_sectors(symbols: list[str]) -> dict[str, str]:
+    """Bulk-load primary-sector per symbol. Returns {} for unmapped names."""
+    if not symbols:
+        return {}
+    init_db()
+    placeholders = ",".join("?" * len(symbols))
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT si.symbol AS symbol, i.sector AS sector
+              FROM stock_industry si
+              JOIN industries i ON si.industry_code = i.code
+             WHERE si.is_primary = 1
+               AND si.symbol IN ({placeholders})
+            """,
+            tuple(symbols),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r["symbol"]: r["sector"] for r in rows}
 
 
 # ── Strategy bootstrap + lookup ────────────────────────────────────────
@@ -157,13 +230,8 @@ def _load_universe(tier: str) -> list[str]:
     return [r["symbol"] for r in rows]
 
 
-def _score_one(symbol: str, *, lookback_days: int, min_history_days: int) -> dict | None:
-    """Compute one symbol's score under the baseline (5d momentum) strategy.
-
-    Returns {symbol, score, reasoning} or None if data is missing.
-    All historical bars must be AT OR BEFORE today — no current-day
-    intraday bars allowed (point-in-time guarantee).
-    """
+def _momentum_for(symbol: str, *, lookback_days: int, min_history_days: int) -> float | None:
+    """Pure trailing %-return helper. Returns None if data is missing."""
     try:
         gw = DataGateway()
         df = gw.get_historical(symbol, period_days=min_history_days + 30)
@@ -172,8 +240,6 @@ def _score_one(symbol: str, *, lookback_days: int, min_history_days: int) -> dic
         return None
     if df is None or len(df) < min_history_days:
         return None
-    # Use only completed bars. The last row of df is the most recent
-    # COMPLETED daily bar — get_historical never returns intraday data.
     try:
         close = df["Close"] if "Close" in df.columns else df["close"]
         latest = float(close.iloc[-1])
@@ -182,7 +248,73 @@ def _score_one(symbol: str, *, lookback_days: int, min_history_days: int) -> dic
         return None
     if prior <= 0:
         return None
-    change_pct = ((latest - prior) / prior) * 100.0
+    return ((latest - prior) / prior) * 100.0
+
+
+def _score_one(
+    symbol: str,
+    *,
+    lookback_days: int,
+    min_history_days: int,
+    signal: str = "change_5d",
+    pulse: dict | None = None,
+    sector: str | None = None,
+    weights: dict | None = None,
+) -> dict | None:
+    """Compute one symbol's score under the active strategy.
+
+    Dispatches on `signal`:
+      - change_Nd        → pure momentum (legacy / baseline)
+      - composite_v1     → momentum + Market Pulse sector signals
+
+    Returns {symbol, score, reasoning, components} or None on missing data.
+    POINT-IN-TIME: only the most-recent COMPLETED daily bars are used; the
+    pulse context is computed pre-open from yesterday's session.
+    """
+    change_pct = _momentum_for(
+        symbol, lookback_days=lookback_days, min_history_days=min_history_days
+    )
+    if change_pct is None:
+        return None
+
+    if signal == "composite_v1":
+        # Weight defaults — keep momentum dominant so the v1 composite stays
+        # close to the baseline behaviour when pulse data is unavailable.
+        w = {**{"momentum": 0.5, "sector_match": 0.3, "sector_flow": 0.2},
+             **(weights or {})}
+        top_sectors = set((pulse or {}).get("top_sectors") or [])
+        sector_flows = (pulse or {}).get("all_sector_flows") or {}
+
+        sector_match = 1.0 if (sector and sector in top_sectors) else 0.0
+        sector_flow = float(sector_flows.get(sector or "", 0.0)) if sector else 0.0
+
+        score = (
+            w["momentum"] * change_pct
+            + w["sector_match"] * sector_match * 10.0   # scale match into a meaningful weight
+            + w["sector_flow"] * sector_flow
+        )
+
+        bits: list[str] = []
+        bits.append(f"{change_pct:+.1f}% 5d")
+        if sector_match > 0:
+            bits.append(f"sector match ({sector})")
+        elif sector:
+            bits.append(f"sector {sector} (not focused)")
+        if abs(sector_flow) > 0.1:
+            bits.append(f"flow {sector_flow:+.1f}%")
+        return {
+            "symbol":    symbol,
+            "score":     score,
+            "reasoning": " · ".join(bits),
+            "components": {
+                "momentum":     change_pct,
+                "sector":       sector,
+                "sector_match": bool(sector_match),
+                "sector_flow":  sector_flow,
+            },
+        }
+
+    # Default branch: pure change_Nd momentum (1d / 5d / 20d).
     return {
         "symbol":    symbol,
         "score":     change_pct,
@@ -194,17 +326,30 @@ def _score_one(symbol: str, *, lookback_days: int, min_history_days: int) -> dic
     }
 
 
-def _rank_universe(symbols: list[str], config: dict) -> list[dict]:
+def _rank_universe(symbols: list[str], config: dict, *,
+                   pulse: dict | None = None,
+                   sectors_by_sym: dict[str, str] | None = None) -> list[dict]:
     """Score every symbol in parallel and return top N by score desc."""
     lookback = int(config.get("lookback_days", 5))
     min_hist = int(config.get("min_history_days", 6))
     top_n = int(config.get("top_n", 10))
+    signal = config.get("ranking_signal", "change_5d")
+    weights = config.get("weights") if isinstance(config.get("weights"), dict) else None
+    sectors_by_sym = sectors_by_sym or {}
 
     # 16 workers is plenty for ~150 Tier A symbols and respects rate limits.
     scored: list[dict] = []
     with ThreadPoolExecutor(max_workers=16) as pool:
         for result in pool.map(
-            lambda s: _score_one(s, lookback_days=lookback, min_history_days=min_hist),
+            lambda s: _score_one(
+                s,
+                lookback_days=lookback,
+                min_history_days=min_hist,
+                signal=signal,
+                pulse=pulse,
+                sector=sectors_by_sym.get(s),
+                weights=weights,
+            ),
             symbols,
         ):
             if result is not None:
@@ -250,7 +395,14 @@ def generate_predictions_for_date(date: str, *, force: bool = False) -> dict:
             "universe_size":    0,
         }
 
-    top = _rank_universe(symbols, config)
+    # Phase 4: pull Market Pulse context once per generation. Composite
+    # strategies use it for sector match + flow signal; pure-momentum
+    # strategies ignore the pulse but we still attach it to the payload
+    # so the UI can show the regime alongside the picks.
+    pulse = _pulse_context()
+    sectors_by_sym = _symbol_sectors(symbols)
+
+    top = _rank_universe(symbols, config, pulse=pulse, sectors_by_sym=sectors_by_sym)
     now = _now_iso()
 
     conn = get_connection()
@@ -284,6 +436,7 @@ def generate_predictions_for_date(date: str, *, force: bool = False) -> dict:
             for i, row in enumerate(top, start=1)
         ],
         "universe_size":     len(symbols),
+        "pulse_context":     pulse,
     }
 
 
@@ -576,6 +729,12 @@ _ALLOWED_RANKING_SIGNALS = {
     "change_1d":  "trailing 1-day % return (overnight gappers)",
     "change_5d":  "trailing 5-day % return (default baseline)",
     "change_20d": "trailing 20-day % return (longer momentum)",
+    "composite_v1": (
+        "blend trailing %-return with Market Pulse sector flow: "
+        "score = momentum*w_momentum + sector_in_pulse_top*w_sector "
+        "+ sector_flow_pct*w_sector_flow. Weights configurable; pulse "
+        "top-N sectors are pulled fresh at generation time."
+    ),
 }
 
 
@@ -645,12 +804,25 @@ def _build_strategy_review_prompt(history: list[dict], current: dict) -> str:
 
     vocab_lines = "\n".join(f"  - {k}: {v}" for k, v in _ALLOWED_RANKING_SIGNALS.items())
 
+    # Show Claude the current Market Pulse so it can decide whether
+    # composite_v1's pulse-aware signals are worth leaning into.
+    pulse = _pulse_context()
+    if pulse:
+        pulse_blurb = (
+            f"  Current market regime: {pulse.get('regime')}\n"
+            f"  Top sectors by flow: {', '.join(pulse.get('top_sectors') or []) or '—'}\n"
+        )
+    else:
+        pulse_blurb = "  Market Pulse currently unavailable.\n"
+
     return f"""You are tuning a daily top-10 gainers prediction strategy for Tier A US stocks.
 
 Current strategy (v{current['version']} — "{current['name']}"):
   {current['description']}
   Config: {json.dumps(current['config'])}
 
+Market Pulse context the predictor will see at run time:
+{pulse_blurb}
 Recent prediction performance (most recent first; "hit" = predicted symbol's
 same-day rank in Tier A was top 25 of ~500 names):
 {chr(10).join(summary_lines)}
@@ -659,26 +831,32 @@ Allowed ranking signals (use exactly one of these as `ranking_signal`):
 {vocab_lines}
 
 Other config keys you can set:
-  - lookback_days:    integer 1-60 (only used when ranking_signal is a change_Nd)
+  - lookback_days:    integer 1-60
   - top_n:            integer (keep at 10)
   - universe_tier:    "A" (don't change for now)
   - min_history_days: integer (typically lookback_days + 1)
+  - weights (ONLY when ranking_signal=composite_v1):
+        {{ "momentum": 0.0-1.0, "sector_match": 0.0-1.0, "sector_flow": 0.0-1.0 }}
 
 Propose ONE new strategy. Goals:
   1. Beat the current strategy's recent hit rate
   2. Stay in the allowed signal vocabulary
-  3. Give a short, specific name that hints at what changed (e.g. "rsi_oversold_v1")
+  3. Give a short, specific name (e.g. "composite_pulse_heavy_v1")
+  4. If picking composite_v1, set weights based on the recent record:
+     - heavy momentum weight if last week's hits were predominantly high-momentum
+     - heavy sector weight if pulse-favored sector picks outperformed
 
 Return ONLY this JSON, no prose:
 {{
-  "name":        "<short kebab-case name, e.g. rsi_oversold_v1>",
-  "description": "<1-2 sentence rationale: what you observed in the data and why this should be better>",
+  "name":        "<short kebab-case name>",
+  "description": "<1-2 sentence rationale: what you observed and why this should be better>",
   "config": {{
     "ranking_signal":   "<one of the allowed signals above>",
     "lookback_days":    <integer or null>,
     "top_n":            10,
     "universe_tier":    "A",
-    "min_history_days": <integer>
+    "min_history_days": <integer>,
+    "weights":          <object or null — only for composite_v1>
   }}
 }}"""
 
@@ -707,26 +885,53 @@ def _validate_proposed_strategy(proposal: object) -> dict | None:
         # Out of scope for v1 — only support Tier A
         return None
 
-    # change_Nd signals: pin lookback_days to N for consistency. Avoids
-    # the edge case where Claude says signal=change_5d but lookback=20.
+    # For change_Nd signals, pin lookback_days to N. For composite_v1,
+    # let the proposed lookback through (composite uses momentum at any
+    # window — 5d is the typical choice).
     _SIGNAL_LOOKBACK = {"change_1d": 1, "change_5d": 5, "change_20d": 20}
-    lookback = _SIGNAL_LOOKBACK[signal]
+    if signal in _SIGNAL_LOOKBACK:
+        lookback = _SIGNAL_LOOKBACK[signal]
+    else:
+        try:
+            lookback = int(cfg.get("lookback_days") or 5)
+        except (TypeError, ValueError):
+            lookback = 5
+    lookback = max(1, min(60, lookback))
     min_hist = lookback + 1
+
     try:
         top_n = int(cfg.get("top_n") or 10)
     except (TypeError, ValueError):
         top_n = 10
 
+    out_config: dict = {
+        "ranking_signal":   signal,
+        "lookback_days":    lookback,
+        "top_n":            max(1, min(50, top_n)),
+        "universe_tier":    "A",
+        "min_history_days": min_hist,
+    }
+
+    # composite_v1 takes a weights dict — sanitize it.
+    if signal == "composite_v1":
+        raw_w = cfg.get("weights") or {}
+        if not isinstance(raw_w, dict):
+            raw_w = {}
+        def _w(key: str, default: float) -> float:
+            try:
+                return max(0.0, min(1.0, float(raw_w.get(key, default))))
+            except (TypeError, ValueError):
+                return default
+        out_config["weights"] = {
+            "momentum":     _w("momentum",     0.5),
+            "sector_match": _w("sector_match", 0.3),
+            "sector_flow":  _w("sector_flow",  0.2),
+        }
+
     return {
         "name":        name[:64],
         "description": desc[:500],
-        "config": {
-            "ranking_signal":   signal,
-            "lookback_days":    lookback,
-            "top_n":            max(1, min(50, top_n)),
-            "universe_tier":    "A",
-            "min_history_days": min_hist,
-        },
+        "config":      out_config,
     }
 
 

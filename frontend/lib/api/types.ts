@@ -96,6 +96,13 @@ export type PredictionPick = {
   actuals_recorded_at?: string | null;
 };
 
+export type PredictionsPulseContext = {
+  regime?: string;
+  top_sectors?: string[];
+  top_sectors_flow?: Record<string, number>;
+  all_sector_flows?: Record<string, number>;
+};
+
 export type PredictionsPayload = {
   date: string;
   strategy_version: number | null;
@@ -103,6 +110,11 @@ export type PredictionsPayload = {
   picks: PredictionPick[];
   universe_size?: number;
   actuals_present?: boolean;
+  /** Market Pulse context the scorer saw at generation time. composite_v1
+   *  strategies use the top sectors as one of the scoring factors;
+   *  change_Nd strategies ignore it but the field is still surfaced so
+   *  the UI can show today's regime alongside the picks. */
+  pulse_context?: PredictionsPulseContext;
 };
 
 export type PredictionStrategy = {

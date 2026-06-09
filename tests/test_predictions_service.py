@@ -509,3 +509,170 @@ def test_activate_already_active_is_noop():
     res = predictions_service.activate_strategy(strat["version"])
     assert res["activated"] is True
     assert res.get("no_op") is True
+
+
+# ── Phase 4: composite_v1 pulse-aware scoring ───────────────────────
+
+
+def _seed_industry(symbol: str, sector: str, industry_code: str | None = None) -> None:
+    """Insert a synthetic industry mapping for `symbol`."""
+    code = industry_code or f"TEST_IND_{sector.upper().replace(' ', '_')}"
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO industries (code, sector) VALUES (?, ?)",
+            (code, sector),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO stock_industry
+              (symbol, industry_code, weight, is_primary, source)
+            VALUES (?, ?, 1.0, 1, 'test')
+            """,
+            (symbol, code),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_score_one_composite_uses_sector_match():
+    """Two symbols with identical 5d momentum: the one in a pulse-top sector
+    must score higher."""
+    pulse = {
+        "regime":            "bull",
+        "top_sectors":       ["Technology"],
+        "top_sectors_flow":  {"Technology": 2.5},
+        "all_sector_flows":  {"Technology": 2.5, "Energy": -1.0},
+    }
+    hist = _fake_history([100, 100, 100, 100, 100, 105])    # +5% over 5d
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        in_top = predictions_service._score_one(
+            "SYN_TECH",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector="Technology",
+        )
+        out_of_top = predictions_service._score_one(
+            "SYN_ENERGY",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector="Energy",
+        )
+
+    assert in_top is not None and out_of_top is not None
+    assert in_top["score"] > out_of_top["score"]
+    assert in_top["components"]["sector_match"] is True
+    assert out_of_top["components"]["sector_match"] is False
+
+
+def test_score_one_composite_handles_unknown_sector():
+    """If symbol has no sector mapping, sector_match defaults to 0 without
+    crashing."""
+    pulse = {
+        "regime": "bull", "top_sectors": ["Technology"],
+        "top_sectors_flow": {"Technology": 1.0},
+        "all_sector_flows": {"Technology": 1.0},
+    }
+    hist = _fake_history([100, 100, 100, 100, 100, 110])
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        out = predictions_service._score_one(
+            "SYN_X",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+        )
+    assert out is not None
+    assert out["components"]["sector_match"] is False
+
+
+def test_score_one_change_signal_ignores_pulse():
+    """change_Nd strategies must not be affected by pulse args even when
+    passed — keeps the baseline truly pulse-independent."""
+    pulse = {
+        "regime": "bull", "top_sectors": ["Technology"],
+        "top_sectors_flow": {"Technology": 5.0},
+        "all_sector_flows": {"Technology": 5.0},
+    }
+    hist = _fake_history([100, 100, 100, 100, 100, 110])
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        a = predictions_service._score_one(
+            "SYN_X",
+            lookback_days=5, min_history_days=6,
+            signal="change_5d", pulse=pulse, sector="Technology",
+        )
+        b = predictions_service._score_one(
+            "SYN_X",
+            lookback_days=5, min_history_days=6,
+            signal="change_5d", pulse={}, sector=None,
+        )
+    assert a is not None and b is not None
+    assert abs(a["score"] - b["score"]) < 0.001
+
+
+def test_symbol_sectors_bulk_load():
+    _seed_industry("SYN_A", "Technology")
+    _seed_industry("SYN_B", "Energy")
+
+    out = predictions_service._symbol_sectors(["SYN_A", "SYN_B", "SYN_NEVER_SEEN"])
+    assert out == {"SYN_A": "Technology", "SYN_B": "Energy"}
+
+
+def test_generate_attaches_pulse_context():
+    """The payload returned by generate must include the pulse_context
+    that was used during scoring."""
+    _seed_tier_a_synthetic(["SYN_X"])
+
+    def _fake_get_historical(self, symbol, period_days=180):
+        return _fake_history([100, 100, 100, 100, 100, 110])
+
+    fake_pulse = {
+        "regime": "bull",
+        "top_sectors": ["Technology"],
+        "top_sectors_flow": {"Technology": 2.0},
+        "all_sector_flows": {"Technology": 2.0},
+    }
+    with patch.object(predictions_service.DataGateway, "get_historical", _fake_get_historical), \
+         patch.object(predictions_service, "_pulse_context", return_value=fake_pulse):
+        out = predictions_service.generate_predictions_for_date("2026-06-09", force=True)
+
+    assert out["pulse_context"] == fake_pulse
+
+
+def test_validate_composite_v1_sanitizes_weights():
+    """Weights outside [0,1] get clipped; non-numeric falls back to defaults."""
+    out = predictions_service._validate_proposed_strategy({
+        "name": "composite-test",
+        "description": "trying composite",
+        "config": {
+            "ranking_signal": "composite_v1",
+            "lookback_days": 5,
+            "top_n": 10,
+            "universe_tier": "A",
+            "weights": {
+                "momentum":     1.5,       # too high → 1.0
+                "sector_match": -0.2,      # too low → 0.0
+                "sector_flow":  "bad",     # not a number → default 0.2
+            },
+        },
+    })
+    assert out is not None
+    w = out["config"]["weights"]
+    assert w["momentum"] == 1.0
+    assert w["sector_match"] == 0.0
+    assert abs(w["sector_flow"] - 0.2) < 0.001
+
+
+def test_validate_composite_v1_with_no_weights_uses_defaults():
+    out = predictions_service._validate_proposed_strategy({
+        "name": "composite-default",
+        "description": "no weights specified",
+        "config": {
+            "ranking_signal": "composite_v1",
+            "lookback_days": 5,
+            "top_n": 10,
+            "universe_tier": "A",
+        },
+    })
+    assert out is not None
+    w = out["config"]["weights"]
+    assert w == {"momentum": 0.5, "sector_match": 0.3, "sector_flow": 0.2}
