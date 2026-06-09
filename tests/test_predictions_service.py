@@ -675,4 +675,178 @@ def test_validate_composite_v1_with_no_weights_uses_defaults():
     })
     assert out is not None
     w = out["config"]["weights"]
-    assert w == {"momentum": 0.5, "sector_match": 0.3, "sector_flow": 0.2}
+    assert w["momentum"] == 0.5
+    assert w["sector_match"] == 0.3
+    assert w["sector_flow"] == 0.2
+    # Phase 5 weights default to 0
+    assert w["bubble"] == 0.0
+    assert w["analyst"] == 0.0
+    assert w["congress"] == 0.0
+
+
+# ── Phase 5: cached per-symbol signals (bubble, analyst, congress) ───
+
+
+def _seed_cache(key: str, value: object, ttl_minutes: int = 60) -> None:
+    """Insert a cache row directly so the bulk-load helpers see it."""
+    from src.utils.db import cache_set
+    cache_set(key, value, ttl_minutes=ttl_minutes)
+
+
+def test_bulk_bubble_signals_maps_labels_correctly():
+    _seed_cache("bubble_score:v1:SYN_HOT",   {"label": "Overheated", "score": 90})
+    _seed_cache("bubble_score:v1:SYN_FAIR",  {"label": "Fair Value", "score": 50})
+    _seed_cache("bubble_score:v1:SYN_CHEAP", {"label": "Undervalued","score": 20})
+
+    out = predictions_service._bulk_bubble_signals(["SYN_HOT", "SYN_FAIR", "SYN_CHEAP", "SYN_MISSING"])
+    assert out["SYN_HOT"] == -1.0
+    assert out["SYN_FAIR"] == 0.0
+    assert out["SYN_CHEAP"] == 1.0
+    assert "SYN_MISSING" not in out
+
+
+def test_bulk_analyst_revisions_clipped_to_unit_range():
+    _seed_cache("estimate_revisions:v1:SYN_UP",    {"net_change_30d": 7})    # → 0.7
+    _seed_cache("estimate_revisions:v1:SYN_HUGE",  {"net_change_30d": 25})   # clipped → 1.0
+    _seed_cache("estimate_revisions:v1:SYN_DOWN",  {"net_change_30d": -15})  # clipped → -1.0
+    _seed_cache("estimate_revisions:v1:SYN_NONE",  {"net_change_30d": None})
+
+    out = predictions_service._bulk_analyst_revisions(["SYN_UP", "SYN_HUGE", "SYN_DOWN", "SYN_NONE"])
+    assert abs(out["SYN_UP"] - 0.7) < 0.001
+    assert out["SYN_HUGE"] == 1.0
+    assert out["SYN_DOWN"] == -1.0
+    assert "SYN_NONE" not in out
+
+
+def test_bulk_congress_buys_uses_30d_window():
+    """Recent buys are flagged; old buys and sells are not."""
+    from datetime import datetime, timedelta, timezone
+    init_db()
+    conn = get_connection()
+    today = datetime.now(tz=timezone.utc).date()
+    recent = (today - timedelta(days=10)).isoformat()
+    old    = (today - timedelta(days=200)).isoformat()
+    conn.executescript("DELETE FROM congress_trades WHERE filing_uuid LIKE 'test-%';")
+    rows = [
+        ("test-1", 0, "House", "Test Rep A", "D", "ST", "TX", None, "SYN_RECENT_BUY",
+         "ST", "buy", recent, recent, 1000, 5000, "{}", "test"),
+        ("test-2", 0, "House", "Test Rep B", "R", "ST", "FL", None, "SYN_OLD_BUY",
+         "ST", "buy", old, old, 1000, 5000, "{}", "test"),
+        ("test-3", 0, "House", "Test Rep C", "D", "ST", "NY", None, "SYN_SELL",
+         "ST", "sell", recent, recent, 1000, 5000, "{}", "test"),
+    ]
+    for r in rows:
+        conn.execute(
+            "INSERT INTO congress_trades "
+            "(filing_uuid, txn_index, chamber, politician_name, party, state, bioguide_id, asset_type, ticker, "
+            " asset_type, transaction_type, transaction_date, filing_date, amount_low, amount_high, raw_text, source, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            r,
+        )
+    conn.commit()
+    conn.close()
+
+    out = predictions_service._bulk_congress_buys(
+        ["SYN_RECENT_BUY", "SYN_OLD_BUY", "SYN_SELL", "SYN_NEVER_TRADED"]
+    )
+    assert out == {"SYN_RECENT_BUY": 1.0}
+
+
+def test_composite_uses_bubble_signal_with_nonzero_weight():
+    """When bubble weight > 0, an undervalued symbol outranks an overheated one
+    with identical momentum + sector profile."""
+    pulse = {
+        "regime": "neutral",
+        "top_sectors": [],
+        "top_sectors_flow": {},
+        "all_sector_flows": {},
+    }
+    hist = _fake_history([100, 100, 100, 100, 100, 102])    # +2% momentum
+    weights = {"momentum": 0.5, "sector_match": 0.0, "sector_flow": 0.0,
+               "bubble": 0.5, "analyst": 0.0, "congress": 0.0}
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        cheap = predictions_service._score_one(
+            "SYN_CHEAP",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, bubble_signal=1.0,
+        )
+        hot = predictions_service._score_one(
+            "SYN_HOT",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, bubble_signal=-1.0,
+        )
+
+    assert cheap is not None and hot is not None
+    assert cheap["score"] > hot["score"]
+
+
+def test_composite_uses_analyst_signal():
+    pulse = {"regime": "neutral", "top_sectors": [], "top_sectors_flow": {}, "all_sector_flows": {}}
+    hist = _fake_history([100, 100, 100, 100, 100, 102])
+    weights = {"momentum": 0.5, "sector_match": 0.0, "sector_flow": 0.0,
+               "bubble": 0.0, "analyst": 0.5, "congress": 0.0}
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        upgraded = predictions_service._score_one(
+            "SYN_UP",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, analyst_signal=1.0,
+        )
+        flat = predictions_service._score_one(
+            "SYN_FLAT",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, analyst_signal=0.0,
+        )
+
+    assert upgraded["score"] > flat["score"]
+
+
+def test_composite_uses_congress_signal():
+    pulse = {"regime": "neutral", "top_sectors": [], "top_sectors_flow": {}, "all_sector_flows": {}}
+    hist = _fake_history([100, 100, 100, 100, 100, 102])
+    weights = {"momentum": 0.5, "sector_match": 0.0, "sector_flow": 0.0,
+               "bubble": 0.0, "analyst": 0.0, "congress": 0.5}
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        bought = predictions_service._score_one(
+            "SYN_HILL",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, congress_signal=1.0,
+        )
+        plain = predictions_service._score_one(
+            "SYN_NORM",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            weights=weights, congress_signal=0.0,
+        )
+
+    assert bought["score"] > plain["score"]
+
+
+def test_phase5_signals_zero_by_default_in_composite():
+    """With default weights, the new factors contribute 0 — composite_v1
+    behaves exactly like the phase-4 momentum+sector recipe."""
+    pulse = {"regime": "neutral", "top_sectors": [], "top_sectors_flow": {}, "all_sector_flows": {}}
+    hist = _fake_history([100, 100, 100, 100, 100, 110])    # +10%
+
+    with patch.object(predictions_service.DataGateway, "get_historical", return_value=hist):
+        without = predictions_service._score_one(
+            "SYN_X",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+        )
+        with_signals = predictions_service._score_one(
+            "SYN_X",
+            lookback_days=5, min_history_days=6,
+            signal="composite_v1", pulse=pulse, sector=None,
+            bubble_signal=1.0, analyst_signal=1.0, congress_signal=1.0,
+        )
+    # No weights passed → defaults apply, including 0 for phase-5 weights.
+    # Without weights the new factors should not affect the score.
+    assert abs(without["score"] - with_signals["score"]) < 0.001

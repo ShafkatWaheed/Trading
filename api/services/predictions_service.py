@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.data.gateway import DataGateway
@@ -134,6 +134,121 @@ def _symbol_sectors(symbols: list[str]) -> dict[str, str]:
     finally:
         conn.close()
     return {r["symbol"]: r["sector"] for r in rows}
+
+
+# ── Phase 5: cached per-symbol signals for richer composite scoring ────
+
+
+def _bulk_bubble_signals(symbols: list[str]) -> dict[str, float]:
+    """Per-symbol signal from cached bubble score → -1..+1.
+
+    Mapping (matches the labels bubble_score_service emits):
+        "Overheated", "Bubble", "Peak" → -1.0  (penalty)
+        "Fair Value", "Normal"          →  0.0
+        "Undervalued", "Discounted"     → +1.0  (bonus)
+
+    Source: cache table where key = "bubble_score:v1:{SYMBOL}". One bulk
+    SELECT keeps the per-pick path O(1).
+    """
+    if not symbols:
+        return {}
+    init_db()
+    keys = [f"bubble_score:v1:{s}" for s in symbols]
+    placeholders = ",".join("?" * len(keys))
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT key, value FROM cache WHERE key IN ({placeholders})",
+            tuple(keys),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, float] = {}
+    for r in rows:
+        try:
+            data = json.loads(r["value"])
+        except Exception:
+            continue
+        label = (data.get("label") or "").lower()
+        sym = r["key"].rsplit(":", 1)[-1]
+        if any(t in label for t in ("overheated", "bubble", "peak")):
+            out[sym] = -1.0
+        elif any(t in label for t in ("undervalued", "discount")):
+            out[sym] = 1.0
+        else:
+            out[sym] = 0.0
+    return out
+
+
+def _bulk_analyst_revisions(symbols: list[str]) -> dict[str, float]:
+    """Per-symbol analyst revision signal → -1..+1.
+
+    Maps Finnhub net_change_30d (upgrades − downgrades over 30 days) to
+    a clipped [-1, +1] range using ±10 as full saturation. So a stock
+    with +5 net upgrades returns 0.5; +12 returns 1.0; -10 returns -1.0.
+
+    Source: cache "estimate_revisions:v1:{SYMBOL}" (24h TTL, written by
+    the existing analyst service).
+    """
+    if not symbols:
+        return {}
+    init_db()
+    keys = [f"estimate_revisions:v1:{s}" for s in symbols]
+    placeholders = ",".join("?" * len(keys))
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT key, value FROM cache WHERE key IN ({placeholders})",
+            tuple(keys),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, float] = {}
+    for r in rows:
+        try:
+            data = json.loads(r["value"])
+        except Exception:
+            continue
+        sym = r["key"].rsplit(":", 1)[-1]
+        net = data.get("net_change_30d")
+        if net is None:
+            continue
+        try:
+            scaled = max(-1.0, min(1.0, float(net) / 10.0))
+        except (TypeError, ValueError):
+            continue
+        out[sym] = scaled
+    return out
+
+
+def _bulk_congress_buys(symbols: list[str], *, days: int = 30) -> dict[str, float]:
+    """Per-symbol congress-buy signal → 0..1.
+
+    Returns 1.0 if there were any buy-side congressional trades in the
+    last `days` for a given ticker, else 0.0. (Cluster size could be a
+    follow-up; the binary signal alone has historically tracked sector
+    rotation reasonably well — see notes in congress_signal_service.)
+    """
+    if not symbols:
+        return {}
+    init_db()
+    placeholders = ",".join("?" * len(symbols))
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT ticker
+              FROM congress_trades
+             WHERE ticker IN ({placeholders})
+               AND lower(transaction_type) = 'buy'
+               AND transaction_date >= ?
+            """,
+            (*symbols, cutoff),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r["ticker"]: 1.0 for r in rows}
 
 
 # ── Strategy bootstrap + lookup ────────────────────────────────────────
@@ -260,16 +375,20 @@ def _score_one(
     pulse: dict | None = None,
     sector: str | None = None,
     weights: dict | None = None,
+    bubble_signal: float = 0.0,
+    analyst_signal: float = 0.0,
+    congress_signal: float = 0.0,
 ) -> dict | None:
     """Compute one symbol's score under the active strategy.
 
     Dispatches on `signal`:
       - change_Nd        → pure momentum (legacy / baseline)
-      - composite_v1     → momentum + Market Pulse sector signals
+      - composite_v1     → momentum + Market Pulse sector + cached signals
+                          (bubble, analyst revisions, congress buys)
 
     Returns {symbol, score, reasoning, components} or None on missing data.
     POINT-IN-TIME: only the most-recent COMPLETED daily bars are used; the
-    pulse context is computed pre-open from yesterday's session.
+    pulse + cached signals are pre-open snapshots, never today's intraday.
     """
     change_pct = _momentum_for(
         symbol, lookback_days=lookback_days, min_history_days=min_history_days
@@ -278,20 +397,33 @@ def _score_one(
         return None
 
     if signal == "composite_v1":
-        # Weight defaults — keep momentum dominant so the v1 composite stays
-        # close to the baseline behaviour when pulse data is unavailable.
-        w = {**{"momentum": 0.5, "sector_match": 0.3, "sector_flow": 0.2},
-             **(weights or {})}
+        # Weight defaults — momentum + sector dominant; the cached-signal
+        # weights start at 0 so legacy v1 strategies (before phase 5) keep
+        # their behavior. Claude proposals can turn the new factors on by
+        # setting non-zero weights.
+        w = {**{
+            "momentum":     0.5,
+            "sector_match": 0.3,
+            "sector_flow":  0.2,
+            "bubble":       0.0,
+            "analyst":      0.0,
+            "congress":     0.0,
+        }, **(weights or {})}
         top_sectors = set((pulse or {}).get("top_sectors") or [])
         sector_flows = (pulse or {}).get("all_sector_flows") or {}
 
         sector_match = 1.0 if (sector and sector in top_sectors) else 0.0
         sector_flow = float(sector_flows.get(sector or "", 0.0)) if sector else 0.0
 
+        # All non-momentum factors are normalized to ~%-point magnitude so
+        # weights compare apples-to-apples with the momentum weight.
         score = (
-            w["momentum"] * change_pct
-            + w["sector_match"] * sector_match * 10.0   # scale match into a meaningful weight
-            + w["sector_flow"] * sector_flow
+            w["momentum"]     * change_pct
+            + w["sector_match"] * sector_match * 10.0
+            + w["sector_flow"]  * sector_flow
+            + w["bubble"]       * bubble_signal   * 10.0
+            + w["analyst"]      * analyst_signal  * 10.0
+            + w["congress"]     * congress_signal * 10.0
         )
 
         bits: list[str] = []
@@ -302,15 +434,28 @@ def _score_one(
             bits.append(f"sector {sector} (not focused)")
         if abs(sector_flow) > 0.1:
             bits.append(f"flow {sector_flow:+.1f}%")
+        if bubble_signal > 0:
+            bits.append("undervalued")
+        elif bubble_signal < 0:
+            bits.append("overheated")
+        if analyst_signal > 0:
+            bits.append(f"analyst +{analyst_signal:.1f}")
+        elif analyst_signal < 0:
+            bits.append(f"analyst {analyst_signal:.1f}")
+        if congress_signal > 0:
+            bits.append("congress buy")
         return {
             "symbol":    symbol,
             "score":     score,
             "reasoning": " · ".join(bits),
             "components": {
-                "momentum":     change_pct,
-                "sector":       sector,
-                "sector_match": bool(sector_match),
-                "sector_flow":  sector_flow,
+                "momentum":        change_pct,
+                "sector":          sector,
+                "sector_match":    bool(sector_match),
+                "sector_flow":     sector_flow,
+                "bubble_signal":   bubble_signal,
+                "analyst_signal":  analyst_signal,
+                "congress_signal": congress_signal,
             },
         }
 
@@ -328,7 +473,10 @@ def _score_one(
 
 def _rank_universe(symbols: list[str], config: dict, *,
                    pulse: dict | None = None,
-                   sectors_by_sym: dict[str, str] | None = None) -> list[dict]:
+                   sectors_by_sym: dict[str, str] | None = None,
+                   bubble_by_sym: dict[str, float] | None = None,
+                   analyst_by_sym: dict[str, float] | None = None,
+                   congress_by_sym: dict[str, float] | None = None) -> list[dict]:
     """Score every symbol in parallel and return top N by score desc."""
     lookback = int(config.get("lookback_days", 5))
     min_hist = int(config.get("min_history_days", 6))
@@ -336,6 +484,9 @@ def _rank_universe(symbols: list[str], config: dict, *,
     signal = config.get("ranking_signal", "change_5d")
     weights = config.get("weights") if isinstance(config.get("weights"), dict) else None
     sectors_by_sym = sectors_by_sym or {}
+    bubble_by_sym = bubble_by_sym or {}
+    analyst_by_sym = analyst_by_sym or {}
+    congress_by_sym = congress_by_sym or {}
 
     # 16 workers is plenty for ~150 Tier A symbols and respects rate limits.
     scored: list[dict] = []
@@ -349,6 +500,9 @@ def _rank_universe(symbols: list[str], config: dict, *,
                 pulse=pulse,
                 sector=sectors_by_sym.get(s),
                 weights=weights,
+                bubble_signal=bubble_by_sym.get(s, 0.0),
+                analyst_signal=analyst_by_sym.get(s, 0.0),
+                congress_signal=congress_by_sym.get(s, 0.0),
             ),
             symbols,
         ):
@@ -402,7 +556,21 @@ def generate_predictions_for_date(date: str, *, force: bool = False) -> dict:
     pulse = _pulse_context()
     sectors_by_sym = _symbol_sectors(symbols)
 
-    top = _rank_universe(symbols, config, pulse=pulse, sectors_by_sym=sectors_by_sym)
+    # Phase 5: bulk-load cached per-symbol signals. All three are O(1)
+    # lookups (one SQL query each) so adding signals stays cheap and the
+    # generation wall-clock is dominated by the historical-bar fetch.
+    bubble_by_sym   = _bulk_bubble_signals(symbols)
+    analyst_by_sym  = _bulk_analyst_revisions(symbols)
+    congress_by_sym = _bulk_congress_buys(symbols)
+
+    top = _rank_universe(
+        symbols, config,
+        pulse=pulse,
+        sectors_by_sym=sectors_by_sym,
+        bubble_by_sym=bubble_by_sym,
+        analyst_by_sym=analyst_by_sym,
+        congress_by_sym=congress_by_sym,
+    )
     now = _now_iso()
 
     conn = get_connection()
@@ -836,15 +1004,30 @@ Other config keys you can set:
   - universe_tier:    "A" (don't change for now)
   - min_history_days: integer (typically lookback_days + 1)
   - weights (ONLY when ranking_signal=composite_v1):
-        {{ "momentum": 0.0-1.0, "sector_match": 0.0-1.0, "sector_flow": 0.0-1.0 }}
+        {{
+          "momentum":     0.0-1.0,   "sector_match": 0.0-1.0,
+          "sector_flow":  0.0-1.0,   "bubble":       0.0-1.0,
+          "analyst":      0.0-1.0,   "congress":     0.0-1.0
+        }}
+
+  Available factors for composite_v1 (all available per-symbol at score time):
+    - momentum       trailing %-return over lookback_days
+    - sector_match   1 if symbol's sector is in pulse top-3, else 0
+    - sector_flow    %-flow of symbol's sector this period (sign matters)
+    - bubble         -1 overheated, 0 fair, +1 undervalued (from bubble_score cache)
+    - analyst        net analyst upgrades over 30d (clipped to ±1 at ±10 net)
+    - congress       1 if any congressional buy in the last 30d, else 0
 
 Propose ONE new strategy. Goals:
   1. Beat the current strategy's recent hit rate
   2. Stay in the allowed signal vocabulary
-  3. Give a short, specific name (e.g. "composite_pulse_heavy_v1")
+  3. Give a short, specific name (e.g. "composite_analyst_heavy_v1")
   4. If picking composite_v1, set weights based on the recent record:
-     - heavy momentum weight if last week's hits were predominantly high-momentum
-     - heavy sector weight if pulse-favored sector picks outperformed
+     - heavy momentum if last week's hits were predominantly high-momentum
+     - heavy sector if pulse-favored sector picks outperformed
+     - heavy analyst if recently upgraded names outperformed
+     - heavy bubble if previously overheated names underperformed
+     - heavy congress if congress-bought names outperformed
 
 Return ONLY this JSON, no prose:
 {{
@@ -926,6 +1109,11 @@ def _validate_proposed_strategy(proposal: object) -> dict | None:
             "momentum":     _w("momentum",     0.5),
             "sector_match": _w("sector_match", 0.3),
             "sector_flow":  _w("sector_flow",  0.2),
+            # Phase 5 — cached per-symbol signals. Default 0 so existing v1
+            # strategies don't change behavior; Claude turns them on.
+            "bubble":       _w("bubble",       0.0),
+            "analyst":      _w("analyst",      0.0),
+            "congress":     _w("congress",     0.0),
         }
 
     return {
