@@ -370,11 +370,14 @@ def _derive_search_query(ctx: dict) -> dict | None:
 
     prompt = _build_lens_prompt(summary)
     try:
-        # 180s timeout (claude CLI cold-start in this env can take 60-90s).
-        # One retry — the lens-writer is the most expensive failure mode and
+        # Opus for the lens-writer — picks the search angle + convergence
+        # sectors that drive the rest of the brief. Cheap Haiku used to
+        # default to "today's tech leaders" too often; Opus's broader
+        # reasoning catches macro/geopolitical lenses Haiku missed.
+        # 5-min timeout because Opus is slower per response. One retry —
         # a single Claude flake should not knock the brief into the
         # rule-based fallback.
-        result = ask_claude_json(prompt, model="haiku", timeout=180, retries=1)
+        result = ask_claude_json(prompt, model="opus", timeout=300, retries=1)
     except Exception as e:
         logger.warning("brief: lens-writer Claude call failed %r", e)
         return None
@@ -1285,7 +1288,12 @@ def _narrate(ctx: dict, chapters: list[dict], picks: list[dict], lens: dict | No
         return cached_phase
 
     try:
-        result = ask_claude_json(prompt, model="haiku", timeout=120, retries=1)
+        # Opus for the narrator — composing the market story + per-pick
+        # narratives from the validated picks, lens, and chapter headlines
+        # is the most synthesis-heavy step in the brief. Haiku wrote
+        # passable prose but often missed signal connections across picks;
+        # Opus's reasoning ties the narrative thread together better.
+        result = ask_claude_json(prompt, model="opus", timeout=300, retries=1)
         if not isinstance(result, dict):
             return {}
         out_picks = result.get("picks")
