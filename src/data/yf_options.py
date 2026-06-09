@@ -19,7 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from src.models.data_types import OptionsSummary, UnusualActivity
+from src.models.data_types import OptionsChain, OptionContract, OptionsSummary, UnusualActivity
 from src.utils.db import cache_get, cache_set, log_api_call
 
 
@@ -268,6 +268,140 @@ def get_options_summary(symbol: str) -> OptionsSummary:
     except Exception:
         pass
     return summary
+
+
+# ── Options chain (free fallback for contract_selector) ──────────────
+
+
+def _row_to_contract(row, ctype: str, sym: str, exp: str) -> OptionContract:
+    """Convert a single DataFrame row to an OptionContract.
+
+    yfinance has no greeks — delta stays None; all Decimal fields coerced via
+    _safe_decimal with Decimal("0") fallback so the dataclass never gets None
+    in required fields.
+    """
+    symbol = str(row.get("contractSymbol") or f"{sym}{ctype}{row.get('strike')}")
+    return OptionContract(
+        symbol=symbol,
+        underlying=sym.upper(),
+        contract_type=ctype,
+        strike=_safe_decimal(row.get("strike")) or Decimal("0"),
+        expiration=exp,
+        bid=_safe_decimal(row.get("bid")) or Decimal("0"),
+        ask=_safe_decimal(row.get("ask")) or Decimal("0"),
+        last_price=_safe_decimal(row.get("lastPrice")) or Decimal("0"),
+        volume=_safe_int(row.get("volume")),
+        open_interest=_safe_int(row.get("openInterest")),
+        implied_volatility=_safe_decimal(row.get("impliedVolatility")) or Decimal("0"),
+        delta=None,  # yfinance does not provide greeks
+    )
+
+
+def get_options_chain(
+    symbol: str,
+    *,
+    dte_target: int = 35,
+    max_expirations: int = 3,
+    now_date: str | None = None,
+) -> list[OptionsChain]:
+    """Build OptionsChain list from yfinance (free, no API key required).
+
+    Selects up to *max_expirations* expirations whose DTE is closest to
+    *dte_target*. Returns [] when the ticker has no listed options (e.g.
+    micro-caps like MNTS) or on any hard failure — never fabricates data.
+    """
+    sym = symbol.upper()
+    try:
+        import yfinance as yf
+
+        t = yf.Ticker(sym)
+
+        # ── Underlying spot price ─────────────────────────────────────
+        spot: Decimal | None = None
+        fast_info = getattr(t, "fast_info", None)
+        if fast_info is not None:
+            raw = None
+            try:
+                raw = fast_info["lastPrice"]
+            except (KeyError, TypeError):
+                pass
+            if raw is None:
+                raw = getattr(fast_info, "last_price", None)
+            spot = _safe_decimal(raw)
+        if not spot:
+            info = t.info or {}
+            raw_info = (
+                info.get("regularMarketPrice")
+                or info.get("currentPrice")
+                or info.get("previousClose")
+            )
+            spot = _safe_decimal(raw_info)
+        spot = spot or Decimal("0")
+
+        # ── Expirations ───────────────────────────────────────────────
+        exps = list(t.options or [])
+        if not exps:
+            log_api_call("yfinance", f"options_chain/{sym}", "ok")
+            return []
+
+        today = (
+            datetime.strptime(now_date, "%Y-%m-%d").date()
+            if now_date
+            else datetime.utcnow().date()
+        )
+
+        # Only consider non-expired expirations; sort by proximity to dte_target
+        valid_exps = []
+        for exp in exps:
+            try:
+                dte = (datetime.strptime(exp, "%Y-%m-%d").date() - today).days
+            except ValueError:
+                continue
+            if dte >= 0:
+                valid_exps.append((abs(dte - dte_target), exp))
+        valid_exps.sort(key=lambda x: x[0])
+        chosen = [exp for _, exp in valid_exps[:max_expirations]]
+
+        if not chosen:
+            log_api_call("yfinance", f"options_chain/{sym}", "ok")
+            return []
+
+        # ── Build one OptionsChain per chosen expiration ──────────────
+        chains: list[OptionsChain] = []
+        for exp in chosen:
+            try:
+                oc = t.option_chain(exp)
+            except Exception:
+                continue
+            calls = [
+                _row_to_contract(row, "call", sym, exp)
+                for _, row in oc.calls.iterrows()
+            ]
+            puts = [
+                _row_to_contract(row, "put", sym, exp)
+                for _, row in oc.puts.iterrows()
+            ]
+            chains.append(
+                OptionsChain(
+                    underlying=sym,
+                    underlying_price=spot,
+                    expiration=exp,
+                    calls=calls,
+                    puts=puts,
+                )
+            )
+
+        log_api_call("yfinance", f"options_chain/{sym}", "ok")
+        return chains
+
+    except Exception as e:
+        log_api_call(
+            "yfinance",
+            f"options_chain/{sym}",
+            "error",
+            error=str(e)[:120],
+        )
+        return []
 
 
 # ── (de)serialization helpers ───────────────────────────────────────

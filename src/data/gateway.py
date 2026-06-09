@@ -117,12 +117,17 @@ class DataGateway:
             return None
 
     def get_options_chain(self, symbol: str) -> list[OptionsChain]:
-        """Full options chain (one OptionsChain per expiration) from Polygon.
-
-        Returns [] on any error (rate limit / no data) -- never fabricates.
-        """
+        """Options chain (one per expiration). Polygon first (paid); falls back to
+        the free yfinance chain when Polygon is unconfigured/empty. [] if both fail."""
         try:
-            return self._get_polygon().get_options_chain(symbol)
+            chains = self._get_polygon().get_options_chain(symbol)
+            if chains:
+                return chains
+        except Exception:
+            pass
+        try:
+            from src.data import yf_options
+            return yf_options.get_options_chain(symbol) or []
         except Exception:
             return []
 
