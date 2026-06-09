@@ -36,11 +36,19 @@ const SECONDARY = [
 ];
 
 function useMarketStatus(): { open: boolean; label: string } {
-  const [now, setNow] = useState(() => new Date());
+  // `now` starts null so the server render and the client's first (hydration)
+  // render are identical — otherwise the time-derived OPEN/CLOSED label differs
+  // between server and client and triggers a hydration mismatch. The real
+  // status is computed after mount, in the effect below.
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
+  if (now === null) {
+    return { open: false, label: "MARKET" };
+  }
   // NYSE: Mon-Fri, 09:30–16:00 ET
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
