@@ -111,6 +111,19 @@ async def _start_schedulers() -> None:
 
         schedule_daily_at(6, 30, _generate_predictions_today, name="predictions_generate")
         schedule_daily_at(16, 15, _record_predictions_actuals, name="predictions_actuals")
+
+        # Weekly Claude strategy review at Sunday 7am ET. The cron helper
+        # only supports daily — we wrap it and short-circuit on non-Sundays.
+        # Proposal is saved as deactivated; user activates via the UI.
+        def _weekly_strategy_review():
+            try:
+                if datetime.now().weekday() != 6:    # 6 = Sunday
+                    return
+                predictions_service.review_and_propose_strategy(window_days=14)
+            except Exception:
+                pass
+
+        schedule_daily_at(7, 0, _weekly_strategy_review, name="predictions_strategy_review")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("predictions scheduler failed: %r", e)

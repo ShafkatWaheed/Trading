@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.data.gateway import DataGateway
+from src.utils.claude_cli import ask_claude_json
 from src.utils.db import get_connection, init_db
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,18 @@ def _now_iso() -> str:
 
 
 def _ensure_baseline_strategy() -> int:
-    """Create v1 baseline if no strategy exists. Return the active version."""
+    """Create v1 baseline if no ACTIVE strategy exists. Return the active version.
+
+    "Active" requires activated_at IS NOT NULL — a freshly proposed
+    strategy waiting to be activated does not count.
+    """
     init_db()
     conn = get_connection()
     try:
         row = conn.execute(
             "SELECT version FROM prediction_strategies "
-            "WHERE deactivated_at IS NULL ORDER BY version DESC LIMIT 1"
+            "WHERE activated_at IS NOT NULL AND deactivated_at IS NULL "
+            "ORDER BY version DESC LIMIT 1"
         ).fetchone()
         if row:
             return int(row["version"])
@@ -113,7 +119,7 @@ def get_active_strategy() -> dict:
             "SELECT version, name, description, config_json, created_at, "
             "       activated_at "
             "FROM prediction_strategies "
-            "WHERE deactivated_at IS NULL "
+            "WHERE activated_at IS NOT NULL AND deactivated_at IS NULL "
             "ORDER BY version DESC LIMIT 1"
         ).fetchone()
     finally:
@@ -553,3 +559,320 @@ def get_predictions_with_actuals(date: str) -> dict:
         "picks": enriched,
         "actuals_present": bool(actuals),
     }
+
+
+# ── Strategy adaptation (Phase 3b) ───────────────────────────────────────
+
+
+# Signals Claude is allowed to combine in a new strategy. Keeping the
+# vocabulary fixed prevents Claude from inventing a signal we can't compute
+# — silently no-op'ing a "VIX divergence over 90min" signal is the kind
+# of bug that's hard to diagnose later.
+#
+# v1 vocabulary is intentionally momentum-only at varying windows — the
+# existing _score_one supports any change_Nd via `lookback_days`. RSI and
+# volume signals are deferred until we wire matching scoring code.
+_ALLOWED_RANKING_SIGNALS = {
+    "change_1d":  "trailing 1-day % return (overnight gappers)",
+    "change_5d":  "trailing 5-day % return (default baseline)",
+    "change_20d": "trailing 20-day % return (longer momentum)",
+}
+
+
+def _completed_predictions_window(days: int = 14) -> list[dict]:
+    """Return all predictions with actuals from the last `days` calendar days.
+
+    Used as the data Claude reviews when proposing a new strategy.
+    """
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT dp.prediction_date     AS date,
+                   dp.rank                AS rank,
+                   dp.symbol              AS symbol,
+                   dp.score               AS predicted_score,
+                   dp.reasoning           AS reasoning,
+                   dp.strategy_version    AS strategy_version,
+                   dpa.change_pct         AS actual_change_pct,
+                   dpa.universe_rank      AS universe_rank,
+                   dpa.universe_size      AS universe_size
+              FROM daily_predictions dp
+              JOIN daily_prediction_actuals dpa
+                ON dp.prediction_date = dpa.prediction_date
+               AND dp.symbol = dpa.symbol
+             WHERE dpa.universe_rank IS NOT NULL
+             ORDER BY dp.prediction_date DESC, dp.rank
+             LIMIT ?
+            """,
+            (days * 10,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def _build_strategy_review_prompt(history: list[dict], current: dict) -> str:
+    """Build the Claude prompt for strategy review.
+
+    Inputs the recent prediction record + current strategy; asks Claude to
+    propose either a tweaked or a fundamentally different strategy from the
+    allowed signal vocabulary.
+    """
+    if not history:
+        return ""
+
+    # Compress history into a per-date summary so the prompt stays compact.
+    by_date: dict[str, list[dict]] = {}
+    for r in history:
+        by_date.setdefault(r["date"], []).append(r)
+    summary_lines: list[str] = []
+    for date in sorted(by_date.keys(), reverse=True):
+        rows = by_date[date]
+        rows.sort(key=lambda r: r["rank"])
+        avg_actual = sum(r["actual_change_pct"] or 0 for r in rows) / max(len(rows), 1)
+        hits = sum(1 for r in rows if (r["universe_rank"] or 999) <= 25)
+        line = f"{date}: avg_actual_return={avg_actual:.2f}%, hits_in_top25={hits}/{len(rows)}"
+        summary_lines.append(line)
+        for r in rows[:5]:    # top 5 picks per day to keep prompt small
+            summary_lines.append(
+                f"  #{r['rank']:>2} {r['symbol']:<8} "
+                f"actual={r['actual_change_pct']:+.2f}% "
+                f"rank={r['universe_rank']}/{r['universe_size']}  "
+                f"({r['reasoning'] or '-'})"
+            )
+
+    vocab_lines = "\n".join(f"  - {k}: {v}" for k, v in _ALLOWED_RANKING_SIGNALS.items())
+
+    return f"""You are tuning a daily top-10 gainers prediction strategy for Tier A US stocks.
+
+Current strategy (v{current['version']} — "{current['name']}"):
+  {current['description']}
+  Config: {json.dumps(current['config'])}
+
+Recent prediction performance (most recent first; "hit" = predicted symbol's
+same-day rank in Tier A was top 25 of ~500 names):
+{chr(10).join(summary_lines)}
+
+Allowed ranking signals (use exactly one of these as `ranking_signal`):
+{vocab_lines}
+
+Other config keys you can set:
+  - lookback_days:    integer 1-60 (only used when ranking_signal is a change_Nd)
+  - top_n:            integer (keep at 10)
+  - universe_tier:    "A" (don't change for now)
+  - min_history_days: integer (typically lookback_days + 1)
+
+Propose ONE new strategy. Goals:
+  1. Beat the current strategy's recent hit rate
+  2. Stay in the allowed signal vocabulary
+  3. Give a short, specific name that hints at what changed (e.g. "rsi_oversold_v1")
+
+Return ONLY this JSON, no prose:
+{{
+  "name":        "<short kebab-case name, e.g. rsi_oversold_v1>",
+  "description": "<1-2 sentence rationale: what you observed in the data and why this should be better>",
+  "config": {{
+    "ranking_signal":   "<one of the allowed signals above>",
+    "lookback_days":    <integer or null>,
+    "top_n":            10,
+    "universe_tier":    "A",
+    "min_history_days": <integer>
+  }}
+}}"""
+
+
+def _validate_proposed_strategy(proposal: object) -> dict | None:
+    """Defensive shape check on Claude's response. Returns the cleaned
+    dict or None if any required field is missing/invalid.
+
+    Prevents a bad proposal (e.g. Claude inventing a new signal name) from
+    being activated and breaking _score_one. The next morning generation
+    would then fail silently which is hard to debug — better to reject up front.
+    """
+    if not isinstance(proposal, dict):
+        return None
+    name = (proposal.get("name") or "").strip()
+    desc = (proposal.get("description") or "").strip()
+    cfg = proposal.get("config")
+    if not name or not desc or not isinstance(cfg, dict):
+        return None
+
+    signal = (cfg.get("ranking_signal") or "").strip()
+    if signal not in _ALLOWED_RANKING_SIGNALS:
+        logger.info("predictions: rejecting proposed strategy — bad signal %r", signal)
+        return None
+    if cfg.get("universe_tier") not in (None, "A"):
+        # Out of scope for v1 — only support Tier A
+        return None
+
+    # change_Nd signals: pin lookback_days to N for consistency. Avoids
+    # the edge case where Claude says signal=change_5d but lookback=20.
+    _SIGNAL_LOOKBACK = {"change_1d": 1, "change_5d": 5, "change_20d": 20}
+    lookback = _SIGNAL_LOOKBACK[signal]
+    min_hist = lookback + 1
+    try:
+        top_n = int(cfg.get("top_n") or 10)
+    except (TypeError, ValueError):
+        top_n = 10
+
+    return {
+        "name":        name[:64],
+        "description": desc[:500],
+        "config": {
+            "ranking_signal":   signal,
+            "lookback_days":    lookback,
+            "top_n":            max(1, min(50, top_n)),
+            "universe_tier":    "A",
+            "min_history_days": min_hist,
+        },
+    }
+
+
+def review_and_propose_strategy(*, window_days: int = 14, force: bool = False) -> dict:
+    """Ask Claude to review recent predictions and propose a new strategy.
+
+    Returns:
+      {
+        "proposed":     bool,           # did Claude return something valid?
+        "proposal":     {...}|None,     # the validated proposal (not yet active)
+        "current":      {...},          # active strategy at review time
+        "history_rows": int,            # how much data Claude saw
+      }
+
+    The proposal is NOT activated — caller must explicitly POST
+    /predictions/strategy/activate?version=N. Lets the user vet before a
+    new strategy goes live.
+    """
+    current = get_active_strategy()
+    history = _completed_predictions_window(days=window_days)
+
+    if not history and not force:
+        return {
+            "proposed":     False,
+            "reason":       "no_completed_predictions_in_window",
+            "current":      current,
+            "history_rows": 0,
+        }
+
+    prompt = _build_strategy_review_prompt(history, current)
+    if not prompt:
+        return {
+            "proposed":     False,
+            "reason":       "empty_prompt",
+            "current":      current,
+            "history_rows": len(history),
+        }
+
+    try:
+        raw = ask_claude_json(prompt, model="haiku", timeout=120, retries=1)
+    except Exception as e:
+        logger.info("predictions: Claude review call failed: %r", e)
+        raw = None
+
+    cleaned = _validate_proposed_strategy(raw)
+    if cleaned is None:
+        return {
+            "proposed":     False,
+            "reason":       "claude_proposal_invalid_or_missing",
+            "current":      current,
+            "history_rows": len(history),
+        }
+
+    # Persist as a strategy row — DEACTIVATED until explicit activation. The
+    # row gets a version number so the user can reference it via activate().
+    init_db()
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO prediction_strategies
+              (name, description, config_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (cleaned["name"], cleaned["description"], json.dumps(cleaned["config"]), now),
+        )
+        new_version = int(cur.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "proposed":      True,
+        "proposal":      {**cleaned, "version": new_version},
+        "current":       current,
+        "history_rows":  len(history),
+    }
+
+
+def activate_strategy(version: int) -> dict:
+    """Activate a strategy by version. Deactivates whatever is currently
+    active. Idempotent — activating the already-active version is a no-op.
+    """
+    init_db()
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        # 1. Confirm the target exists.
+        row = conn.execute(
+            "SELECT version, activated_at, deactivated_at "
+            "FROM prediction_strategies WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if not row:
+            return {"activated": False, "reason": "version_not_found"}
+        # Active = activated_at IS NOT NULL AND deactivated_at IS NULL.
+        # A freshly proposed row has activated_at NULL and is NOT considered
+        # active — activating it is the meaningful state change here.
+        if row["activated_at"] is not None and row["deactivated_at"] is None:
+            return {"activated": True, "no_op": True, "version": version}
+
+        # 2. Deactivate everything currently active.
+        conn.execute(
+            "UPDATE prediction_strategies SET deactivated_at = ? "
+            "WHERE activated_at IS NOT NULL AND deactivated_at IS NULL",
+            (now,),
+        )
+        # 3. Activate the target.
+        conn.execute(
+            "UPDATE prediction_strategies "
+            "SET activated_at = ?, deactivated_at = NULL WHERE version = ?",
+            (now, version),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"activated": True, "version": version, "activated_at": now}
+
+
+def list_strategies() -> list[dict]:
+    """All strategies (active + retired) in version order, oldest first."""
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT version, name, description, config_json, created_at, "
+            "       activated_at, deactivated_at "
+            "FROM prediction_strategies ORDER BY version"
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            cfg = json.loads(r["config_json"])
+        except Exception:
+            cfg = {}
+        out.append({
+            "version":         int(r["version"]),
+            "name":            r["name"],
+            "description":     r["description"],
+            "config":          cfg,
+            "created_at":      r["created_at"],
+            "activated_at":    r["activated_at"],
+            "deactivated_at":  r["deactivated_at"],
+            "is_active":       r["deactivated_at"] is None and r["activated_at"] is not None,
+        })
+    return out

@@ -114,6 +114,19 @@ export type PredictionStrategy = {
   activated_at: string | null;
 };
 
+export type PredictionStrategyRow = PredictionStrategy & {
+  deactivated_at: string | null;
+  is_active: boolean;
+};
+
+export type PredictionStrategyReview = {
+  proposed: boolean;
+  reason?: string;
+  proposal?: PredictionStrategy;
+  current: PredictionStrategy;
+  history_rows: number;
+};
+
 export type PredictionsAccuracyPayload = {
   window_days: number;
   hit_threshold: number;

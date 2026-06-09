@@ -337,3 +337,175 @@ def test_accuracy_window_hit_threshold_tunable():
     tight = predictions_service.get_accuracy_window(window_days=30, hit_threshold=15)
     assert loose["hits"] == 2     # both within rank 50
     assert tight["hits"] == 1     # only SYN_A within rank 15
+
+
+# ── Phase 3b: strategy adaptation ───────────────────────────────────
+
+
+def test_validate_proposed_strategy_accepts_valid_change_5d():
+    out = predictions_service._validate_proposed_strategy({
+        "name": "test-v2",
+        "description": "trying a longer window",
+        "config": {
+            "ranking_signal":   "change_5d",
+            "lookback_days":    5,
+            "top_n":            10,
+            "universe_tier":    "A",
+            "min_history_days": 7,
+        },
+    })
+    assert out is not None
+    assert out["config"]["ranking_signal"] == "change_5d"
+    assert out["config"]["lookback_days"] == 5   # pinned to signal
+    assert out["config"]["min_history_days"] == 6   # pinned to lookback + 1
+
+
+def test_validate_pins_lookback_to_signal():
+    """Claude says signal=change_20d but lookback=3 — must pin to 20."""
+    out = predictions_service._validate_proposed_strategy({
+        "name": "test",
+        "description": "x",
+        "config": {
+            "ranking_signal":   "change_20d",
+            "lookback_days":    3,           # inconsistent
+            "top_n":            10,
+            "universe_tier":    "A",
+        },
+    })
+    assert out is not None
+    assert out["config"]["lookback_days"] == 20
+    assert out["config"]["min_history_days"] == 21
+
+
+def test_validate_rejects_unknown_signal():
+    """Claude inventing a signal we can't compute must be rejected."""
+    out = predictions_service._validate_proposed_strategy({
+        "name": "made_up",
+        "description": "VIX cross-correlated with the moon phase",
+        "config": {
+            "ranking_signal": "vix_moon_cross",
+            "top_n": 10,
+        },
+    })
+    assert out is None
+
+
+def test_validate_rejects_missing_required_fields():
+    assert predictions_service._validate_proposed_strategy(None) is None
+    assert predictions_service._validate_proposed_strategy({}) is None
+    assert predictions_service._validate_proposed_strategy({
+        "name": "",
+        "description": "blah",
+        "config": {"ranking_signal": "change_5d"},
+    }) is None    # empty name
+
+
+def test_validate_rejects_non_tier_a():
+    """V1 only supports Tier A. A Tier B proposal must be rejected."""
+    out = predictions_service._validate_proposed_strategy({
+        "name": "test",
+        "description": "trying Tier B",
+        "config": {
+            "ranking_signal": "change_5d",
+            "universe_tier": "B",
+        },
+    })
+    assert out is None
+
+
+def test_review_returns_no_proposal_when_no_history():
+    """No completed predictions in window → no_completed_predictions_in_window."""
+    out = predictions_service.review_and_propose_strategy(window_days=14)
+    assert out["proposed"] is False
+    assert out["reason"] == "no_completed_predictions_in_window"
+
+
+def test_review_invokes_claude_and_persists_valid_proposal():
+    """End-to-end: history exists → Claude returns a valid JSON proposal →
+    a new (deactivated) strategy row is inserted."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1), ("SYN_B", 2)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 10, 5.0), ("SYN_B", 30, 4.0)])
+
+    fake_proposal = {
+        "name": "change_20d_v1",
+        "description": "20-day momentum looks more durable in the recent record",
+        "config": {
+            "ranking_signal":   "change_20d",
+            "lookback_days":    20,
+            "top_n":            10,
+            "universe_tier":    "A",
+            "min_history_days": 21,
+        },
+    }
+    with patch.object(predictions_service, "ask_claude_json", return_value=fake_proposal):
+        out = predictions_service.review_and_propose_strategy(window_days=14)
+
+    assert out["proposed"] is True
+    assert out["proposal"]["name"] == "change_20d_v1"
+    assert out["proposal"]["version"] > strat["version"]
+    # New row exists and is INACTIVE (deactivated_at IS NULL is what marks
+    # active — but the inserted row has activated_at NULL too, so it's
+    # neither active nor formally deactivated yet; activate() will set both).
+    strategies = predictions_service.list_strategies()
+    new = [s for s in strategies if s["version"] == out["proposal"]["version"]][0]
+    assert new["is_active"] is False
+
+
+def test_review_handles_claude_invalid_response():
+    """Claude returns something that doesn't parse to a valid proposal —
+    reason is surfaced, no row is inserted."""
+    strat = predictions_service.get_active_strategy()
+    _seed_predictions_directly("2026-06-05", [("SYN_A", 1)], strat["version"])
+    _seed_actuals("2026-06-05", [("SYN_A", 10, 5.0)])
+
+    with patch.object(predictions_service, "ask_claude_json", return_value={"garbage": "no config"}):
+        out = predictions_service.review_and_propose_strategy(window_days=14)
+
+    assert out["proposed"] is False
+    assert out["reason"] == "claude_proposal_invalid_or_missing"
+    # No new strategy row inserted
+    strategies = predictions_service.list_strategies()
+    assert len(strategies) == 1
+    assert strategies[0]["version"] == strat["version"]
+
+
+def test_activate_strategy_switches_active_row():
+    """Activating a new version deactivates the previous active one."""
+    old_strat = predictions_service.get_active_strategy()
+    # Manually insert a second strategy
+    init_db()
+    conn = get_connection()
+    cur = conn.execute(
+        """
+        INSERT INTO prediction_strategies
+          (name, description, config_json, created_at)
+        VALUES ('test_v2', 'a test', '{"ranking_signal":"change_20d","lookback_days":20,"top_n":10,"universe_tier":"A","min_history_days":21}', datetime('now'))
+        """
+    )
+    new_version = int(cur.lastrowid)
+    conn.commit()
+    conn.close()
+
+    res = predictions_service.activate_strategy(new_version)
+    assert res["activated"] is True
+
+    # Old active row is now deactivated
+    strategies = predictions_service.list_strategies()
+    by_v = {s["version"]: s for s in strategies}
+    assert by_v[old_strat["version"]]["is_active"] is False
+    assert by_v[old_strat["version"]]["deactivated_at"] is not None
+    assert by_v[new_version]["is_active"] is True
+
+
+def test_activate_unknown_version_returns_not_found():
+    res = predictions_service.activate_strategy(999_999)
+    assert res["activated"] is False
+    assert res["reason"] == "version_not_found"
+
+
+def test_activate_already_active_is_noop():
+    strat = predictions_service.get_active_strategy()
+    res = predictions_service.activate_strategy(strat["version"])
+    assert res["activated"] is True
+    assert res.get("no_op") is True

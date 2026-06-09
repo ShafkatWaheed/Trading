@@ -80,3 +80,35 @@ def record_actuals(
 ) -> dict:
     _check_date(date)
     return predictions_service.record_actuals_for_date(date)
+
+
+# ── Strategy adaptation ────────────────────────────────────────────────
+
+
+@router.get("/strategies")
+def strategies() -> dict:
+    """All strategies (active + retired) in version order."""
+    return {"strategies": predictions_service.list_strategies()}
+
+
+@router.post("/strategy/review")
+def review_strategy(
+    window_days: int = Query(14, ge=2, le=90),
+    force: bool = Query(False, description="Run even if no completed predictions exist yet"),
+) -> dict:
+    """Claude reviews recent predictions and proposes a new strategy.
+
+    The proposal is saved as a DEACTIVATED row; activate it via
+    POST /predictions/strategy/activate?version=N once you've vetted it.
+    """
+    return predictions_service.review_and_propose_strategy(
+        window_days=window_days, force=force,
+    )
+
+
+@router.post("/strategy/activate")
+def activate_strategy(
+    version: int = Query(..., ge=1, description="Strategy version to activate"),
+) -> dict:
+    """Activate a strategy by version. Deactivates whatever was active."""
+    return predictions_service.activate_strategy(version)

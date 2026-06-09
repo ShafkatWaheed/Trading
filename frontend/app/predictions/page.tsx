@@ -13,14 +13,16 @@
  * hasn't fired (e.g. uvicorn was off during the morning slot).
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { Target, TrendingUp, Calendar as CalendarIcon, Activity } from "lucide-react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Target, TrendingUp, Calendar as CalendarIcon, Activity, Sparkles, CheckCircle2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { predictionsApi } from "@/lib/api/endpoints";
 import type {
   PredictionsPayload,
   PredictionsAccuracyPayload,
   PredictionPick,
+  PredictionStrategyRow,
 } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -169,6 +171,35 @@ export default function PredictionsPage() {
     staleTime: 30 * 60 * 1000,
   });
 
+  const strategiesQ = useQuery<{ strategies: PredictionStrategyRow[] }>({
+    queryKey: ["predictions", "strategies"],
+    queryFn: () => predictionsApi.strategies(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const qc = useQueryClient();
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const reviewM = useMutation({
+    mutationFn: () => predictionsApi.reviewStrategy(14, false),
+    onSuccess: (res) => {
+      if (res.proposed && res.proposal) {
+        setReviewMessage(`Claude proposed v${res.proposal.version} ("${res.proposal.name}"). Review and activate below.`);
+      } else {
+        setReviewMessage(`No new proposal — ${res.reason ?? "unknown reason"}.`);
+      }
+      qc.invalidateQueries({ queryKey: ["predictions", "strategies"] });
+    },
+    onError: (e: Error) => {
+      setReviewMessage(`Review failed: ${e.message}`);
+    },
+  });
+  const activateM = useMutation({
+    mutationFn: (version: number) => predictionsApi.activateStrategy(version),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["predictions"] });
+    },
+  });
+
   const activeStrategy = today.data?.strategy_name || "—";
 
   return (
@@ -272,6 +303,85 @@ export default function PredictionsPage() {
         )}
         {accuracy.data && accuracy.data.predictions_total > 0 && (
           <AccuracyCard acc={accuracy.data} />
+        )}
+      </section>
+
+      {/* ── Section 4: Strategy log + Claude proposals ─────────────── */}
+      <section className="mb-8">
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <div className="flex items-baseline gap-3">
+            <Sparkles size={14} className="text-accent-amber translate-y-[2px]" />
+            <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-accent-amber">
+              Strategy log
+            </span>
+            <span className="text-[11px] text-text-muted">
+              Claude reviews completed predictions weekly and proposes new strategies
+            </span>
+          </div>
+          <button
+            onClick={() => reviewM.mutate()}
+            disabled={reviewM.isPending}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
+              "bg-accent-amber/10 hover:bg-accent-amber/20 border border-accent-amber/40 text-accent-amber",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            <Sparkles size={11} />
+            {reviewM.isPending ? "Asking Claude…" : "Request new proposal"}
+          </button>
+        </div>
+        {reviewMessage && (
+          <div className="card-subtle p-3 mb-3 text-[11px] text-text-secondary">
+            {reviewMessage}
+          </div>
+        )}
+        {strategiesQ.data && strategiesQ.data.strategies.length > 0 && (
+          <div className="space-y-2">
+            {[...strategiesQ.data.strategies].reverse().map((s) => {
+              const isProposed = !s.is_active && s.activated_at == null;
+              const tone =
+                s.is_active   ? "border-l-accent-green/60 bg-accent-green/5" :
+                isProposed    ? "border-l-accent-amber/60 bg-accent-amber/5" :
+                                "border-l-bg-divider";
+              return (
+                <div key={s.version} className={cn("card p-3 border-l-4", tone)}>
+                  <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-[10px] text-text-muted">v{s.version}</span>
+                      <span className="text-[13px] font-semibold text-text-primary">{s.name}</span>
+                      {s.is_active && (
+                        <span className="badge text-[9px] bg-accent-green/10 text-accent-greenSoft border-accent-green/30">
+                          <CheckCircle2 size={9} className="inline mr-0.5" />
+                          ACTIVE
+                        </span>
+                      )}
+                      {isProposed && (
+                        <span className="badge text-[9px] bg-accent-amber/10 text-accent-amber border-accent-amber/30">
+                          PROPOSED
+                        </span>
+                      )}
+                    </div>
+                    {isProposed && (
+                      <button
+                        onClick={() => activateM.mutate(s.version)}
+                        disabled={activateM.isPending}
+                        className="text-[10px] px-2 py-1 rounded-md bg-accent-blue/10 text-accent-blueSoft border border-accent-blue/40 hover:bg-accent-blue/20 disabled:opacity-50"
+                      >
+                        {activateM.isPending ? "Activating…" : "Activate"}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-text-secondary mt-1 leading-relaxed">{s.description}</p>
+                  <div className="mt-2 font-mono text-[10px] text-text-muted">
+                    signal={String(s.config.ranking_signal)} ·
+                    lookback={String(s.config.lookback_days)}d ·
+                    top_n={String(s.config.top_n)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </section>
     </div>

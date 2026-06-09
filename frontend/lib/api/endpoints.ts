@@ -641,4 +641,16 @@ export const predictionsApi = {
     ),
   activeStrategy: () =>
     api.get<import("./types").PredictionStrategy>("/predictions/strategy/active"),
+  strategies: () =>
+    api.get<{ strategies: import("./types").PredictionStrategyRow[] }>("/predictions/strategies"),
+  reviewStrategy: (windowDays = 14, force = false) =>
+    api.post<import("./types").PredictionStrategyReview>(
+      `/predictions/strategy/review?window_days=${windowDays}${force ? "&force=true" : ""}`,
+      undefined,
+    ),
+  activateStrategy: (version: number) =>
+    api.post<{ activated: boolean; version?: number; no_op?: boolean }>(
+      `/predictions/strategy/activate?version=${version}`,
+      undefined,
+    ),
 };
