@@ -25,6 +25,7 @@ import type {
   PredictionStrategyRow,
 } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { FreshnessBanner } from "@/components/ui/freshness-banner";
 
 function _yesterdayISO(): string {
   const d = new Date();
@@ -237,6 +238,8 @@ export default function PredictionsPage() {
           </div>
         }
       />
+
+      <FreshnessBanner feature="predictions" />
 
       {/* ── Section 1: Today ────────────────────────────────────── */}
       <section className="mb-8">

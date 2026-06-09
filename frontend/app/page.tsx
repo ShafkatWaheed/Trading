@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Activity, Calendar, Globe, Sparkles, ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { FreshnessBanner } from "@/components/ui/freshness-banner";
 import { FreshnessPill } from "@/components/ui/freshness-pill";
 import { RegimeCard } from "@/components/market/regime-card";
 import { KpiGrid } from "@/components/market/kpi-grid";
@@ -57,6 +58,8 @@ export default function MarketPulsePage() {
         iconBg="bg-accent-blue/10"
         trailing={<FreshnessPill iso={data?.last_updated} />}
       />
+
+      <FreshnessBanner feature="market_pulse" />
 
       <div className="space-y-6">
         <SimulationReplay step="market_pulse" accent="blue" />

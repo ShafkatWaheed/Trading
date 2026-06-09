@@ -19,6 +19,7 @@ import {
   TrendingUp, ShieldCheck, Compass, Wind, Tornado, CloudFog, Sun, Gauge, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { FreshnessBanner } from "@/components/ui/freshness-banner";
 import { FreshnessPill } from "@/components/ui/freshness-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { briefApi, contextSearchApi } from "@/lib/api/endpoints";
@@ -776,6 +777,8 @@ export default function BriefPage() {
           </div>
         }
       />
+
+      <FreshnessBanner feature="brief" />
 
       {/* Progressive-load: progress card stays visible while computing; the
           main content tree below renders whatever partial phases have

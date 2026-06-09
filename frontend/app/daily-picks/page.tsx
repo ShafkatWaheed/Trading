@@ -22,6 +22,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FreshnessPill } from "@/components/ui/freshness-pill";
+import { FreshnessBanner } from "@/components/ui/freshness-banner";
 import { dailyPicksApi } from "@/lib/api/endpoints";
 import type {
   DailyPicks,
@@ -231,6 +232,8 @@ export default function DailyPicksPage() {
           </div>
         }
       />
+
+      <FreshnessBanner feature="daily_picks" />
 
       {isLoading && (
         <div className="space-y-6">

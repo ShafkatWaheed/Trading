@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.schemas import FreshnessQueueResponse
-from api.services import freshness_service
+from api.services import feature_freshness, freshness_service
 
 router = APIRouter(prefix="/freshness", tags=["freshness"])
 
@@ -28,3 +28,22 @@ def get_queue() -> dict:
 @router.post("/acknowledge")
 def acknowledge(req: AcknowledgeRequest) -> dict:
     return freshness_service.acknowledge(req.symbol, req.action)
+
+
+# ── Per-feature freshness banners (new) ─────────────────────────────
+
+
+@router.get("/feature/{name}")
+def feature_freshness_for(name: str) -> dict:
+    """Single feature staleness check — used by UI banners.
+
+    Returns {stale, last_updated, age_minutes, reason}. Reason is
+    non-null when stale=true.
+    """
+    return feature_freshness.get_feature_freshness(name)
+
+
+@router.get("/feature")
+def all_features() -> dict:
+    """Run every feature check at once — for a dashboard view."""
+    return {"features": feature_freshness.get_all_features_freshness()}
