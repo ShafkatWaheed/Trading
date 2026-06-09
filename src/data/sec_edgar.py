@@ -119,10 +119,14 @@ class SECEdgarProvider:
 
     def _fetch_insider_trades(self, symbol: str, days: int) -> list[InsiderTrade]:
         start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        # SEC EFTS requires BOTH startdt and enddt when dateRange=custom — omitting
+        # enddt makes the endpoint return HTTP 500.
+        end_date = datetime.utcnow().strftime("%Y-%m-%d")
         params = {
             "q": f'"{symbol}"',
             "dateRange": "custom",
             "startdt": start_date,
+            "enddt": end_date,
             "forms": "4",
             "from": "0",
             "size": "40",
