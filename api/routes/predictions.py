@@ -78,6 +78,21 @@ def accuracy(
     )
 
 
+# Literal GET routes MUST be declared before the parametric /{date} route below,
+# or FastAPI matches them as a date (e.g. /strategies -> {date}="strategies") and
+# rejects them with "date must be YYYY-MM-DD".
+@router.get("/strategies")
+def strategies() -> dict:
+    """All strategies (active + retired) in version order."""
+    return {"strategies": predictions_service.list_strategies()}
+
+
+@router.get("/skills")
+def get_skills() -> dict:
+    """Current prediction playbook (markdown) + last-updated timestamp."""
+    return predictions_service.get_skills()
+
+
 @router.get("/{date}/with-actuals")
 def predictions_with_actuals(date: str) -> dict:
     _check_date(date)
@@ -110,12 +125,6 @@ def record_actuals(
 # ── Strategy adaptation ────────────────────────────────────────────────
 
 
-@router.get("/strategies")
-def strategies() -> dict:
-    """All strategies (active + retired) in version order."""
-    return {"strategies": predictions_service.list_strategies()}
-
-
 @router.post("/strategy/review")
 def review_strategy(
     window_days: int = Query(14, ge=2, le=90),
@@ -140,12 +149,6 @@ def activate_strategy(
 
 
 # ── Playbook (Phase 6) ────────────────────────────────────────────────
-
-
-@router.get("/skills")
-def get_skills() -> dict:
-    """Current prediction playbook (markdown) + last-updated timestamp."""
-    return predictions_service.get_skills()
 
 
 @router.post("/strategy/backtest")
