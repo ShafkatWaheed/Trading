@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -656,6 +657,24 @@ def _load_universe(tier: str) -> list[str]:
     return [r["symbol"] for r in rows]
 
 
+def _load_universe_ab() -> list[str]:
+    """Tier A+B symbols (the analyst's universe). Ordered for determinism."""
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT symbol FROM stocks_universe WHERE tier IN ('A','B') ORDER BY symbol"
+        ).fetchall()
+        return [r["symbol"] for r in rows]
+    finally:
+        conn.close()
+
+
+def _pct_threshold_to_rank(pct: int, universe_size: int) -> int:
+    """Top-`pct`% of `universe_size` → an integer rank cutoff (>=1)."""
+    return max(1, math.ceil(universe_size * pct / 100))
+
+
 def _momentum_for(symbol: str, *, lookback_days: int, min_history_days: int) -> float | None:
     """Pure trailing %-return helper. Returns None if data is missing."""
     try:
@@ -1126,6 +1145,24 @@ def _eod_change_pct(symbol: str, date: str) -> tuple[float | None, float | None,
     return open_, close, ((close - open_) / open_) * 100.0
 
 
+def _score_universe_changes(symbols: list[str], date: str) -> dict[str, float]:
+    """Open→close %-change for each symbol on `date`.
+
+    Returns {symbol: change_pct}; symbols with missing/bad data are omitted.
+    Extracted so the universe-scoring step is mockable in tests (no network).
+    """
+    changes: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = pool.map(
+            lambda s: (s, _eod_change_pct(s, date)),
+            symbols,
+        )
+        for sym, (_o, _c, change) in results:
+            if change is not None:
+                changes[sym] = change
+    return changes
+
+
 def record_actuals_for_date(date: str) -> dict:
     """Record open/close/change_pct for every symbol predicted on `date`,
     plus the actual universe ranks (for hit/miss computation).
@@ -1138,23 +1175,15 @@ def record_actuals_for_date(date: str) -> dict:
     """
     init_db()
 
-    # 1. Pull the predictions for this date.
+    # 1. Score the FULL Tier A+B universe for the same date so we know
+    #    where each predicted pick ranked among actual winners.
+    universe = _load_universe_ab()
+    universe_changes = _score_universe_changes(universe, date)
+
+    # 2. Pull the predictions for this date.
     preds = get_predictions_for_date(date)
     if not preds["picks"]:
         return {"date": date, "recorded": 0, "reason": "no_predictions"}
-
-    # 2. Score the FULL Tier A universe for the same date so we know
-    #    where each predicted pick ranked among actual winners.
-    universe = _load_universe("A")
-    universe_changes: dict[str, float] = {}
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        results = pool.map(
-            lambda s: (s, _eod_change_pct(s, date)),
-            universe,
-        )
-        for sym, (_o, _c, change) in results:
-            if change is not None:
-                universe_changes[sym] = change
 
     # Rank universe by change desc; symbol → rank (1-based).
     sorted_universe = sorted(universe_changes.items(), key=lambda kv: kv[1], reverse=True)
@@ -1198,14 +1227,41 @@ def record_actuals_for_date(date: str) -> dict:
     }
 
 
-def get_accuracy_window(*, window_days: int = 30, hit_threshold: int = 25) -> dict:
+def _is_hit(row, hit_threshold: int, hit_threshold_pct: int | None) -> bool:
+    """Whether a pick row counts as a hit.
+
+    When `hit_threshold_pct` is set, the per-day cutoff is derived from that
+    day's `universe_size`; otherwise the fixed `hit_threshold` is used.
+    """
+    rank = row["universe_rank"]
+    if not rank:
+        return False
+    if hit_threshold_pct is not None:
+        size = row["universe_size"] or 0
+        if size <= 0:
+            return False
+        cutoff = _pct_threshold_to_rank(hit_threshold_pct, size)
+    else:
+        cutoff = hit_threshold
+    return rank <= cutoff
+
+
+def get_accuracy_window(
+    *,
+    window_days: int = 30,
+    hit_threshold: int = 25,
+    hit_threshold_pct: int | None = None,
+) -> dict:
     """Rolling accuracy over the last `window_days` of COMPLETED predictions.
 
     "Completed" = prediction has a matching actuals row. In-flight days
     (today, weekend predictions where market hasn't closed) are excluded.
 
     Hit definition: a predicted symbol "hit" if its actual rank in the
-    scored universe for that day was <= `hit_threshold`.
+    scored universe for that day was <= the cutoff. When `hit_threshold_pct`
+    is set, the cutoff is the top-`hit_threshold_pct`% of THAT day's
+    `universe_size`; when it is None, the fixed `hit_threshold` is used
+    (back-compat).
 
     Returns:
       {
@@ -1243,7 +1299,7 @@ def get_accuracy_window(*, window_days: int = 30, hit_threshold: int = 25) -> di
         conn.close()
 
     total = len(rows)
-    hits = sum(1 for r in rows if r["universe_rank"] and r["universe_rank"] <= hit_threshold)
+    hits = sum(1 for r in rows if _is_hit(r, hit_threshold, hit_threshold_pct))
     days_evaluated = len({r["date"] for r in rows})
 
     # Per-strategy breakdown
@@ -1253,7 +1309,7 @@ def get_accuracy_window(*, window_days: int = 30, hit_threshold: int = 25) -> di
         if v not in by_strategy:
             by_strategy[v] = {"predictions": 0, "hits": 0}
         by_strategy[v]["predictions"] += 1
-        if r["universe_rank"] and r["universe_rank"] <= hit_threshold:
+        if _is_hit(r, hit_threshold, hit_threshold_pct):
             by_strategy[v]["hits"] += 1
     for v, b in by_strategy.items():
         b["hit_rate"] = b["hits"] / b["predictions"] if b["predictions"] else 0.0
@@ -1261,6 +1317,7 @@ def get_accuracy_window(*, window_days: int = 30, hit_threshold: int = 25) -> di
     return {
         "window_days":       window_days,
         "hit_threshold":     hit_threshold,
+        "hit_threshold_pct": hit_threshold_pct,
         "days_evaluated":    days_evaluated,
         "predictions_total": total,
         "hits":              hits,
