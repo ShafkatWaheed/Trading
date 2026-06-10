@@ -15,7 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
-import { api } from "@/lib/api/endpoints";
+import { api } from "@/lib/api/client";
 
 
 type FeatureFreshness = {

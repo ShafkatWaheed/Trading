@@ -77,6 +77,27 @@ import type {
   DailyPicks,
 } from "./types";
 
+// Long Claude-backed POSTs (playbook rewrite, strategy review) can run for
+// minutes. The Next.js dev `/api` rewrite kills requests after ~60s, surfacing
+// as a 500. In local dev, hit the backend directly (CORS is allowed) so the
+// request isn't capped; in prod it falls back through `/api`. Mirrors the
+// deep-dive-bundle / context-search bypass.
+async function postLong<T>(path: string): Promise<T> {
+  const isBrowser = typeof window !== "undefined";
+  const isLocalDev =
+    isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
+  const url = isLocalDev ? `http://localhost:8000${path}` : `/api${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as T;
+}
+
 export const marketApi = {
   pulse: (period: string = "1M") =>
     api.get<MarketPulse>(`/market/pulse?period=${encodeURIComponent(period)}`),
@@ -664,9 +685,8 @@ export const predictionsApi = {
   strategies: () =>
     api.get<{ strategies: import("./types").PredictionStrategyRow[] }>("/predictions/strategies"),
   reviewStrategy: (windowDays = 14, force = false) =>
-    api.post<import("./types").PredictionStrategyReview>(
+    postLong<import("./types").PredictionStrategyReview>(
       `/predictions/strategy/review?window_days=${windowDays}${force ? "&force=true" : ""}`,
-      undefined,
     ),
   activateStrategy: (version: number) =>
     api.post<{ activated: boolean; version?: number; no_op?: boolean }>(
@@ -676,8 +696,7 @@ export const predictionsApi = {
   skills: () =>
     api.get<{ content: string; last_updated: string | null; path: string }>("/predictions/skills"),
   updateSkills: (windowDays = 30, force = false) =>
-    api.post<{ updated: boolean; reason?: string; history_rows?: number; bytes?: number }>(
+    postLong<{ updated: boolean; reason?: string; history_rows?: number; bytes?: number }>(
       `/predictions/skills/update?window_days=${windowDays}${force ? "&force=true" : ""}`,
-      undefined,
     ),
 };
