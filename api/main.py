@@ -4,6 +4,9 @@ Run with:  uvicorn api.main:app --port 8000 --reload
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,6 +17,55 @@ from api.routes import (
     refresh, track_record, context_search, brief, daily_picks, journal, flows,
     predictions, admin_cache, premarket, digest, graph_enrich,
 )
+from api.services.analyst_predictor import predict_for_date as _analyst_predict_for_date
+from api.services.analyst_archive_service import archive_signals_for_date
+from api.services.predictions_service import (
+    record_actuals_for_date, ensure_ai_analyst_strategy, activate_strategy,
+)
+from api.services import analyst_playbook
+
+logger = logging.getLogger(__name__)
+
+
+def _today_et() -> str:
+    """Today's date as an ISO string (UTC date, matching prior job behavior)."""
+    return datetime.now(tz=timezone.utc).date().isoformat()
+
+
+def _generate_predictions_today() -> None:
+    """Pre-open daily job: run the Claude AI analyst live for today."""
+    try:
+        _analyst_predict_for_date(_today_et(), mode="live")
+    except Exception:
+        logger.exception("analyst live prediction job failed")
+
+
+def _record_predictions_actuals() -> None:
+    """Post-close daily job: record actuals, then archive the day's signals."""
+    today = _today_et()
+    try:
+        record_actuals_for_date(today)
+    except Exception:
+        logger.exception("record actuals job failed")
+    try:
+        archive_signals_for_date(today)
+    except Exception:
+        logger.exception("archive signals job failed")
+
+
+def _weekly_analyst_playbook() -> None:
+    """Friday 16:30 ET: rewrite the analyst playbook from the last 7 days."""
+    try:
+        if datetime.now().weekday() != 4:    # 4 = Friday
+            return
+        from api.services.predictions_service import (
+            get_accuracy_window, _load_history_with_context,
+        )
+        history = _load_history_with_context(window_days=7)
+        accuracy = get_accuracy_window(window_days=7, hit_threshold_pct=15)
+        analyst_playbook.rewrite(history=history, accuracy=accuracy)
+    except Exception:
+        logger.exception("weekly analyst playbook rewrite failed")
 
 app = FastAPI(
     title="Trading Analysis API",
@@ -99,26 +151,23 @@ async def _start_schedulers() -> None:
     # after market close at 16:15 ET. Both calls degrade gracefully on
     # failure (the routes can lazy-generate on first request).
     try:
-        from datetime import datetime, timezone
         from api.services._scheduler import schedule_daily_at
         from api.services import predictions_service
 
-        def _generate_predictions_today():
-            try:
-                today = datetime.now(tz=timezone.utc).date().isoformat()
-                predictions_service.generate_predictions_for_date(today)
-            except Exception:
-                pass
-
-        def _record_predictions_actuals():
-            try:
-                today = datetime.now(tz=timezone.utc).date().isoformat()
-                predictions_service.record_actuals_for_date(today)
-            except Exception:
-                pass
+        # Activate ai_analyst_v1 as the live strategy (replacing 5d_momentum_v1,
+        # which stays as the in-predictor fallback). Done here, not at module
+        # import, so importing api.main never hits the DB.
+        try:
+            activate_strategy(ensure_ai_analyst_strategy())
+        except Exception:
+            logger.exception("failed to activate ai_analyst_v1")
 
         schedule_daily_at(6, 30, _generate_predictions_today, name="predictions_generate")
         schedule_daily_at(16, 15, _record_predictions_actuals, name="predictions_actuals")
+
+        # Weekly analyst playbook rewrite at Friday 16:30 ET — after Friday's
+        # actuals/archive land so the week's full board feeds the rewrite.
+        schedule_daily_at(16, 30, _weekly_analyst_playbook, name="analyst_playbook_weekly")
 
         # Weekly Claude strategy review at Sunday 7am ET. The cron helper
         # only supports daily — we wrap it and short-circuit on non-Sundays.
