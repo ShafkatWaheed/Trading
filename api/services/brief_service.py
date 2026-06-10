@@ -754,39 +754,92 @@ def _hydrate_fundamentals(symbols: list[str]) -> dict[str, dict]:
 # ── Phase F: 3-bucket classifier ────────────────────────────────────
 
 
-def _classify3(fund: dict, bubble_score: float | None) -> Optional[str]:
-    """Return 'hype' | 'promising' | 'stable' | None.
+# Sector-relative HYPE thresholds for bubble_score. Tech / growth sectors
+# carry structurally higher multiples — using one universal 65 cutoff
+# misflags quality compounders like NVDA/AVGO as hype because their P/E
+# is sector-normal but absolutely rich. Energy / Utilities run cooler, so
+# they should hit hype at a lower bubble score.
+_HYPE_THRESHOLD_BY_SECTOR: dict[str, int] = {
+    "Technology":             75,
+    "Communication Services": 75,
+    "Consumer Cyclical":      70,
+    "Healthcare":             70,
+    "Industrials":            60,
+    "Financial Services":     60,
+    "Basic Materials":        55,
+    "Real Estate":            55,
+    "Consumer Defensive":     55,
+    "Energy":                 50,
+    "Utilities":              50,
+}
+_DEFAULT_HYPE_THRESHOLD = 65
 
-    Order matters — HYPE is checked first because a hot growth stock can be
-    both promising AND hype, and the brief should flag hype priority.
+
+def _hype_threshold(sector: str | None) -> int:
+    return _HYPE_THRESHOLD_BY_SECTOR.get(sector or "", _DEFAULT_HYPE_THRESHOLD)
+
+
+def _classify3(
+    fund: dict,
+    bubble_score: float | None,
+    *,
+    sector: str | None = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return (bucket, reason).
+
+    bucket ∈ {'hype', 'promising', 'stable', None}; reason is a short
+    human-readable string explaining WHY the rule fired — surfaced to
+    the API + UI so users (and Claude in the narrator phase) can audit
+    misclassifications instead of guessing.
+
+    ── Rule order (changed; documented below) ──
+    1. PROMISING is checked FIRST. A stock with real revenue growth or
+       eps growth + non-negative margin is NEVER tagged hype, even when
+       bubble_score is high — that lets quality growers (NVDA at +50%
+       rev growth + bubble 70) sit in promising where they belong
+       instead of being flagged as hype.
+    2. HYPE only kicks in for stocks that AREN'T already promising.
+       The threshold is sector-relative (see _HYPE_THRESHOLD_BY_SECTOR).
+    3. STABLE — modest profitable growth.
+
+    The old PEG-fallback HYPE rule (bubble_score missing → PEG>3 + big-cap
+    = hype) was DROPPED. PEG > 3 on $50B+ caps is routine for quality
+    compounders; the old rule misflagged most of Tier A's growth segment
+    whenever the bubble_score cache happened to miss.
     """
     rev_growth = _to_float(fund.get("revenue_growth"))
     margin     = _to_float(fund.get("profit_margin"))
     eps_growth = _to_float(fund.get("eps_growth"))
     net_income = _to_float(fund.get("net_income"))
-    peg        = _to_float(fund.get("peg_ratio"))
-    market_cap = _to_float(fund.get("market_cap"))
 
-    # ── HYPE — price ahead of fundamentals ──────────────────────────
-    if bubble_score is not None and bubble_score >= 65:
-        return "hype"
-    # Secondary hype signal if bubble_score unavailable: rich PEG on big cap
-    if bubble_score is None and peg is not None and peg > 3.0 and (market_cap or 0) > 50e9:
-        return "hype"
-
-    # ── PROMISING — high growth real business ──────────────────────
+    # ── 1. PROMISING — real growth + real margins protects from hype tag ──
     if rev_growth is not None and rev_growth > 0.25:
-        return "promising"
+        reason = f"rev_growth={rev_growth*100:.0f}% > 25%"
+        # Annotate "priced rich" when bubble is also high — narrator
+        # surfaces this so the user sees both dimensions of the story.
+        if bubble_score is not None and bubble_score >= _hype_threshold(sector):
+            reason += f" + bubble={bubble_score:.0f} (priced rich)"
+        return "promising", reason
     if eps_growth is not None and eps_growth > 0.30 and (margin is None or margin > 0):
-        return "promising"
+        reason = f"eps_growth={eps_growth*100:.0f}% > 30%, margin OK"
+        if bubble_score is not None and bubble_score >= _hype_threshold(sector):
+            reason += f" + bubble={bubble_score:.0f} (priced rich)"
+        return "promising", reason
 
-    # ── STABLE — consistent profitable growth ──────────────────────
+    # ── 2. HYPE — only for non-growers with elevated bubble score ──
+    threshold = _hype_threshold(sector)
+    if bubble_score is not None and bubble_score >= threshold:
+        return "hype", f"bubble={bubble_score:.0f} >= {threshold} ({sector or 'unsectored'})"
+
+    # ── 3. STABLE — consistent profitable growth ──────────────────
     if (rev_growth is not None and 0.05 <= rev_growth <= 0.30
         and margin is not None and margin > 0.05
         and (net_income is None or net_income > 0)):
-        return "stable"
+        return "stable", (
+            f"rev_growth={rev_growth*100:.0f}% (5-30%), margin={margin*100:.0f}% (>5%)"
+        )
 
-    return None
+    return None, None
 
 
 def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list[dict]:
@@ -807,7 +860,11 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
         bubble_score = float(bubble["score"]) if (bubble and isinstance(bubble.get("score"), (int, float))) else None
         bubble_label = bubble.get("label") if bubble else None
 
-        bucket = _classify3(fund, bubble_score)
+        # Pre-extract sector — classifier needs it for the sector-relative
+        # bubble threshold.
+        sector = (fund.get("sector") or "").strip() or None
+
+        bucket, bucket_reason = _classify3(fund, bubble_score, sector=sector)
         if bucket is None:
             continue
 
@@ -815,6 +872,15 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
         eps = _to_float(fund.get("eps_growth"))
         margin = _to_float(fund.get("profit_margin"))
         mcap = _to_float(fund.get("market_cap")) or 0.0
+
+        # Borderline flag — promising stocks whose bubble_score is within
+        # 10 of the hype threshold. Narrator uses this to write "priced
+        # rich, run on momentum" notes without changing the bucket.
+        is_borderline_priced_rich = bool(
+            bucket == "promising"
+            and bubble_score is not None
+            and bubble_score >= (_hype_threshold(sector) - 10)
+        )
 
         if bucket == "hype":
             if bubble_label:
@@ -845,9 +911,6 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
             and (net_income is None or net_income > 0)
         )
 
-        # Sector tag for the diversity constraint in _select_mix.
-        sector = (fund.get("sector") or "").strip() or None
-
         # Composite score for ranking within bucket
         bucket_weight = {"hype": 0.9, "promising": 1.0, "stable": 0.8}[bucket]
         size_weight = min(1.0, mcap / 1e11)
@@ -856,6 +919,8 @@ def _classify_all(candidates: list[dict], funds_by_sym: dict[str, dict]) -> list
         scored.append({
             **c,
             "bucket": bucket,
+            "bucket_reason": bucket_reason,
+            "is_borderline_priced_rich": is_borderline_priced_rich,
             "name": (fund.get("longName") or fund.get("shortName") or sym)[:48],
             "sector": sector,
             "market_cap": mcap or None,
@@ -1093,6 +1158,11 @@ def _build_narrative_prompt(ctx: dict, chapters: list[dict], picks: list[dict], 
             "symbol": p["symbol"],
             "name": p["name"],
             "bucket": p["bucket"],
+            # Audit trail from the classifier — narrator can reference the
+            # specific rule that fired ("rev_growth 42% > 25%") and the
+            # borderline flag for "priced rich" callouts.
+            "bucket_reason": p.get("bucket_reason"),
+            "is_borderline_priced_rich": bool(p.get("is_borderline_priced_rich")),
             "chapter_headlines": p.get("chapter_headlines") or [],
             "metrics": {
                 "headline_metric": snap.get("headline_metric"),
@@ -1225,6 +1295,16 @@ explicitly. Every pick should connect back to that lens.
 PICKS (already vetted into their bucket — your job is to tell each story):
 {pick_blocks}
 
+Each pick carries:
+  - bucket          'stable' | 'promising' | 'hype'
+  - bucket_reason   the specific classifier rule that fired
+                    (e.g. "rev_growth=42% > 25%")
+  - is_borderline_priced_rich  True when bucket=promising but the
+                    bubble_score is within 10 of the sector hype
+                    threshold. Acknowledge this with a "priced rich"
+                    or "run on momentum" note — do NOT reclassify
+                    the bucket; the classifier already decided.
+
 Write a JSON response with this exact shape:
 {{
   "headline": "<one-line headline summing up today's setup>",
@@ -1270,6 +1350,13 @@ def _narrate(ctx: dict, chapters: list[dict], picks: list[dict], lens: dict | No
             {
                 "symbol": p.get("symbol"),
                 "bucket": p.get("bucket"),
+                # Surface the classifier audit trail to the narrator so it
+                # can write "$NVDA — promising despite bubble=72 because
+                # rev_growth=50%" instead of generic prose. Borderline flag
+                # lets the narrator add "priced rich" warnings without the
+                # classifier having to force a hype tag.
+                "bucket_reason": p.get("bucket_reason"),
+                "is_borderline_priced_rich": bool(p.get("is_borderline_priced_rich")),
                 "chapter_headlines": p.get("chapter_headlines"),
                 "web_validation_verdict": (
                     (p.get("snapshot") or {})
@@ -1706,6 +1793,11 @@ def get_brief(
             "symbol": p["symbol"],
             "name": p["name"],
             "bucket": p["bucket"],
+            # New: surface which classifier rule fired + the borderline flag
+            # so the UI can show "promising · rev 42% (priced rich)" instead
+            # of just "promising" with no audit trail.
+            "bucket_reason": p.get("bucket_reason"),
+            "is_borderline_priced_rich": bool(p.get("is_borderline_priced_rich")),
             "is_profitable": bool(p.get("is_profitable")),
             "sector": p.get("sector"),
             "chapter_headlines": p.get("chapter_headlines") or [],

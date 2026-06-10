@@ -1994,6 +1994,14 @@ export type BriefPick = {
   symbol: string;
   name?: string | null;
   bucket: BriefBucket;
+  /** Audit trail from the classifier (e.g. "rev_growth=42% > 25%"). Surface
+   *  this as a tooltip on the bucket chip so users can see WHY a pick was
+   *  classified the way it was, instead of guessing. */
+  bucket_reason?: string | null;
+  /** True when bucket=promising and bubble_score is within 10 of the
+   *  sector hype threshold — narrator adds "priced rich" notes. UI can
+   *  show a small chip next to the bucket pill. */
+  is_borderline_priced_rich?: boolean;
   is_profitable?: boolean;
   sector?: string | null;
   angle?: string | null;

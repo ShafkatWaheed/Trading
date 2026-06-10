@@ -176,10 +176,32 @@ function PickCard({ pick, index }: { pick: BriefPick; index: number }) {
             )}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={cn("badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1", bk.bg, bk.color)}>
+            {/* Bucket chip — title attribute surfaces bucket_reason on hover
+                so users can audit WHY a pick was classified the way it was
+                ("rev_growth=42% > 25%") instead of guessing. */}
+            <span
+              title={pick.bucket_reason || undefined}
+              className={cn(
+                "badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1",
+                bk.bg, bk.color,
+                pick.bucket_reason && "cursor-help",
+              )}
+            >
               <BkIcon size={10} />
               {bk.label}
             </span>
+            {/* "Priced rich" annotation — only shown for promising stocks
+                whose bubble_score is within 10 of the sector hype threshold.
+                Lets users see the dimension narrator already mentions
+                without having to read the prose. */}
+            {pick.is_borderline_priced_rich && (
+              <span
+                title="bubble_score within 10 of the sector hype threshold — narrator mentioned this in the story"
+                className="badge text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1 bg-accent-amber/10 text-accent-amber border-accent-amber/30 cursor-help"
+              >
+                Priced rich
+              </span>
+            )}
             {/* Profitability chip — independent of bucket, so users see e.g.
                 "Promising · Profitable" (NVDA) vs "Promising · Burning cash" */}
             {pick.is_profitable && (

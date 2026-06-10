@@ -2027,6 +2027,14 @@ class BriefPick(BaseModel):
     symbol: str
     name: str | None = None
     bucket: str                 # 'stable' | 'promising' | 'hype'
+    # Audit trail from the classifier so the UI can show WHY a bucket was
+    # chosen (e.g. "rev_growth=42% > 25%") instead of leaving the user to
+    # guess. Optional — older cached briefs may not have it.
+    bucket_reason: str | None = None
+    # True when bucket=promising but bubble_score is within 10 of the
+    # sector hype threshold. Narrator surfaces "priced rich" notes without
+    # the classifier having to force a hype tag.
+    is_borderline_priced_rich: bool = False
     # Decoupled from bucket — a "promising" name can be profitable (NVDA) or
     # not (early-stage growth). UI shows this as a separate "Profitable" chip.
     is_profitable: bool = False
