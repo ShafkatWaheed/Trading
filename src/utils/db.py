@@ -719,27 +719,6 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_pred_strat_active
             ON prediction_strategies(deactivated_at);
 
-        -- Seed the active v1 baseline strategy so daily_predictions' FK
-        -- target (strategy_version=1) is valid the instant the schema exists.
-        -- Without this, a fresh DB has an empty prediction_strategies table
-        -- and any direct INSERT into daily_predictions fails the FK until a
-        -- service first bootstraps a strategy. Idempotent: only seeds when the
-        -- table is empty, and the AUTOINCREMENT counter is reset first so the
-        -- row always lands on version 1 (even after a wipe). Config mirrors
-        -- predictions_service._BASELINE_STRATEGY; that service finds this
-        -- active row via get_active_strategy() and never inserts a duplicate.
-        DELETE FROM sqlite_sequence
-            WHERE name = 'prediction_strategies'
-              AND NOT EXISTS (SELECT 1 FROM prediction_strategies);
-        INSERT INTO prediction_strategies
-            (name, description, config_json, created_at, activated_at)
-        SELECT '5d_momentum_v1',
-               'Baseline: rank Tier A by trailing 5-day % return; pick top 10.',
-               '{"ranking_signal":"change_5d","lookback_days":5,"universe_tier":"A","min_history_days":6,"top_n":10}',
-               '1970-01-01T00:00:00+00:00',
-               '1970-01-01T00:00:00+00:00'
-        WHERE NOT EXISTS (SELECT 1 FROM prediction_strategies);
-
         CREATE TABLE IF NOT EXISTS daily_predictions (
             prediction_date  TEXT NOT NULL,        -- YYYY-MM-DD (the day to be measured)
             rank             INTEGER NOT NULL,     -- 1..10

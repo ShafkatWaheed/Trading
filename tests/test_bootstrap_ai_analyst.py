@@ -11,12 +11,17 @@ def test_walk_forward_skips_already_predicted(monkeypatch):
     monkeypatch.setattr(boot, "record_actuals_for_date", lambda d: {"recorded": 10})
     monkeypatch.setattr(boot, "_is_week_end", lambda d: False)
     monkeypatch.setattr(boot, "get_accuracy_window", lambda **k: {"hit_rate": 0.0})
-    # pre-seed one date as already predicted
+    # pre-seed one date as already predicted. The daily_predictions FK points
+    # at prediction_strategies(version); bootstrap the baseline via the real
+    # service path so a valid version exists on a fresh temp DB.
+    from api.services.predictions_service import get_active_strategy
+    sv = get_active_strategy()["version"]   # bootstraps 5d_momentum_v1 as version 1
     conn = get_connection()
     try:
         conn.execute("INSERT OR IGNORE INTO daily_predictions "
                      "(prediction_date, rank, symbol, strategy_version, created_at, mode) "
-                     "VALUES ('2026-02-03', 1, 'SYN_X', 1, datetime('now'), 'bootstrap')")
+                     "VALUES ('2026-02-03', 1, 'SYN_X', ?, datetime('now'), 'bootstrap')",
+                     (sv,))
         conn.commit()
     finally:
         conn.close()
@@ -24,6 +29,12 @@ def test_walk_forward_skips_already_predicted(monkeypatch):
     conn = get_connection()
     try:
         conn.execute("DELETE FROM daily_predictions WHERE symbol='SYN_X'")
+        # Leave the shared session DB exactly as found: drop the baseline this
+        # test bootstrapped and rewind the AUTOINCREMENT counter. Otherwise the
+        # leftover sequence value makes the next bootstrap land on version 2,
+        # breaking test_predictions_service's "fresh DB -> version 1" assertion.
+        conn.execute("DELETE FROM prediction_strategies")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'prediction_strategies'")
         conn.commit()
     finally:
         conn.close()
