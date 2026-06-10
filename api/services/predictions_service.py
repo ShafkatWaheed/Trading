@@ -606,6 +606,39 @@ def get_active_strategy() -> dict:
     }
 
 
+def ensure_ai_analyst_strategy() -> int:
+    """Create the ai_analyst_v1 strategy row if absent; return its version.
+
+    Idempotent — returns the existing version when already present.
+    """
+    init_db()
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT version FROM prediction_strategies WHERE name='ai_analyst_v1'"
+        ).fetchone()
+        if existing:
+            return existing["version"]
+        cfg = {
+            "ranking_signal": "ai_analyst",   # picks come from the Claude analyst
+            "universe_tier": "AB",            # Tier A+B
+            "top_n": 10,
+            "hit_threshold_pct": 15,          # top 15% of the universe = hit
+        }
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT INTO prediction_strategies (name, description, config_json, created_at) "
+            "VALUES (?,?,?,?)",
+            ("ai_analyst_v1",
+             "Claude analyst reads the full signal board and picks 10 daily top-gainer candidates.",
+             json.dumps(cfg), now),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
 # ── Universe + signal scoring ──────────────────────────────────────────
 
 
