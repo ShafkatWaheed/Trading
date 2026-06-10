@@ -16,6 +16,13 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _add_column_if_missing(conn, table: str, column: str, decl: str) -> None:
+    """Idempotent ADD COLUMN — safe to run every init_db()."""
+    existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db() -> None:
     conn = get_connection()
     conn.executescript("""
@@ -746,7 +753,17 @@ def init_db() -> None:
             PRIMARY KEY (prediction_date, symbol)
         );
         CREATE INDEX IF NOT EXISTS idx_dpa_date ON daily_prediction_actuals(prediction_date);
+
+        CREATE TABLE IF NOT EXISTS signal_archive (
+            as_of_date   TEXT NOT NULL,   -- YYYY-MM-DD the snapshot is FOR
+            symbol       TEXT NOT NULL,
+            signals_json TEXT NOT NULL,   -- full per-symbol signal packet (JSON)
+            captured_at  TEXT NOT NULL,   -- when written (audit)
+            PRIMARY KEY (as_of_date, symbol)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sigarch_date ON signal_archive(as_of_date);
     """)
+    _add_column_if_missing(conn, "daily_predictions", "mode", "TEXT")
     conn.commit()
     conn.close()
 
