@@ -28,6 +28,31 @@ def _check_date(date: str) -> None:
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
 
 
+@router.get("/analyst/playbook")
+def analyst_playbook_route() -> dict:
+    """The AI analyst's current accumulated playbook (markdown)."""
+    from api.services import analyst_playbook
+    return {"playbook": analyst_playbook.read()}
+
+
+@router.get("/bootstrap/status")
+def bootstrap_status() -> dict:
+    """Cold-start progress: number of bootstrap-mode days predicted + rolling hit rate."""
+    from api.services.predictions_service import get_accuracy_window
+    from src.utils.db import get_connection, init_db
+    init_db()
+    conn = get_connection()
+    try:
+        n = conn.execute(
+            "SELECT COUNT(DISTINCT prediction_date) c FROM daily_predictions WHERE mode='bootstrap'"
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    acc = get_accuracy_window(window_days=90, hit_threshold_pct=15)
+    return {"predicted_days": n, "hit_rate": acc.get("hit_rate"),
+            "days_evaluated": acc.get("days_evaluated")}
+
+
 @router.get("/today")
 def predictions_today() -> dict:
     return predictions_service.get_predictions_today()
