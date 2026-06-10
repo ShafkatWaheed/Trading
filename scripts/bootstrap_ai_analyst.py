@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 import logging
 
-from api.services import analyst_playbook
+from api.services import analyst_playbook, analyst_pit_service
 from api.services.analyst_predictor import predict_for_date
 from api.services.predictions_service import (
     get_accuracy_window,
     record_actuals_for_date,
     _load_history_with_context,
+    _load_universe_ab,
 )
 from src.utils.db import get_connection, init_db
 
@@ -64,15 +65,27 @@ def _rewrite_playbook_window(date: str) -> None:
     analyst_playbook.rewrite(history=history, accuracy=accuracy)
 
 
+def _prefetch() -> dict:
+    """Bulk-fetch the A+B daily price history ONCE for the whole walk-forward.
+
+    Module-level seam so tests can monkeypatch it to `{}` (no network). The
+    returned {symbol: full-series DataFrame} is threaded through each day's
+    predict/grade so the per-day work slices it in-memory instead of re-fetching
+    the ~1,022-symbol universe (get_historical's cache TTL is only 15 min).
+    """
+    return analyst_pit_service.prefetch_price_history(_load_universe_ab())
+
+
 def run(days: int = 90) -> dict:
     init_db()
+    history = _prefetch()
     predicted = graded = 0
     for d in _trading_days(days):
         if _already_predicted(d):
             continue
-        predict_for_date(d, mode="bootstrap")
+        predict_for_date(d, mode="bootstrap", history=history)
         predicted += 1
-        record_actuals_for_date(d)
+        record_actuals_for_date(d, history=history)
         graded += 1
         if _is_week_end(d):
             _rewrite_playbook_window(d)

@@ -125,22 +125,96 @@ def _macro_regime(macro: dict) -> str:
 # ── Shared price slice (PIT cut) ──────────────────────────────────
 
 
-def _sliced_closes(sym: str, as_of: str):
+def prefetch_price_history(symbols: list[str], *, period_days: int = 400) -> dict:
+    """Bulk-fetch daily OHLC for many symbols in ONE yfinance download, held in
+    memory for a bootstrap run. Returns {symbol: DataFrame} where each frame has
+    lowercase columns at least: date (YYYY-MM-DD str), open, close. Symbols with
+    no data are absent. Defensive: never raises (returns what it got).
+
+    Used to avoid ~1,022 per-symbol network fetches PER DAY during the 90-day
+    walk-forward (get_historical's cache TTL is only 15 min).
+    """
+    out: dict = {}
+    if not symbols:
+        return out
+    try:
+        import pandas as pd
+        import yfinance as yf
+    except Exception:
+        return out
+
+    period = f"{int(period_days)}d"
+    # Chunk so a very large universe stays within yfinance's comfortable range.
+    chunk = 200
+    for i in range(0, len(symbols), chunk):
+        batch = symbols[i:i + chunk]
+        try:
+            bulk = yf.download(
+                batch, period=period, progress=False,
+                auto_adjust=True, group_by="ticker", threads=True,
+            )
+        except Exception:
+            continue
+        if bulk is None or bulk.empty:
+            continue
+        multi = isinstance(bulk.columns, pd.MultiIndex)
+        for sym in batch:
+            try:
+                if multi:
+                    if sym not in bulk.columns.get_level_values(0):
+                        continue
+                    data = bulk[sym]
+                else:
+                    # Single-ticker download → flat columns for that one symbol.
+                    data = bulk
+                data = data.dropna(how="all")
+                if data.empty or "Close" not in data.columns:
+                    continue
+                frame = pd.DataFrame({
+                    "date": [str(ix)[:10] for ix in data.index],
+                })
+                for src, dst in (("Open", "open"), ("High", "high"),
+                                 ("Low", "low"), ("Close", "close"),
+                                 ("Volume", "volume")):
+                    if src in data.columns:
+                        frame[dst] = data[src].to_numpy()
+                if "close" not in frame.columns or frame.empty:
+                    continue
+                out[sym] = frame.reset_index(drop=True)
+            except Exception:
+                continue
+    return out
+
+
+def _sliced_closes(sym: str, as_of: str, *, history=None):
     """Daily close series for `sym` SLICED to bars whose date <= `as_of`.
 
     This is the single point-in-time cut reused by both `assemble_compact` and
     `_momentum_block`: a symbol with no bar on/before `as_of` yields an empty
-    series. Returns a pandas float Series (possibly empty); never raises.
+    series. When `history` is provided, the per-symbol frame is taken from it
+    (in-memory, no network); otherwise it is fetched via the gateway. Returns a
+    pandas float Series (possibly empty); never raises.
     """
     try:
-        from src.data.gateway import DataGateway
-        df = DataGateway().get_historical(sym, period_days=180)
+        df = _price_frame(sym, history=history)
         if df is None or df.empty or "date" not in df.columns or "close" not in df.columns:
             return None
         sliced = df[df["date"] <= as_of]
         if sliced.empty:
             return None
         return sliced["close"].astype(float)
+    except Exception:
+        return None
+
+
+def _price_frame(sym: str, *, history=None):
+    """Per-symbol daily price frame: a preloaded slice from `history` when given,
+    else a fresh gateway fetch. Returns a DataFrame (or None); never raises."""
+    try:
+        if history is not None:
+            return history.get(sym)
+        from src.data.gateway import DataGateway
+        return DataGateway().get_historical(sym, period_days=180)
     except Exception:
         return None
 
@@ -160,8 +234,15 @@ def _trailing_return_5d(closes) -> float | None:
 # ── Compact (triage) assembler ────────────────────────────────────
 
 
-def assemble_compact(symbols: list[str], as_of: str) -> list[dict]:
+def assemble_compact(symbols: list[str], as_of: str, *, history=None) -> list[dict]:
     """One compact triage row per symbol that has price data on/before `as_of`.
+
+    When `history` ({symbol: full-series DataFrame}) is provided, per-symbol
+    price frames are sliced from it in-memory (no per-symbol network fetch);
+    otherwise frames are fetched via the gateway. The PIT cut `df["date"] <=
+    as_of` is applied either way, so prefetching the FULL series introduces no
+    lookahead.
+
 
     Row schema:
         {"symbol", "name", "sector", "momentum_pct", "sector_flow_pct",
@@ -199,7 +280,6 @@ def assemble_compact(symbols: list[str], as_of: str) -> list[dict]:
     from datetime import datetime, timedelta
 
     from api.services import ai_analyst_service as ai
-    from src.data.gateway import DataGateway
 
     try:
         macro_start = (datetime.strptime(as_of, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
@@ -222,11 +302,10 @@ def assemble_compact(symbols: list[str], as_of: str) -> list[dict]:
                 sector_hist_cache[sector] = {}
         return ai._sector_perf_at(sector_hist_cache[sector], as_of)
 
-    gateway = DataGateway()
     rows: list[dict] = []
     for symbol in symbols:
         try:
-            df = gateway.get_historical(symbol, period_days=180)
+            df = _price_frame(symbol, history=history)
             if df is None or df.empty or "date" not in df.columns or "close" not in df.columns:
                 continue
             # Slice strictly to bars on/before `as_of` — the PIT cut.
@@ -272,16 +351,19 @@ def _window_start(as_of: str, days: int) -> str:
     return (datetime.strptime(as_of, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def _momentum_block(sym: str, as_of: str) -> dict | None:
+def _momentum_block(sym: str, as_of: str, *, history=None) -> dict | None:
     """Trailing momentum from the PIT-sliced close series.
 
     Always carries a `trailing_return` (5d %, or None) — Task 6's fallback ranks
     on exactly this key. When enough history exists, enriches with the
     historical opportunity score (technicals only, recomputed from the slice up
     to D) for `trend`/`rs`. None if there is no price bar on/before `as_of`.
+
+    When `history` is provided, the per-symbol frame is sliced from it in-memory
+    (still PIT-cut to date <= as_of); otherwise it is fetched via the gateway.
     """
     try:
-        closes = _sliced_closes(sym, as_of)
+        closes = _sliced_closes(sym, as_of, history=history)
         if closes is None:
             return None
         block: dict = {"trailing_return": _trailing_return_5d(closes)}
@@ -291,9 +373,8 @@ def _momentum_block(sym: str, as_of: str) -> dict | None:
             from datetime import datetime, timedelta
 
             from api.services import ai_analyst_service as ai
-            from src.data.gateway import DataGateway
 
-            df = DataGateway().get_historical(sym, period_days=180)
+            df = _price_frame(sym, history=history)
             if df is not None and not df.empty and "date" in df.columns:
                 df_slice = df[df["date"] <= as_of]
                 if len(df_slice) >= 30:
@@ -504,7 +585,7 @@ def _live_reddit(sym: str) -> dict | None:
 # ── Full (deep-read) assembler ────────────────────────────────────
 
 
-def assemble_full(symbols: list[str], as_of: str, *, allow_live_search: bool) -> dict[str, dict]:
+def assemble_full(symbols: list[str], as_of: str, *, allow_live_search: bool, history=None) -> dict[str, dict]:
     """Full per-symbol packets for the shortlist.
 
     Bootstrap (allow_live_search=False): only PIT-reconstructable blocks —
@@ -526,7 +607,7 @@ def assemble_full(symbols: list[str], as_of: str, *, allow_live_search: bool) ->
     institutions = institution_breadth_as_of(symbols, as_of)
     for sym in symbols:
         p = {
-            "momentum": _momentum_block(sym, as_of),
+            "momentum": _momentum_block(sym, as_of, history=history),
             "sector_flow": _sector_block(sym, as_of),
             "macro": _macro_block(as_of),
             "congress": congress.get(sym),

@@ -1145,13 +1145,52 @@ def _eod_change_pct(symbol: str, date: str) -> tuple[float | None, float | None,
     return open_, close, ((close - open_) / open_) * 100.0
 
 
-def _score_universe_changes(symbols: list[str], date: str) -> dict[str, float]:
+def _ohlc_from_history(df, date: str) -> tuple[float | None, float | None, float | None]:
+    """(open, close, change_pct) for `date` read from a preloaded full-series
+    frame's exact `df["date"] == date` row (lowercase open/close).
+
+    Grades day D using day D's own settled bar — allowed (we are scoring D), so
+    reading day D itself is not lookahead. (None, None, None) when the symbol
+    has no row for `date` or the data is unusable (never fabricated).
+    """
+    try:
+        if df is None or getattr(df, "empty", True) or "date" not in df.columns:
+            return None, None, None
+        row = df[df["date"] == date]
+        if row.empty:
+            return None, None, None
+        open_ = float(row["open"].iloc[-1])
+        close = float(row["close"].iloc[-1])
+        if open_ <= 0:
+            return None, None, None
+        return open_, close, ((close - open_) / open_) * 100.0
+    except Exception:
+        return None, None, None
+
+
+def _change_from_history(df, date: str) -> float | None:
+    """Open→close %-change for `date` from a preloaded frame, or None."""
+    return _ohlc_from_history(df, date)[2]
+
+
+def _score_universe_changes(symbols: list[str], date: str, *, history=None) -> dict[str, float]:
     """Open→close %-change for each symbol on `date`.
 
     Returns {symbol: change_pct}; symbols with missing/bad data are omitted.
     Extracted so the universe-scoring step is mockable in tests (no network).
+
+    When `history` ({symbol: full-series DataFrame}) is provided, each change is
+    read from the preloaded frame's `date`-matching row (in-memory, no network);
+    a symbol absent from `history` or with no row for `date` is omitted. When
+    `history is None`, the per-symbol gateway-fetch path (ThreadPool) is used.
     """
     changes: dict[str, float] = {}
+    if history is not None:
+        for sym in symbols:
+            change = _change_from_history(history.get(sym), date)
+            if change is not None:
+                changes[sym] = change
+        return changes
     with ThreadPoolExecutor(max_workers=16) as pool:
         results = pool.map(
             lambda s: (s, _eod_change_pct(s, date)),
@@ -1163,12 +1202,16 @@ def _score_universe_changes(symbols: list[str], date: str) -> dict[str, float]:
     return changes
 
 
-def record_actuals_for_date(date: str) -> dict:
+def record_actuals_for_date(date: str, *, history=None) -> dict:
     """Record open/close/change_pct for every symbol predicted on `date`,
     plus the actual universe ranks (for hit/miss computation).
 
     Idempotent — re-running for the same date overwrites the rows so a
     later EOD fetch (when more bars are settled) supersedes an earlier one.
+
+    `history`: optional {symbol: full-series DataFrame} prefetched once for a
+    bootstrap run — each symbol's day-`date` open/close is read from it instead
+    of a per-symbol network fetch. None (default) = the gateway-fetch path.
 
     POINT-IN-TIME GUARANTEE: only call AFTER market close for `date`. The
     helper does not check this — caller (scheduler / manual route) must.
@@ -1178,7 +1221,10 @@ def record_actuals_for_date(date: str) -> dict:
     # 1. Score the FULL Tier A+B universe for the same date so we know
     #    where each predicted pick ranked among actual winners.
     universe = _load_universe_ab()
-    universe_changes = _score_universe_changes(universe, date)
+    if history is not None:
+        universe_changes = _score_universe_changes(universe, date, history=history)
+    else:
+        universe_changes = _score_universe_changes(universe, date)
 
     # 2. Pull the predictions for this date.
     preds = get_predictions_for_date(date)
@@ -1200,9 +1246,13 @@ def record_actuals_for_date(date: str) -> dict:
             # If we scored the symbol while ranking the universe, reuse
             # the change directly. Otherwise it's missing data — None values.
             if sym in universe_changes:
-                # Re-derive open/close from the freshly-fetched bar so the
-                # row has the exact prices the universe rank used.
-                open_, close, change = _eod_change_pct(sym, date)
+                # Re-derive open/close from the same bar the universe rank
+                # used: the preloaded history row when prefetched, else a
+                # fresh gateway fetch.
+                if history is not None:
+                    open_, close, change = _ohlc_from_history(history.get(sym), date)
+                else:
+                    open_, close, change = _eod_change_pct(sym, date)
             else:
                 open_, close, change = None, None, None
             rank = rank_by_sym.get(sym)

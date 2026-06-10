@@ -6,7 +6,7 @@ def test_predict_persists_ten_rows_with_mode(monkeypatch):
     init_db()
     # stub the assemblers + predictor internals to avoid network
     monkeypatch.setattr(ap, "_assemble_compact",
-                        lambda syms, d: [{"symbol": s, "momentum_pct": 1.0} for s in syms])
+                        lambda syms, d, history=None: [{"symbol": s, "momentum_pct": 1.0} for s in syms])
     monkeypatch.setattr(ap, "triage", lambda rows, **k: [r["symbol"] for r in rows][:5])
     monkeypatch.setattr(ap, "_assemble_full",
                         lambda syms, d, **k: {s: {"momentum": {"trailing_return": 1.0}} for s in syms})

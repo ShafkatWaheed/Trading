@@ -18,20 +18,25 @@ def _universe() -> list[str]:
     return predictions_service._load_universe_ab()
 
 
-def _assemble_compact(symbols, as_of):
+def _assemble_compact(symbols, as_of, history=None):
     from api.services import analyst_pit_service
-    return analyst_pit_service.assemble_compact(symbols, as_of)
+    return analyst_pit_service.assemble_compact(symbols, as_of, history=history)
 
 
-def _assemble_full(symbols, as_of, *, allow_live_search):
+def _assemble_full(symbols, as_of, *, allow_live_search, history=None):
     from api.services import analyst_pit_service
-    return analyst_pit_service.assemble_full(symbols, as_of, allow_live_search=allow_live_search)
+    return analyst_pit_service.assemble_full(
+        symbols, as_of, allow_live_search=allow_live_search, history=history)
 
 
-def predict_for_date(as_of: str, *, mode: str) -> dict:
+def predict_for_date(as_of: str, *, mode: str, history=None) -> dict:
     """Run the two-stage analyst for `as_of` and persist top-10 to daily_predictions.
 
     mode: 'bootstrap' (PIT, no live search) | 'live' (full board + search).
+    `history`: optional {symbol: full-series DataFrame} prefetched once for a
+    bootstrap run — threaded into the assemblers so the per-day walk slices it
+    in-memory instead of re-fetching the universe (no lookahead; the assembler
+    still PIT-cuts to date <= as_of). None (default) = live/gateway behavior.
     Idempotent per date: existing rows for `as_of` are replaced.
     """
     from api.services import predictions_service
@@ -44,9 +49,9 @@ def predict_for_date(as_of: str, *, mode: str) -> dict:
         playbook = ""
     allow_live = (mode == "live")
 
-    compact = _assemble_compact(_universe(), as_of)
+    compact = _assemble_compact(_universe(), as_of, history=history)
     shortlist = triage(compact, playbook=playbook)
-    packets = _assemble_full(shortlist, as_of, allow_live_search=allow_live)
+    packets = _assemble_full(shortlist, as_of, allow_live_search=allow_live, history=history)
     picks = deep_pick(packets, playbook=playbook, allow_live_search=allow_live)
 
     _persist(as_of, picks, mode=mode, strategy_version=strategy_version)
