@@ -36,18 +36,24 @@ def ask_claude(
     timeout: int = 60,
     allowed_tools: str = "",
 ) -> str | None:
-    """Invoke `claude -p prompt --model <model>` and return stdout.
+    """Invoke `claude -p --model <model>` (prompt piped via stdin) and return stdout.
 
     Returns None on subprocess failure (non-zero exit, timeout, missing CLI).
     `allowed_tools=""` locks the call to text-only — no shell, web, or file
     side effects allowed during the model's response.
+
+    The prompt is passed on STDIN, not as an argv element: Linux caps a single
+    argument at MAX_ARG_STRLEN (128 KiB), so large prompts (e.g. a full-universe
+    table) passed as an arg raise OSError and silently return None. stdin has no
+    such limit.
     """
     env = os.environ.copy()
     # Avoid recursion when this runs INSIDE another Claude Code session.
     env.pop("CLAUDECODE", None)
     try:
         proc = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt, "--model", model, "--allowedTools", allowed_tools],
+            [CLAUDE_BIN, "-p", "--model", model, "--allowedTools", allowed_tools],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,
