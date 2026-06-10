@@ -6,7 +6,7 @@ def test_walk_forward_skips_already_predicted(monkeypatch):
     init_db()
     calls = []
     monkeypatch.setattr(boot, "_trading_days", lambda n: ["2026-02-02", "2026-02-03", "2026-02-04"])
-    monkeypatch.setattr(boot, "_prefetch", lambda: {})
+    monkeypatch.setattr(boot, "_prefetch", lambda syms: {})
     monkeypatch.setattr(boot, "predict_for_date",
                         lambda d, mode, history=None: calls.append(d) or {"count": 10})
     monkeypatch.setattr(boot, "record_actuals_for_date", lambda d, history=None: {"recorded": 10})
@@ -47,7 +47,7 @@ def test_week_end_triggers_rewrite(monkeypatch):
     init_db()
     rewrites = []
     monkeypatch.setattr(boot, "_trading_days", lambda n: ["2026-02-06"])  # a Friday
-    monkeypatch.setattr(boot, "_prefetch", lambda: {})
+    monkeypatch.setattr(boot, "_prefetch", lambda syms: {})
     monkeypatch.setattr(boot, "predict_for_date", lambda d, mode, history=None: {"count": 10})
     monkeypatch.setattr(boot, "record_actuals_for_date", lambda d, history=None: {"recorded": 10})
     monkeypatch.setattr(boot, "_is_week_end", lambda d: True)
@@ -55,3 +55,12 @@ def test_week_end_triggers_rewrite(monkeypatch):
     monkeypatch.setattr(boot, "_rewrite_playbook_window", lambda d: rewrites.append(d))
     boot.run(days=1)
     assert rewrites == ["2026-02-06"]
+
+
+def test_run_aborts_loudly_on_poor_prefetch_coverage(monkeypatch):
+    import pytest
+    from scripts import bootstrap_ai_analyst as boot
+    monkeypatch.setattr(boot, "_load_universe_ab", lambda: ["A", "B", "C", "D"])
+    monkeypatch.setattr(boot, "_prefetch", lambda syms: {"A": object()})  # 1/4 = 25% < 50%
+    with pytest.raises(RuntimeError, match="throttling"):
+        boot.run(days=3)

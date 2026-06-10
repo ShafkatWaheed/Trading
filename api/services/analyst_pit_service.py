@@ -125,17 +125,16 @@ def _macro_regime(macro: dict) -> str:
 # ── Shared price slice (PIT cut) ──────────────────────────────────
 
 
-def prefetch_price_history(symbols: list[str], *, period_days: int = 400) -> dict:
-    """Bulk-fetch daily OHLC for many symbols in ONE yfinance download, held in
-    memory for a bootstrap run. Returns {symbol: DataFrame} where each frame has
-    lowercase columns at least: date (YYYY-MM-DD str), open, close. Symbols with
-    no data are absent. Defensive: never raises (returns what it got).
+def _download_batch(batch: list[str], period_days: int) -> dict:
+    """Download + normalize ONE batch of symbols via a single yfinance call.
 
-    Used to avoid ~1,022 per-symbol network fetches PER DAY during the 90-day
-    walk-forward (get_historical's cache TTL is only 15 min).
+    Returns {symbol: DataFrame} (lowercase columns: date (YYYY-MM-DD str), open,
+    high, low, close, volume) for whatever symbols had usable data. Symbols with
+    no data are absent. Defensive: never raises (returns what it got, possibly
+    empty). The retry/batching/sleep wrapping lives in prefetch_price_history.
     """
     out: dict = {}
-    if not symbols:
+    if not batch:
         return out
     try:
         import pandas as pd
@@ -144,45 +143,86 @@ def prefetch_price_history(symbols: list[str], *, period_days: int = 400) -> dic
         return out
 
     period = f"{int(period_days)}d"
-    # Chunk so a very large universe stays within yfinance's comfortable range.
-    chunk = 200
-    for i in range(0, len(symbols), chunk):
-        batch = symbols[i:i + chunk]
+    try:
+        bulk = yf.download(
+            batch, period=period, progress=False,
+            auto_adjust=True, group_by="ticker", threads=True,
+        )
+    except Exception:
+        return out
+    if bulk is None or bulk.empty:
+        return out
+    multi = isinstance(bulk.columns, pd.MultiIndex)
+    for sym in batch:
         try:
-            bulk = yf.download(
-                batch, period=period, progress=False,
-                auto_adjust=True, group_by="ticker", threads=True,
-            )
+            if multi:
+                if sym not in bulk.columns.get_level_values(0):
+                    continue
+                data = bulk[sym]
+            else:
+                # Single-ticker download → flat columns for that one symbol.
+                data = bulk
+            data = data.dropna(how="all")
+            if data.empty or "Close" not in data.columns:
+                continue
+            frame = pd.DataFrame({
+                "date": [str(ix)[:10] for ix in data.index],
+            })
+            for src, dst in (("Open", "open"), ("High", "high"),
+                             ("Low", "low"), ("Close", "close"),
+                             ("Volume", "volume")):
+                if src in data.columns:
+                    frame[dst] = data[src].to_numpy()
+            if "close" not in frame.columns or frame.empty:
+                continue
+            out[sym] = frame.reset_index(drop=True)
         except Exception:
             continue
-        if bulk is None or bulk.empty:
-            continue
-        multi = isinstance(bulk.columns, pd.MultiIndex)
-        for sym in batch:
-            try:
-                if multi:
-                    if sym not in bulk.columns.get_level_values(0):
-                        continue
-                    data = bulk[sym]
-                else:
-                    # Single-ticker download → flat columns for that one symbol.
-                    data = bulk
-                data = data.dropna(how="all")
-                if data.empty or "Close" not in data.columns:
-                    continue
-                frame = pd.DataFrame({
-                    "date": [str(ix)[:10] for ix in data.index],
-                })
-                for src, dst in (("Open", "open"), ("High", "high"),
-                                 ("Low", "low"), ("Close", "close"),
-                                 ("Volume", "volume")):
-                    if src in data.columns:
-                        frame[dst] = data[src].to_numpy()
-                if "close" not in frame.columns or frame.empty:
-                    continue
-                out[sym] = frame.reset_index(drop=True)
-            except Exception:
-                continue
+    return out
+
+
+def prefetch_price_history(symbols: list[str], *, period_days: int = 400,
+                           batch_size: int = 50, max_retries: int = 3,
+                           sleep_fn=None) -> dict:
+    """Bulk-fetch daily OHLC for many symbols, held in memory for a bootstrap
+    run. Returns {symbol: DataFrame} (lowercase cols: date (YYYY-MM-DD str),
+    open, high, low, close, volume). Symbols with no data are absent. Defensive:
+    never raises (returns what it got).
+
+    Used to avoid ~1,022 per-symbol network fetches PER DAY during the 90-day
+    walk-forward (get_historical's cache TTL is only 15 min).
+
+    Throttle resilience: downloads in SMALL batches of `batch_size` (default 50)
+    with a polite `sleep_fn(1.0)` between batches. Yahoo rate-limits large rapid
+    batches → empty results; so if a batch comes back empty it is retried up to
+    `max_retries` times with exponential backoff (sleep_fn(2 ** attempt) → 2s,
+    4s, 8s). A batch still empty after retries is skipped (its symbols are absent
+    from the result) and the run continues. `sleep_fn` defaults to time.sleep;
+    tests inject a no-op so they never actually sleep.
+    """
+    out: dict = {}
+    if not symbols:
+        return out
+    if sleep_fn is None:
+        import time
+        sleep_fn = time.sleep
+
+    bs = max(1, int(batch_size))
+    for i in range(0, len(symbols), bs):
+        batch = symbols[i:i + bs]
+        if i > 0:
+            # Be polite between successive batches.
+            sleep_fn(1.0)
+        got: dict = {}
+        for attempt in range(int(max_retries) + 1):
+            got = _download_batch(batch, period_days)
+            if got:
+                break
+            # Empty (likely throttled) — back off before retrying, unless this
+            # was the final allowed attempt.
+            if attempt < int(max_retries):
+                sleep_fn(2 ** (attempt + 1))
+        out.update(got)
     return out
 
 

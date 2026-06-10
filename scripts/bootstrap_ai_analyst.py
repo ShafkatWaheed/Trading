@@ -22,6 +22,12 @@ from src.utils.db import get_connection, init_db
 
 logger = logging.getLogger(__name__)
 
+# Minimum fraction of the loaded universe the prefetch must cover before we
+# trust the bootstrap. Below this, the run aborts loudly (likely throttling)
+# rather than silently persisting 0 picks. Only enforced on a populated
+# universe — an empty universe (e.g. tests' empty temp DB) skips the guard.
+_MIN_COVERAGE = 0.5
+
 
 def _already_predicted(date: str) -> bool:
     conn = get_connection()
@@ -65,20 +71,31 @@ def _rewrite_playbook_window(date: str) -> None:
     analyst_playbook.rewrite(history=history, accuracy=accuracy)
 
 
-def _prefetch() -> dict:
-    """Bulk-fetch the A+B daily price history ONCE for the whole walk-forward.
+def _prefetch(symbols: list[str]) -> dict:
+    """Bulk-fetch daily price history ONCE for the whole walk-forward.
 
-    Module-level seam so tests can monkeypatch it to `{}` (no network). The
-    returned {symbol: full-series DataFrame} is threaded through each day's
-    predict/grade so the per-day work slices it in-memory instead of re-fetching
-    the ~1,022-symbol universe (get_historical's cache TTL is only 15 min).
+    Module-level seam so tests can monkeypatch it to `lambda syms: {}` (no
+    network). The returned {symbol: full-series DataFrame} is threaded through
+    each day's predict/grade so the per-day work slices it in-memory instead of
+    re-fetching the ~1,022-symbol universe (get_historical's cache TTL is only
+    15 min).
     """
-    return analyst_pit_service.prefetch_price_history(_load_universe_ab())
+    return analyst_pit_service.prefetch_price_history(symbols)
 
 
 def run(days: int = 90) -> dict:
     init_db()
-    history = _prefetch()
+    universe = _load_universe_ab()
+    history = _prefetch(universe)
+    # Fail loud if a populated universe came back mostly empty: that means
+    # yfinance throttled the prefetch, and continuing would silently persist 0
+    # picks while logging success. An EMPTY universe (e.g. empty temp DB) is
+    # exempt so the guard never trips spuriously.
+    if universe and len(history) < _MIN_COVERAGE * len(universe):
+        raise RuntimeError(
+            f"prefetch covered only {len(history)}/{len(universe)} symbols "
+            f"(< {int(_MIN_COVERAGE * 100)}%) — likely yfinance throttling. "
+            f"Aborting so the bootstrap does not silently persist 0 picks.")
     predicted = graded = 0
     for d in _trading_days(days):
         if _already_predicted(d):
