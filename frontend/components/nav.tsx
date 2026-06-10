@@ -18,8 +18,9 @@ const PRIMARY = [
   { href: "/deep-dive", label: "Deep Dive", icon: Search },
   { href: "/brief",     label: "Brief",     icon: BookOpen },
   { href: "/daily-picks", label: "Picks",   icon: Target },
-  { href: "/agent",     label: "AI Agent",  icon: Bot },
 ];
+// Note: /agent page exists at frontend/app/agent/ but is hidden from primary
+// nav. Restore by re-adding: { href: "/agent", label: "AI Agent", icon: Bot },
 // Note: /prove-it page exists at frontend/app/prove-it/ but is hidden from
 // primary nav. Its signal_evidence data (per-signal historical win rates)
 // now feeds Claude's evidence packets in Brief + Gap Finder, so the
@@ -29,7 +30,8 @@ const PRIMARY = [
 
 const SECONDARY = [
   { href: "/graph",           label: "Graph",          icon: Network,   blurb: "Health, refresh controls, review queue — combined" },
-  { href: "/track-record",    label: "Track Record",   icon: LineChart, blurb: "How often is the AI right — graded vs. real moves" },
+  // /track-record page exists at frontend/app/track-record/ but is hidden from
+  // nav. Restore by re-adding the { href: "/track-record", … } entry here.
   { href: "/predictions",     label: "Predictions",    icon: Target,    blurb: "Top-10 picks scored daily + rolling hit rate" },
   { href: "/context-search",  label: "Context Search", icon: Search,    blurb: "Free-text scenario → ranked stocks via the graph" },
   { href: "/universe",        label: "Universe",       icon: Network,   blurb: "Tracked stock universe" },
