@@ -1,9 +1,11 @@
-"""Cold-start the AI analyst: strict point-in-time 90-day walk-forward.
+"""Cold-start the AI analyst: strict point-in-time walk-forward (default 1 week).
 
 For each past trading day (oldest→newest): predict (bootstrap mode, no live
-search), grade open→close, and every week-end rewrite the playbook from that
-week's graded results. Idempotent/resumable — days already predicted are
-skipped. Run: .venv/bin/python -m scripts.bootstrap_ai_analyst [--days 90]
+search), grade open→close, and rewrite the playbook (on week-ends during the
+walk, plus an unconditional final rewrite over the whole window so a short run
+always builds the playbook). Idempotent/resumable — days already predicted are
+skipped. Default window is 1 week (fast); the live forward-loop enriches the
+playbook from there. Run: .venv/bin/python -m scripts.bootstrap_ai_analyst [--days 7]
 """
 from __future__ import annotations
 
@@ -71,6 +73,19 @@ def _rewrite_playbook_window(date: str) -> None:
     analyst_playbook.rewrite(history=history, accuracy=accuracy)
 
 
+def _final_playbook_rewrite(window_days: int) -> None:
+    """Rewrite the playbook from the whole cold-start window at the END of the run.
+
+    Guarantees a short cold-start (e.g. 1 week) always builds the playbook even
+    when no week-end day was walked — in a short window the only Friday is often
+    already-predicted and thus skipped, so the in-loop rewrite never fires.
+    No-op when there is no completed history (analyst_playbook.rewrite handles it).
+    """
+    history = _load_history_with_context(window_days=window_days)
+    accuracy = get_accuracy_window(window_days=window_days, hit_threshold_pct=15)
+    analyst_playbook.rewrite(history=history, accuracy=accuracy)
+
+
 def _prefetch(symbols: list[str]) -> dict:
     """Bulk-fetch daily price history ONCE for the whole walk-forward.
 
@@ -83,7 +98,7 @@ def _prefetch(symbols: list[str]) -> dict:
     return analyst_pit_service.prefetch_price_history(symbols)
 
 
-def run(days: int = 90) -> dict:
+def run(days: int = 7) -> dict:
     init_db()
     universe = _load_universe_ab()
     history = _prefetch(universe)
@@ -106,6 +121,9 @@ def run(days: int = 90) -> dict:
         graded += 1
         if _is_week_end(d):
             _rewrite_playbook_window(d)
+    # Always rebuild the playbook from the full cold-start window at the end, so
+    # a short (1-week) run produces a playbook even if no fresh Friday was walked.
+    _final_playbook_rewrite(days)
     acc = get_accuracy_window(window_days=days, hit_threshold_pct=15)
     logger.info("bootstrap done: predicted=%d graded=%d hit_rate=%s",
                 predicted, graded, acc.get("hit_rate"))
@@ -115,5 +133,6 @@ def run(days: int = 90) -> dict:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=90)
+    parser.add_argument("--days", type=int, default=7,
+                        help="cold-start window in calendar days (default 7 = ~1 week)")
     print(run(parser.parse_args().days))

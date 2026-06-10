@@ -64,3 +64,20 @@ def test_run_aborts_loudly_on_poor_prefetch_coverage(monkeypatch):
     monkeypatch.setattr(boot, "_prefetch", lambda syms: {"A": object()})  # 1/4 = 25% < 50%
     with pytest.raises(RuntimeError, match="throttling"):
         boot.run(days=3)
+
+
+def test_final_rewrite_always_runs_even_without_a_walked_friday(monkeypatch):
+    # In a short (1-week) cold-start the only Friday is often already-predicted
+    # and thus skipped, so the in-loop rewrite never fires. The unconditional
+    # final rewrite must still run, windowed over the cold-start `days`.
+    init_db()
+    called = []
+    monkeypatch.setattr(boot, "_trading_days", lambda n: ["2026-02-02"])
+    monkeypatch.setattr(boot, "_prefetch", lambda syms: {})
+    monkeypatch.setattr(boot, "predict_for_date", lambda d, mode, history=None: {"count": 10})
+    monkeypatch.setattr(boot, "record_actuals_for_date", lambda d, history=None: {"recorded": 10})
+    monkeypatch.setattr(boot, "_is_week_end", lambda d: False)   # no in-loop rewrite
+    monkeypatch.setattr(boot, "get_accuracy_window", lambda **k: {"hit_rate": 0.0})
+    monkeypatch.setattr(boot, "_final_playbook_rewrite", lambda wd: called.append(wd))
+    boot.run(days=7)
+    assert called == [7]   # final rewrite ran once, windowed over the 1-week run
