@@ -40,3 +40,6 @@ data/db_backups/
 
 # Daily digest files (rebuildable from DB)
 data/digests/
+
+# AI analyst playbook — evolves at runtime (auto-created from template)
+data/predictions/analyst_playbook.md
