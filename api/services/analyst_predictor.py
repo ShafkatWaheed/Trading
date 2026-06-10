@@ -7,9 +7,72 @@ from __future__ import annotations
 import json
 
 from src.utils.claude_cli import ask_claude_json
+from src.utils.db import get_connection, init_db
 
 _SHORTLIST_N = 35
 _PICKS_N = 10
+
+
+def _universe() -> list[str]:
+    from api.services import predictions_service
+    return predictions_service._load_universe_ab()
+
+
+def _assemble_compact(symbols, as_of):
+    from api.services import analyst_pit_service
+    return analyst_pit_service.assemble_compact(symbols, as_of)
+
+
+def _assemble_full(symbols, as_of, *, allow_live_search):
+    from api.services import analyst_pit_service
+    return analyst_pit_service.assemble_full(symbols, as_of, allow_live_search=allow_live_search)
+
+
+def predict_for_date(as_of: str, *, mode: str) -> dict:
+    """Run the two-stage analyst for `as_of` and persist top-10 to daily_predictions.
+
+    mode: 'bootstrap' (PIT, no live search) | 'live' (full board + search).
+    Idempotent per date: existing rows for `as_of` are replaced.
+    """
+    from api.services import predictions_service
+    init_db()
+    strategy_version = predictions_service.ensure_ai_analyst_strategy()
+    try:
+        from api.services import analyst_playbook
+        playbook = analyst_playbook.read()
+    except ImportError:
+        playbook = ""
+    allow_live = (mode == "live")
+
+    compact = _assemble_compact(_universe(), as_of)
+    shortlist = triage(compact, playbook=playbook)
+    packets = _assemble_full(shortlist, as_of, allow_live_search=allow_live)
+    picks = deep_pick(packets, playbook=playbook, allow_live_search=allow_live)
+
+    _persist(as_of, picks, mode=mode, strategy_version=strategy_version)
+    return {"date": as_of, "mode": mode, "count": len(picks), "shortlist": len(shortlist)}
+
+
+def _persist(as_of: str, picks: list[dict], *, mode: str, strategy_version: int) -> None:
+    """Write rank 1..N picks to daily_predictions, replacing any existing rows
+    for `as_of` (idempotent)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM daily_predictions WHERE prediction_date=?", (as_of,))
+        for i, pick in enumerate(picks, start=1):
+            conn.execute(
+                "INSERT INTO daily_predictions "
+                "(prediction_date, rank, symbol, score, reasoning, strategy_version, "
+                " created_at, components_json, mode) VALUES (?,?,?,?,?,?,?,?,?)",
+                (as_of, i, pick["symbol"], pick.get("confidence"),
+                 pick.get("reasoning"), strategy_version, now,
+                 json.dumps(pick.get("evidence") or {}), mode),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def triage(compact_rows, *, playbook, claude=ask_claude_json) -> list[str]:
