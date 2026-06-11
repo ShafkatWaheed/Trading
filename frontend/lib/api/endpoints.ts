@@ -699,4 +699,12 @@ export const predictionsApi = {
     postLong<{ updated: boolean; reason?: string; history_rows?: number; bytes?: number }>(
       `/predictions/skills/update?window_days=${windowDays}${force ? "&force=true" : ""}`,
     ),
+  // The AI-analyst playbook (tied to the active ai_analyst_v1 strategy) —
+  // distinct from the legacy momentum skills.md above.
+  analystPlaybook: () =>
+    api.get<{ playbook: string }>("/predictions/analyst/playbook"),
+  refreshAnalystPlaybook: (windowDays = 30) =>
+    postLong<{ updated: boolean; reason?: string; bytes?: number; history_rows?: number }>(
+      `/predictions/analyst/playbook/refresh?window_days=${windowDays}`,
+    ),
 };

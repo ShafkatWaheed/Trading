@@ -201,22 +201,24 @@ export default function PredictionsPage() {
     },
   });
 
-  // Playbook (skills.md) — Claude's evolving notes on what works
-  const skillsQ = useQuery<{ content: string; last_updated: string | null; path: string }>({
-    queryKey: ["predictions", "skills"],
-    queryFn: () => predictionsApi.skills(),
+  // AI-analyst playbook — the active ai_analyst_v1 strategy's evolving notes
+  // (not the legacy momentum skills.md).
+  const skillsQ = useQuery<{ playbook: string }>({
+    queryKey: ["predictions", "analyst-playbook"],
+    queryFn: () => predictionsApi.analystPlaybook(),
     staleTime: 5 * 60 * 1000,
   });
   const [skillsMessage, setSkillsMessage] = useState<string | null>(null);
   const updateSkillsM = useMutation({
-    mutationFn: () => predictionsApi.updateSkills(30, false),
+    // Rewrite from all recent graded data (30d window), not just the last week.
+    mutationFn: () => predictionsApi.refreshAnalystPlaybook(30),
     onSuccess: (res) => {
       if (res.updated) {
-        setSkillsMessage(`Playbook refreshed — ${res.history_rows} prediction rows, ${res.bytes} bytes.`);
+        setSkillsMessage(`Playbook refreshed — ${res.history_rows ?? "?"} graded picks, ${res.bytes} bytes.`);
       } else {
         setSkillsMessage(`Not refreshed — ${res.reason ?? "unknown"}.`);
       }
-      qc.invalidateQueries({ queryKey: ["predictions", "skills"] });
+      qc.invalidateQueries({ queryKey: ["predictions", "analyst-playbook"] });
     },
     onError: (e: Error) => setSkillsMessage(`Refresh failed: ${e.message}`),
   });
@@ -387,13 +389,8 @@ export default function PredictionsPage() {
         {skillsQ.data && (
           <div className="card p-4 border-l-4 border-accent-blue/30">
             <pre className="whitespace-pre-wrap font-mono text-[11px] text-text-secondary leading-relaxed max-h-[500px] overflow-y-auto">
-              {skillsQ.data.content}
+              {skillsQ.data.playbook}
             </pre>
-            {skillsQ.data.last_updated && (
-              <div className="mt-3 pt-2 border-t border-bg-divider font-mono text-[10px] text-text-muted">
-                file: {skillsQ.data.path} · last updated: {skillsQ.data.last_updated}
-              </div>
-            )}
           </div>
         )}
       </section>

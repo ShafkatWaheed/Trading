@@ -35,6 +35,30 @@ def analyst_playbook_route() -> dict:
     return {"playbook": analyst_playbook.read()}
 
 
+@router.post("/analyst/playbook/refresh")
+def refresh_analyst_playbook(
+    window_days: int = Query(
+        30, ge=2, le=400,
+        description="Rewrite the playbook from graded predictions in this many days "
+                    "(default 30 ≈ all recent graded data; wider than the weekly 7-day job)",
+    ),
+) -> dict:
+    """Rewrite the AI-analyst playbook now from graded predictions in the window.
+
+    Unlike the weekly job (7-day window), this defaults to a wide window so a
+    manual refresh learns from every graded pick available. Long Opus call.
+    """
+    from api.services import analyst_playbook
+    from api.services.predictions_service import (
+        _load_history_with_context, get_accuracy_window,
+    )
+    history = _load_history_with_context(window_days=window_days)
+    accuracy = get_accuracy_window(window_days=window_days, hit_threshold_pct=15)
+    res = analyst_playbook.rewrite(history=history, accuracy=accuracy)
+    res["history_rows"] = len(history)
+    return res
+
+
 @router.get("/bootstrap/status")
 def bootstrap_status() -> dict:
     """Cold-start progress: number of bootstrap-mode days predicted + rolling hit rate."""

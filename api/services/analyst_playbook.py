@@ -55,11 +55,16 @@ def rewrite(*, history, accuracy, claude=None) -> dict:
     """Ask Opus to rewrite the playbook from graded history. Atomic; rejects a
     response missing the version tag (leaves the playbook unchanged). Returns
     {"updated": bool, ...}."""
-    claude = claude or (lambda prompt: ask_claude(prompt, model="opus", timeout=240))
+    # 600s: rewriting from a full window (dozens of graded picks) is a heavy
+    # Opus generation that overruns the old 240s cap and returns empty.
+    claude = claude or (lambda prompt: ask_claude(prompt, model="opus", timeout=600))
     if not history:
         return {"updated": False, "reason": "no_history"}
     prompt = _build_prompt(read(), history, accuracy)
-    new = claude(prompt) or ""
+    new = (claude(prompt) or "").strip()
+    if not new:
+        # Empty = subprocess timeout / non-zero exit, NOT a malformed response.
+        return {"updated": False, "reason": "empty_response_or_timeout"}
     if _VERSION_TAG not in new:
         return {"updated": False, "reason": "missing_version_tag"}
     write(new[new.find(_VERSION_TAG):])   # trim any preamble before the tag
