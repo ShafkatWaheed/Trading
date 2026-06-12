@@ -28,6 +28,30 @@ def _check_date(date: str) -> None:
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
 
 
+# ── Long Opus jobs (playbook refresh / strategy review / skills update) ──
+# These take minutes; run them in a background thread and return immediately so
+# they never hit the request/proxy timeout. Clients poll GET /predictions/jobs/{key}.
+_PLAYBOOK_JOB = "analyst_playbook_refresh"
+_REVIEW_JOB = "predictions_strategy_review"
+_SKILLS_JOB = "predictions_skills_update"
+
+
+def _kick(key: str, fn) -> dict:
+    """Start a long job in the background (idempotent if already in flight) and
+    return its current status. Poll GET /predictions/jobs/{key} for completion."""
+    from api.services import _background_jobs
+    started = _background_jobs.kick(key, fn)
+    return {"key": key, "started": started, "status": _background_jobs.get_job_status(key)}
+
+
+# Declared before the parametric /{date} routes so it isn't shadowed.
+@router.get("/jobs/{key}")
+def job_status(key: str) -> dict:
+    """Status of a long prediction job (playbook refresh / strategy review / skills update)."""
+    from api.services import _background_jobs
+    return {"key": key, "status": _background_jobs.get_job_status(key)}
+
+
 @router.get("/analyst/playbook")
 def analyst_playbook_route() -> dict:
     """The AI analyst's current accumulated playbook (markdown)."""
@@ -43,20 +67,22 @@ def refresh_analyst_playbook(
                     "(default 30 ≈ all recent graded data; wider than the weekly 7-day job)",
     ),
 ) -> dict:
-    """Rewrite the AI-analyst playbook now from graded predictions in the window.
+    """Kick a background rewrite of the AI-analyst playbook from graded
+    predictions in the window. Returns immediately; poll GET /predictions/jobs/{key}.
 
     Unlike the weekly job (7-day window), this defaults to a wide window so a
-    manual refresh learns from every graded pick available. Long Opus call.
+    manual refresh learns from every graded pick available.
     """
-    from api.services import analyst_playbook
-    from api.services.predictions_service import (
-        _load_history_with_context, get_accuracy_window,
-    )
-    history = _load_history_with_context(window_days=window_days)
-    accuracy = get_accuracy_window(window_days=window_days, hit_threshold_pct=15)
-    res = analyst_playbook.rewrite(history=history, accuracy=accuracy)
-    res["history_rows"] = len(history)
-    return res
+    def _job(wd: int = window_days) -> None:
+        from api.services import analyst_playbook
+        from api.services.predictions_service import (
+            _load_history_with_context, get_accuracy_window,
+        )
+        history = _load_history_with_context(window_days=wd)
+        accuracy = get_accuracy_window(window_days=wd, hit_threshold_pct=15)
+        analyst_playbook.rewrite(history=history, accuracy=accuracy)
+
+    return _kick(_PLAYBOOK_JOB, _job)
 
 
 @router.get("/bootstrap/status")
@@ -154,14 +180,14 @@ def review_strategy(
     window_days: int = Query(14, ge=2, le=90),
     force: bool = Query(False, description="Run even if no completed predictions exist yet"),
 ) -> dict:
-    """Claude reviews recent predictions and proposes a new strategy.
-
-    The proposal is saved as a DEACTIVATED row; activate it via
-    POST /predictions/strategy/activate?version=N once you've vetted it.
+    """Kick a background Claude review that proposes a new strategy. Returns
+    immediately; poll GET /predictions/jobs/{key}. The proposal is saved as a
+    DEACTIVATED row; activate it via POST /predictions/strategy/activate?version=N.
     """
-    return predictions_service.review_and_propose_strategy(
-        window_days=window_days, force=force,
-    )
+    def _job(wd: int = window_days, f: bool = force) -> None:
+        predictions_service.review_and_propose_strategy(window_days=wd, force=f)
+
+    return _kick(_REVIEW_JOB, _job)
 
 
 @router.post("/strategy/activate")
@@ -201,10 +227,11 @@ def update_skills(
     window_days: int = Query(30, ge=7, le=90),
     force: bool = Query(False),
 ) -> dict:
-    """Ask Claude to rewrite the playbook from the last `window_days` of
-    completed predictions. Skips when no completed predictions exist
-    unless force=True (mostly for manual testing).
+    """Kick a background rewrite of the legacy momentum skills.md from the last
+    `window_days` of completed predictions. Returns immediately; poll
+    GET /predictions/jobs/{key}.
     """
-    return predictions_service.update_prediction_skills(
-        window_days=window_days, force=force,
-    )
+    def _job(wd: int = window_days, f: bool = force) -> None:
+        predictions_service.update_prediction_skills(window_days=wd, force=f)
+
+    return _kick(_SKILLS_JOB, _job)

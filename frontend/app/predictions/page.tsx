@@ -13,11 +13,11 @@
  * hasn't fired (e.g. uvicorn was off during the morning slot).
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Target, TrendingUp, Calendar as CalendarIcon, Activity, Sparkles, CheckCircle2, BookOpen } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { predictionsApi } from "@/lib/api/endpoints";
+import { predictionsApi, type JobState } from "@/lib/api/endpoints";
 import type {
   PredictionsPayload,
   PredictionsAccuracyPayload,
@@ -180,19 +180,46 @@ export default function PredictionsPage() {
 
   const qc = useQueryClient();
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [skillsMessage, setSkillsMessage] = useState<string | null>(null);
+
+  // Long Opus actions (strategy review, playbook refresh) now run as background
+  // jobs: kick → poll jobStatus(key) until terminal → invalidate the result.
+  const [activeJob, setActiveJob] = useState<
+    { key: string; kind: "review" | "playbook"; invalidate: string[] } | null
+  >(null);
+  const setJobMsg = (kind: "review" | "playbook", msg: string) =>
+    (kind === "review" ? setReviewMessage : setSkillsMessage)(msg);
+
+  const jobQ = useQuery<{ key: string; status: JobState | null }>({
+    queryKey: ["predictions", "job", activeJob?.key],
+    queryFn: () => predictionsApi.jobStatus(activeJob!.key),
+    enabled: !!activeJob,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status?.status;
+      return s === "done" || s === "failed" ? false : 2500;
+    },
+  });
+  useEffect(() => {
+    if (!activeJob) return;
+    const s = jobQ.data?.status?.status;
+    if (s === "done") {
+      setJobMsg(activeJob.kind, activeJob.kind === "review"
+        ? "Review complete — see proposals below." : "Playbook refreshed.");
+      qc.invalidateQueries({ queryKey: activeJob.invalidate });
+      setActiveJob(null);
+    } else if (s === "failed") {
+      setJobMsg(activeJob.kind, `Failed: ${jobQ.data?.status?.error ?? "unknown"}`);
+      setActiveJob(null);
+    }
+  }, [jobQ.data, activeJob, qc]);
+
   const reviewM = useMutation({
     mutationFn: () => predictionsApi.reviewStrategy(14, false),
     onSuccess: (res) => {
-      if (res.proposed && res.proposal) {
-        setReviewMessage(`Claude proposed v${res.proposal.version} ("${res.proposal.name}"). Review and activate below.`);
-      } else {
-        setReviewMessage(`No new proposal — ${res.reason ?? "unknown reason"}.`);
-      }
-      qc.invalidateQueries({ queryKey: ["predictions", "strategies"] });
+      setReviewMessage(res.started ? "Reviewing… Claude is analyzing recent picks (takes a minute)." : "Review already running…");
+      setActiveJob({ key: res.key, kind: "review", invalidate: ["predictions", "strategies"] });
     },
-    onError: (e: Error) => {
-      setReviewMessage(`Review failed: ${e.message}`);
-    },
+    onError: (e: Error) => setReviewMessage(`Review failed: ${e.message}`),
   });
   const activateM = useMutation({
     mutationFn: (version: number) => predictionsApi.activateStrategy(version),
@@ -208,17 +235,12 @@ export default function PredictionsPage() {
     queryFn: () => predictionsApi.analystPlaybook(),
     staleTime: 5 * 60 * 1000,
   });
-  const [skillsMessage, setSkillsMessage] = useState<string | null>(null);
   const updateSkillsM = useMutation({
     // Rewrite from all recent graded data (30d window), not just the last week.
     mutationFn: () => predictionsApi.refreshAnalystPlaybook(30),
     onSuccess: (res) => {
-      if (res.updated) {
-        setSkillsMessage(`Playbook refreshed — ${res.history_rows ?? "?"} graded picks, ${res.bytes} bytes.`);
-      } else {
-        setSkillsMessage(`Not refreshed — ${res.reason ?? "unknown"}.`);
-      }
-      qc.invalidateQueries({ queryKey: ["predictions", "analyst-playbook"] });
+      setSkillsMessage(res.started ? "Refreshing… Claude is rewriting from graded picks (takes a minute)." : "Refresh already running…");
+      setActiveJob({ key: res.key, kind: "playbook", invalidate: ["predictions", "analyst-playbook"] });
     },
     onError: (e: Error) => setSkillsMessage(`Refresh failed: ${e.message}`),
   });
@@ -372,7 +394,7 @@ export default function PredictionsPage() {
           </div>
           <button
             onClick={() => updateSkillsM.mutate()}
-            disabled={updateSkillsM.isPending}
+            disabled={updateSkillsM.isPending || activeJob?.kind === "playbook"}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
               "bg-bg-card hover:bg-bg-card2 border border-bg-borderHi text-text-secondary hover:text-text-primary",
@@ -380,7 +402,7 @@ export default function PredictionsPage() {
             )}
           >
             <Sparkles size={11} />
-            {updateSkillsM.isPending ? "Updating…" : "Refresh playbook"}
+            {activeJob?.kind === "playbook" ? "Refreshing…" : "Refresh playbook"}
           </button>
         </div>
         {skillsMessage && (
@@ -409,7 +431,7 @@ export default function PredictionsPage() {
           </div>
           <button
             onClick={() => reviewM.mutate()}
-            disabled={reviewM.isPending}
+            disabled={reviewM.isPending || activeJob?.kind === "review"}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
               "bg-accent-amber/10 hover:bg-accent-amber/20 border border-accent-amber/40 text-accent-amber",
@@ -417,7 +439,7 @@ export default function PredictionsPage() {
             )}
           >
             <Sparkles size={11} />
-            {reviewM.isPending ? "Asking Claude…" : "Request new proposal"}
+            {activeJob?.kind === "review" ? "Reviewing…" : "Request new proposal"}
           </button>
         </div>
         {reviewMessage && (

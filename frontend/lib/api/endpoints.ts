@@ -77,26 +77,20 @@ import type {
   DailyPicks,
 } from "./types";
 
-// Long Claude-backed POSTs (playbook rewrite, strategy review) can run for
-// minutes. The Next.js dev `/api` rewrite kills requests after ~60s, surfacing
-// as a 500. In local dev, hit the backend directly (CORS is allowed) so the
-// request isn't capped; in prod it falls back through `/api`. Mirrors the
-// deep-dive-bundle / context-search bypass.
-async function postLong<T>(path: string): Promise<T> {
-  const isBrowser = typeof window !== "undefined";
-  const isLocalDev =
-    isBrowser && /^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(window.location.origin);
-  const url = isLocalDev ? `http://localhost:8000${path}` : `/api${path}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(body || `HTTP ${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as T;
-}
+// Long Opus POSTs (playbook refresh, strategy review, skills update) kick a
+// background job and return immediately — no proxy/timeout risk. Clients poll
+// jobStatus(key) until the job reaches a terminal state.
+export type JobState = {
+  status: "running" | "done" | "failed" | string;
+  current_phase?: string | null;
+  progress_pct?: number;
+  started_at?: string;
+  last_heartbeat?: string;
+  elapsed_s?: number;
+  error?: string | null;
+  finished_at?: string | null;
+};
+export type JobKick = { key: string; started: boolean; status: JobState | null };
 
 export const marketApi = {
   pulse: (period: string = "1M") =>
@@ -684,9 +678,12 @@ export const predictionsApi = {
     api.get<import("./types").PredictionStrategy>("/predictions/strategy/active"),
   strategies: () =>
     api.get<{ strategies: import("./types").PredictionStrategyRow[] }>("/predictions/strategies"),
+  // Long Opus POSTs now kick a background job and return immediately; poll
+  // jobStatus(key) until status.status === "done"/"failed".
   reviewStrategy: (windowDays = 14, force = false) =>
-    postLong<import("./types").PredictionStrategyReview>(
+    api.post<JobKick>(
       `/predictions/strategy/review?window_days=${windowDays}${force ? "&force=true" : ""}`,
+      undefined,
     ),
   activateStrategy: (version: number) =>
     api.post<{ activated: boolean; version?: number; no_op?: boolean }>(
@@ -696,15 +693,19 @@ export const predictionsApi = {
   skills: () =>
     api.get<{ content: string; last_updated: string | null; path: string }>("/predictions/skills"),
   updateSkills: (windowDays = 30, force = false) =>
-    postLong<{ updated: boolean; reason?: string; history_rows?: number; bytes?: number }>(
+    api.post<JobKick>(
       `/predictions/skills/update?window_days=${windowDays}${force ? "&force=true" : ""}`,
+      undefined,
     ),
   // The AI-analyst playbook (tied to the active ai_analyst_v1 strategy) —
   // distinct from the legacy momentum skills.md above.
   analystPlaybook: () =>
     api.get<{ playbook: string }>("/predictions/analyst/playbook"),
   refreshAnalystPlaybook: (windowDays = 30) =>
-    postLong<{ updated: boolean; reason?: string; bytes?: number; history_rows?: number }>(
+    api.post<JobKick>(
       `/predictions/analyst/playbook/refresh?window_days=${windowDays}`,
+      undefined,
     ),
+  jobStatus: (key: string) =>
+    api.get<{ key: string; status: JobState | null }>(`/predictions/jobs/${key}`),
 };
