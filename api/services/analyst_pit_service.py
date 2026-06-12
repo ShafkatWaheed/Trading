@@ -9,7 +9,14 @@ Reuses the historical PIT helpers in api/services/ai_analyst_service.py.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from src.utils.db import get_connection, init_db
+
+# Per-symbol packets for the deep-read shortlist are built concurrently — each
+# does ~5 sequential network reads (news/short/insider/earnings/fundamentals),
+# so running symbols in parallel is the dominant speedup for a prediction day.
+_FULL_WORKERS = 12
 
 
 def congress_flags_as_of(symbols: list[str], as_of: str) -> dict[str, int]:
@@ -645,11 +652,13 @@ def assemble_full(symbols: list[str], as_of: str, *, allow_live_search: bool, hi
         return packets
     congress = congress_flags_as_of(symbols, as_of)
     institutions = institution_breadth_as_of(symbols, as_of)
-    for sym in symbols:
+    macro = _macro_block(as_of)   # universe-wide — compute once, not per symbol
+
+    def _build(sym: str) -> tuple[str, dict]:
         p = {
             "momentum": _momentum_block(sym, as_of, history=history),
             "sector_flow": _sector_block(sym, as_of),
-            "macro": _macro_block(as_of),
+            "macro": macro,
             "congress": congress.get(sym),
             "insider": _insider_block(sym, as_of),
             "institutions": institutions.get(sym),
@@ -662,5 +671,13 @@ def assemble_full(symbols: list[str], as_of: str, *, allow_live_search: bool, hi
             p["options_flow"] = _live_options(sym)
             p["premarket"] = _live_premarket(sym)
             p["reddit"] = _live_reddit(sym)
-        packets[sym] = p
+        return sym, p
+
+    # Build the ~35 shortlist packets concurrently — each symbol's blocks are
+    # independent network/compute, so this collapses serial per-symbol latency
+    # into a few waves. Blocks stay defensive (None on error), so a thread that
+    # fails just yields a sparse packet rather than killing the batch.
+    with ThreadPoolExecutor(max_workers=min(_FULL_WORKERS, len(symbols))) as pool:
+        for sym, p in pool.map(_build, symbols):
+            packets[sym] = p
     return packets
