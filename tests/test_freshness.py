@@ -707,3 +707,32 @@ def test_run_orchestrator_with_layer_5_opt_in_is_noop_without_news():
     )
     assert "layer5" in out
     assert out["layer5"]["flagged"] == 0
+
+
+def test_market_pulse_freshness_uses_recorded_marker():
+    """check_market_pulse() reports 'never recorded' with no marker, and fresh
+    once get_pulse() has written a market:pulse:* marker."""
+    from api.services import feature_freshness as ff
+    from src.utils.db import cache_set, get_connection, init_db
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM cache WHERE key LIKE 'market:pulse:%'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    r = ff.check_market_pulse()
+    assert r["stale"] is True and "never recorded" in (r["reason"] or "")
+
+    cache_set("market:pulse:freshness", {"recorded_at": "now"}, ttl_minutes=24 * 60)
+    r2 = ff.check_market_pulse()
+    assert r2["stale"] is False
+    assert r2["last_updated"] is not None and r2["reason"] is None
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM cache WHERE key LIKE 'market:pulse:%'")
+        conn.commit()
+    finally:
+        conn.close()

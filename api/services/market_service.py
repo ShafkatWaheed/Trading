@@ -427,6 +427,21 @@ def get_pulse(period: str = "1M") -> dict:
     except Exception:
         pass
 
+    # Record a freshness marker so feature_freshness.check_market_pulse() (which
+    # looks for a `market:pulse:*` cache key) can report when pulse last had real
+    # underlying data — only mark when FRED macro and/or sector flows came back,
+    # so a fully-degraded pulse doesn't falsely read as fresh.
+    if snapshot or sector_flows:
+        try:
+            from src.utils.db import cache_set
+            cache_set("market:pulse:freshness",
+                      {"recorded_at": datetime.utcnow().isoformat() + "Z",
+                       "has_macro": snapshot is not None,
+                       "sectors": len(sector_flows)},
+                      ttl_minutes=24 * 60)
+        except Exception:
+            pass
+
     return {
         "regime": regime,
         "regime_explanation": explanation,
